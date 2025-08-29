@@ -1,0 +1,929 @@
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/gpio/button_toggle_led: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpi2c/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpi2c/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpi2c/int_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpi2c/int_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpspi/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpspi/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpspi/int_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpspi/int_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpuart/edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/cmsis_driver_examples/lpuart/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/bubble: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/hello_world: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/led_blinky: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/mc_pmsm/pmsm_enc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/power_manager_test/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/power_manager_test/bm: startup_gcc.S
+Only in SDK_25_03_00_FRDM-MCXN236/boards/frdmmcxn236/demo_apps: power_manager_test_bm
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/power_mode_switch/low_level: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/demo_apps/shell: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/display_examples/smartdma_camera_flexio_mculcd: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/cdog: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/crc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ctimer/simple_match: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ctimer/simple_match_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ctimer/simple_pwm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ctimer/simple_pwm_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/channel_link: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/interleave_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/memory_to_memory: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/memory_to_memory_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/memset: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/ping_pong_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/scatter_gather: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/edma3/wrap_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/erm/error_recording: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/evtg: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ewm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexcan/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexcan/loopback: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexcan/loopback_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexcan/ping_pong_buffer_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexcan/pretended_networking_wakeup: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/i2c/interrupt_lpi2c_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/mculcd/edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/mculcd/int_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/mculcd/polling: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/mculcd/smartdma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/pwm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/edma_lpspi_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/edma_lpspi_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/int_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/int_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/int_lpspi_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/spi/int_lpspi_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/uart/edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/uart/int_rb_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/uart/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/flexio/uart/polling_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/freqme: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/gpio/input_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/gpio/led_output: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/interrupt_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/interrupt_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/polling_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/i3c/polling_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/intm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/irtc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/itrc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpadc/edma: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpadc/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpadc/polling: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpadc/temperature_measurement: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpcmp/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpcmp/polling: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpflexcomm/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/interrupt_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/interrupt_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/polling_b2b/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpi2c/polling_b2b/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/edma_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/edma_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/interrupt_b2b/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/interrupt_b2b/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/interrupt_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/interrupt_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/polling_b2b_transfer/master: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/polling_b2b_transfer/slave: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpspi/qspi_flash: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lptmr: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/interrupt_rb_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/interrupt_transfer_seven_bits: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/polling: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/lpuart/polling_seven_bits: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/mrt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/npx: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/ostimer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pdm/pdm_edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pdm/pdm_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pdm/pdm_sai_edma: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pdm/pdm_sai_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pdm/pdm_sai_interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pint/pattern_match: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pint/pin_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/puf_v3: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/pwm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/qdc/basic: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/qdc/index_interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/romapi/flashhiding: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/romapi/flashiap: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/romapi/mem_interface: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/romapi/runbootloader: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/sai/edma_record_playback: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/sai/edma_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/sai/interrupt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/sai/interrupt_record_playback: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/sai/interrupt_transfer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/syspm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/tdet: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/trdc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/utick: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/vref_1: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/driver_examples/wwdt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/el2go_examples/el2go_blob_test/el2go_blob_test_ns: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/el2go_examples/el2go_blob_test/el2go_blob_test_s: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/el2go_examples/el2go_import_blob/el2go_import_blob_ns: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/el2go_examples/el2go_import_blob/el2go_import_blob_s: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/els_pkc_examples/els_hash: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/els_pkc_examples/els_pkc_asymmetric: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/els_pkc_examples/els_pkc_common: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/els_pkc_examples/els_symmetric: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/emwin_examples/emwin_gui_demo: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/emwin_examples/emwin_serial_terminal: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freemaster_examples/fmstr_can: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freemaster_examples/fmstr_pdbdm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freemaster_examples/fmstr_rtt: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freemaster_examples/fmstr_uart: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freemaster_examples/fmstr_usb_cdc: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_event: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_generic: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_hello: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_mutex: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_queue: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_sem: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_sem_static: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_swtimer: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/freertos_examples/freertos_tickless: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/littlefs_examples/littlefs_shell_onchip_flash: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_demo_benchmark: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_demo_benchmark_bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_demo_widgets: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_demo_widgets_bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_guider: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/lvgl_examples/lvgl_guider_bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/mbedtls3x_examples/mbedtls3x_selftest/cm33_core0: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/mbedtls3x_examples/psa_crypto_examples/cm33_core0: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/mbedtls3x_examples/psa_crypto_opaque_key_examples/cm33_core0: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/mbedtls_examples/mbedtls_benchmark: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/mbedtls_examples/mbedtls_selftest: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/multiprocessor_examples/erpc_server_matrix_multiply_i2c: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/multiprocessor_examples/erpc_server_matrix_multiply_spi: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/multiprocessor_examples/erpc_server_matrix_multiply_uart: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_demo/tfm_demo_ns: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_demo/tfm_demo_s: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_psatest/tfm_psatest_ns: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_psatest/tfm_psatest_s: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_regression/tfm_regression_ns: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/tfm_examples/tfm_regression/tfm_regression_s: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_generator/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_generator/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_generator_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_speaker/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_speaker/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_audio_speaker_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_cdc_vcom/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_cdc_vcom/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_cdc_vcom_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_msc/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_msc/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_msc_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_vcom_cdc_vcom/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_vcom_cdc_vcom/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_cdc_vcom_cdc_vcom_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_hid_audio_unified/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_hid_audio_unified_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_hid_mouse_hid_keyboard/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_hid_mouse_hid_keyboard/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_composite_hid_mouse_hid_keyboard_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_dfu/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_dfu/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_dfu_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_generic/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_generic/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_generic_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_mouse/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_mouse/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_hid_mouse_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_msc_ramdisk/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_msc_ramdisk/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_msc_ramdisk_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_phdc_weighscale/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_phdc_weighscale/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_phdc_weighscale_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_printer_virtual_plain_text/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_printer_virtual_plain_text/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_printer_virtual_plain_text_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_video_virtual_camera/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_video_virtual_camera/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_device_video_virtual_camera_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_audio_speaker/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_cdc/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_cdc/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_generic/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_generic/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_mouse/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_mouse/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_mouse_keyboard/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_hid_mouse_keyboard/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_msd_command/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_msd_command/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_msd_fatfs/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_msd_fatfs/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_phdc_manager/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_phdc_manager/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_printer_plain_text/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_host_printer_plain_text/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_alt_mode_dp_host_om13790host/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_alt_mode_dp_host_om13790host/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_charger_battery_om13790host/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_charger_battery_om13790host/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_om13790host/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_om13790host/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_sink_battery_om13790host/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_sink_battery_om13790host/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_source_charger_om13790host/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pd_source_charger_om13790host/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pin_detect_hid_mouse/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pin_detect_hid_mouse/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pin_detect_hid_msd/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_pin_detect_hid_msd/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_suspend_resume_device_hid_mouse/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_suspend_resume_device_hid_mouse/freertos: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_suspend_resume_device_hid_mouse_lite/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_suspend_resume_host_hid_mouse/bm: armgcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/boards/frdmmcxn236/usb_examples/usb_suspend_resume_host_hid_mouse/freertos: armgcc
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/components/els_pkc/src/platforms/mcxn/inc/ip_platform.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/components/els_pkc/src/platforms/mcxn/inc/ip_platform.h
+--- SDK_25_03_00_FRDM-MCXN236/components/els_pkc/src/platforms/mcxn/inc/ip_platform.h	2025-08-29 17:40:27.605424616 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/components/els_pkc/src/platforms/mcxn/inc/ip_platform.h	2025-07-15 11:40:43.855639788 +0800
+@@ -41,7 +41,8 @@
+ #define PKC_SFR_SUFFIX_POS      _SHIFT      ///< sfr field name suffix for bit position
+ 
+ // PKC_RAM base address is not defined in any header file
+-#define PKC_RAM_ADDR  ((uint32_t)0x500B3000u)
++// [WAR] unsecure world access
++#define PKC_RAM_ADDR  ((uint32_t)0x400B3000u)
+ #define PKC_WORD_SIZE  8u
+ #define PKC_RAM_SIZE  ((uint32_t)0x1000u)
+ 
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c.c SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c.c
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c.c	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c.c	2025-07-15 11:40:43.905247469 +0800
+@@ -40,6 +40,11 @@
+                       kI3C_MasterRxReadyFlag /* | kI3C_MasterTxReadyFlag */ | kI3C_MasterArbitrationWonFlag |
+                       kI3C_MasterErrorFlag | kI3C_MasterSlave2MasterFlag,
+ 
++
++    kMasterIbiClearFlags = kI3C_MasterControlDoneFlag | kI3C_MasterCompleteFlag |
++                    kI3C_MasterArbitrationWonFlag | kI3C_MasterSlave2MasterFlag | kI3C_MasterErrorFlag,
++
++
+     /*! Errors to check for. */
+     kMasterErrorFlags = kI3C_MasterErrorNackFlag | kI3C_MasterErrorWriteAbortFlag |
+ #if !defined(FSL_FEATURE_I3C_HAS_NO_MERRWARN_TERM) || (!FSL_FEATURE_I3C_HAS_NO_MERRWARN_TERM)
+@@ -1268,9 +1273,6 @@
+ {
+     uint32_t mctrlVal;
+ 
+-    /* Clear all flags. */
+-    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterClearFlags);
+-
+ #if defined(FSL_FEATURE_I3C_HAS_ERRATA_051617) && (FSL_FEATURE_I3C_HAS_ERRATA_051617)
+     /* ERRATA051617: When used as I2C controller generates repeated START randomly before the STOP under PVT condition.
+     This issue is caused by a glitch at the output of an internal clock MUX. The glitch when generates acts as a clock
+@@ -1293,6 +1295,9 @@
+     mctrlVal |= I3C_MCTRL_TYPE(type) | I3C_MCTRL_REQUEST(kI3C_RequestEmitStartAddr) | I3C_MCTRL_DIR(dir) |
+                 I3C_MCTRL_ADDR(address) | I3C_MCTRL_RDTERM(rxSize);
+ 
++    /* Clear all flags. */
++    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterIbiClearFlags);
++
+     base->MCTRL = mctrlVal;
+ 
+     return kStatus_Success;
+@@ -1415,7 +1420,7 @@
+     }
+ 
+ #if I3C_RETRY_TIMES
+-    uint32_t waitTimes = I3C_RETRY_TIMES;
++    uint32_t waitTimes = 15000;
+ #endif
+ 
+     /* Receive data */
+@@ -1767,7 +1772,8 @@
+ static void I3C_MasterClearFlagsAndEnableIRQ(I3C_Type *base)
+ {
+     /* Clear all flags. */
+-    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterClearFlags);
++    // I3C_MasterClearStatusFlags(base, (uint32_t)kMasterClearFlags);
++    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterIbiClearFlags);
+     /* Enable I3C IRQ sources. */
+     I3C_MasterEnableInterrupts(base, (uint32_t)kMasterIrqFlags);
+ }
+@@ -1836,7 +1842,7 @@
+     }
+ 
+     /* Clear all flags. */
+-    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterClearFlags);
++    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterIbiClearFlags);
+     /* Reset fifos. These flags clear automatically. */
+     base->MDATACTRL |= I3C_MDATACTRL_FLUSHTB_MASK | I3C_MDATACTRL_FLUSHFB_MASK;
+ 
+@@ -1866,11 +1872,13 @@
+     {
+         if (0UL != (transfer->flags & (uint32_t)kI3C_TransferNoStartFlag))
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return kStatus_InvalidArgument;
+         }
+ 
+         if (0UL != (transfer->flags & (uint32_t)kI3C_TransferRepeatedStartFlag))
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return kStatus_InvalidArgument;
+         }
+ 
+@@ -1878,12 +1886,14 @@
+         result = I3C_MasterStart(base, transfer->busType, 0x7E, kI3C_Write);
+         if (result != kStatus_Success)
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return result;
+         }
+ 
+         result = I3C_MasterWaitForCtrlDone(base, false);
+         if (result != kStatus_Success)
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return result;
+         }
+     }
+@@ -1901,17 +1911,20 @@
+         }
+         if (result != kStatus_Success)
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return result;
+         }
+ 
+         result = I3C_MasterWaitForCtrlDone(base, false);
+         if (result != kStatus_Success)
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return result;
+         }
+ 
+         if (true == I3C_MasterTransferNoStartFlag(base, transfer))
+         {
++            I3C_MasterClearFlagsAndEnableIRQ(base);
+             return kStatus_I3C_IBIWon;
+         }
+     }
+@@ -1976,6 +1989,7 @@
+             result = I3C_MasterWaitForCtrlDone(base, false);
+             if (result != kStatus_Success)
+             {
++                I3C_MasterClearFlagsAndEnableIRQ(base);
+                 return result;
+             }
+         }
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c.h
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c.h	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c.h	2025-07-15 11:40:43.905247469 +0800
+@@ -25,11 +25,11 @@
+ 
+ /*! @brief Timeout times for waiting flag. */
+ #ifndef I3C_RETRY_TIMES
+-#define I3C_RETRY_TIMES 0U /* Define to zero means keep waiting until the flag is assert/deassert. */
++#define I3C_RETRY_TIMES 1000U /* Define to zero means keep waiting until the flag is assert/deassert. */
+ #endif
+ 
+ #ifndef I3C_MAX_DEVCNT
+-#define I3C_MAX_DEVCNT 10U
++#define I3C_MAX_DEVCNT 50U
+ #endif
+ 
+ #ifndef I3C_IBI_BUFF_SIZE
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c_edma.c SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c_edma.c
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_i3c_edma.c	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_i3c_edma.c	2025-07-15 11:40:43.905247469 +0800
+@@ -37,6 +37,10 @@
+     kMasterClearFlags = kI3C_MasterSlaveStartFlag | kI3C_MasterControlDoneFlag | kI3C_MasterCompleteFlag |
+                         kI3C_MasterArbitrationWonFlag | kI3C_MasterSlave2MasterFlag | kI3C_MasterErrorFlag,
+ 
++    // https://community.nxp.com/t5/Nvidia-NXP-Technical-Support/MCU-I3C-controller-pull-the-SDA-low-unexpectedly/m-p/2051982#M588
++    kMasterIBIClearFlags = kI3C_MasterControlDoneFlag | kI3C_MasterCompleteFlag |
++                           kI3C_MasterArbitrationWonFlag | kI3C_MasterSlave2MasterFlag | kI3C_MasterErrorFlag,
++
+     /*! IRQ sources enabled by the non-blocking transactional API. */
+     kMasterDMAIrqFlags = kI3C_MasterSlaveStartFlag | kI3C_MasterControlDoneFlag | kI3C_MasterCompleteFlag |
+                          kI3C_MasterArbitrationWonFlag | kI3C_MasterErrorFlag | kI3C_MasterSlave2MasterFlag,
+@@ -123,9 +127,15 @@
+         if (i3cHandle->transferCount != 1U)
+         {
+             instance = I3C_GetInstance(i3cHandle->base);
++
++            uint32_t start = read_ticks_c();
+             /* Ensure there's space in the Tx FIFO. */
+             while ((i3cHandle->base->MDATACTRL & I3C_MDATACTRL_TXFULL_MASK) != 0U)
+             {
++                uint32_t now = read_ticks_c();
++                if((now - start) > 500){ //500us timeout
++                    break;
++                }
+             }
+             i3cHandle->base->MWDATABE = i3cEndByte[instance];
+         }
+@@ -243,6 +253,12 @@
+             {
+                 result = I3C_MasterStart(base, xfer->busType, xfer->slaveAddress, direction);
+             }
++            if (result != kStatus_Success) {
++                if (handle->transfer.direction == kI3C_Read) {
++                    EDMA_AbortTransfer(handle->rxDmaHandle);
++                }
++                return result;
++            }
+         }
+     }
+ 
+@@ -345,7 +361,7 @@
+         }
+     }
+ 
+-    if ((0UL != (status & (uint32_t)kI3C_MasterSlaveStartFlag)) && (handle->transfer.busType != kI3C_TypeI2C))
++    if (((0UL != (status & (uint32_t)kI3C_MasterSlaveStartFlag)) && (masterState == kI3C_MasterStateSlvReq)) && (handle->transfer.busType != kI3C_TypeI2C))
+     {
+         handle->state = (uint8_t)kSlaveStartState;
+     }
+@@ -360,8 +376,8 @@
+         return result;
+     }
+ 
+-    if (handle->state == (uint8_t)kIBIWonState)
+-    {
++    if ((handle->state == (uint8_t)kIBIWonState)
++        && (0UL != (status & (uint32_t)kI3C_MasterCompleteFlag))) {
+         /* Get fifo counts and compute room in tx fifo. */
+         rxCount = (base->MDATACTRL & I3C_MDATACTRL_RXCOUNT_MASK) >> I3C_MDATACTRL_RXCOUNT_SHIFT;
+     }
+@@ -575,6 +591,7 @@
+     assert(transfer->subaddressSize <= sizeof(transfer->subaddress));
+     i3c_master_state_t masterState = I3C_MasterGetState(base);
+     bool checkDdrState             = false;
++    status_t result = kStatus_Success;
+ 
+     /* Return busy if another transaction is in progress. */
+     if (handle->state != (uint8_t)kIdleState)
+@@ -602,12 +619,12 @@
+ 
+     /* Clear all flags. */
+     I3C_MasterClearErrorStatusFlags(base, (uint32_t)kMasterErrorFlags);
+-    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterClearFlags);
++    I3C_MasterClearStatusFlags(base, (uint32_t)kMasterIBIClearFlags);
+     /* Reset fifos. These flags clear automatically. */
+     base->MDATACTRL |= I3C_MDATACTRL_FLUSHTB_MASK | I3C_MDATACTRL_FLUSHFB_MASK;
+ 
+     /* Generate commands to send. */
+-    (void)I3C_MasterInitTransferStateMachineEDMA(base, handle);
++    result = I3C_MasterInitTransferStateMachineEDMA(base, handle);
+ 
+     /* Enable I3C internal IRQ sources. NVIC IRQ was enabled in CreateHandle() */
+     I3C_MasterEnableInterrupts(base, (uint32_t)(kMasterDMAIrqFlags));
+@@ -617,7 +634,7 @@
+         I3C_MasterDisableInterrupts(base, (uint32_t)kI3C_MasterSlaveStartFlag);
+     }
+ 
+-    return kStatus_Success;
++    return result;
+ }
+ 
+ void I3C_MasterTransferEDMAHandleIRQ(I3C_Type *base, void *i3cHandle)
+@@ -685,12 +702,14 @@
+         return kStatus_InvalidArgument;
+     }
+ 
++    // WAR If reading length > actual RX length, the I3C state will be idle.
++    //     Ignore this check to get the actual RX length.
+     /* Catch when there is not an active transfer. */
+-    if (handle->state == (uint8_t)kIdleState)
+-    {
+-        *count = 0;
+-        return kStatus_NoTransferInProgress;
+-    }
++    // if (handle->state == (uint8_t)kIdleState)
++    // {
++    //     *count = 0;
++    //     return kStatus_NoTransferInProgress;
++    // }
+ 
+     /* There is no necessity to disable interrupts as we read a single integer value */
+     i3c_direction_t dir = handle->transfer.direction;
+@@ -1054,4 +1073,4 @@
+         /* Reset fifos. These flags clear automatically. */
+         base->SDATACTRL |= I3C_SDATACTRL_FLUSHTB_MASK | I3C_SDATACTRL_FLUSHFB_MASK;
+     }
+-}
+\ No newline at end of file
++}
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_lpi2c.c SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_lpi2c.c
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_lpi2c.c	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_lpi2c.c	2025-08-20 14:28:57.055554537 +0800
+@@ -1537,7 +1537,9 @@
+  */
+ void LPI2C_MasterTransferAbort(LPI2C_Type *base, lpi2c_master_handle_t *handle)
+ {
++    #ifndef I2C_STATE_WAR
+     if (handle->state != (uint8_t)kIdleState)
++    #endif
+     {
+         /* Disable internal IRQ enables. */
+         LPI2C_MasterDisableInterrupts(base, (uint32_t)kLPI2C_MasterIrqFlags);
+@@ -1602,6 +1604,19 @@
+                 }
+             }
+         }
++        #ifdef I2C_STATE_WAR
++        else { /* handle->state == (uint8_t)kIdleState */
++            if (base->MIER & kLPI2C_MasterIrqFlags) {
++                LPI2C_MasterTransferAbort(base, handle);
++                LPI2C_MasterDisableInterrupts(base, (uint32_t)kLPI2C_MasterIrqFlags);
++                handle->state = (uint8_t)kIdleState;
++                handle->remainingBytes = 0;
++                if (NULL != handle->completionCallback) {
++                    handle->completionCallback(base, handle, kStatus_Lpi2c_StateWar, handle->userData);
++                }
++            }
++        }
++        #endif
+     }
+ }
+ 
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_lpi2c.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_lpi2c.h
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/fsl_lpi2c.h	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/fsl_lpi2c.h	2025-08-20 14:28:57.055554537 +0800
+@@ -29,9 +29,11 @@
+ 
+ /*! @brief Retry times for waiting flag. */
+ #ifndef I2C_RETRY_TIMES
+-#define I2C_RETRY_TIMES 0U /* Define to zero means keep waiting until the flag is assert/deassert. */
++#define I2C_RETRY_TIMES 150000U /* Define to zero means keep waiting until the flag is assert/deassert. */
+ #endif
+ 
++#define I2C_STATE_WAR 1
++
+ /*! @brief LPI2C status return codes. */
+ enum
+ {
+@@ -47,6 +49,10 @@
+         MAKE_STATUS(kStatusGroup_LPI2C, 7), /*!< Attempt to abort a transfer when one is not in progress. */
+     kStatus_LPI2C_DmaRequestFail = MAKE_STATUS(kStatusGroup_LPI2C, 8), /*!< DMA request failed. */
+     kStatus_LPI2C_Timeout        = MAKE_STATUS(kStatusGroup_LPI2C, 9), /*!< Timeout polling status flags. */
++
++    #ifdef I2C_STATE_WAR
++    kStatus_Lpi2c_StateWar = MAKE_STATUS(kStatusGroup_LPI2C, 99), /*!< State war error. */
++    #endif
+ };
+ 
+ /*! @} */
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/romapi/runbootloader/fsl_runbootloader.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/romapi/runbootloader/fsl_runbootloader.h
+--- SDK_25_03_00_FRDM-MCXN236/devices/MCXN236/drivers/romapi/runbootloader/fsl_runbootloader.h	2025-08-29 17:40:27.675424623 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/drivers/romapi/runbootloader/fsl_runbootloader.h	2025-07-15 11:40:43.925090544 +0800
+@@ -42,8 +42,9 @@
+     {
+         struct
+         {
++            uint32_t reserved : 8;
+             uint32_t boot_image_index : 4;
+-            uint32_t reserved : 12;
++            uint32_t instance : 4;
+             uint32_t boot_interface : 4;
+             uint32_t mode : 4;
+             uint32_t tag : 8;
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236: gcc
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/utilities: fsl_sbrk.c
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/utilities: fsl_syscall_stub.c
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e/devices/MCXN236/utilities/incbin: fsl_incbin.S
+Only in SDK_25_03_00_FRDM-MCXN236_753e2fa5e: mcu.patch
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/middleware/usb/device/class/usb_device_class.c SDK_25_03_00_FRDM-MCXN236_753e2fa5e/middleware/usb/device/class/usb_device_class.c
+--- SDK_25_03_00_FRDM-MCXN236/middleware/usb/device/class/usb_device_class.c	2025-08-29 17:40:28.245424663 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/middleware/usb/device/class/usb_device_class.c	2025-07-30 11:32:11.550414469 +0800
+@@ -59,6 +59,10 @@
+ #include "usb_device_ccid.h"
+ #endif
+ 
++#if ((defined(USB_DEVICE_CONFIG_MCTP)) && (USB_DEVICE_CONFIG_MCTP > 0U))
++#include "usb_device_mctp.h"
++#endif
++
+ /*******************************************************************************
+  * Definitions
+  ******************************************************************************/
+@@ -123,6 +127,10 @@
+     {USB_DeviceCcidInit, USB_DeviceCcidDeinit, USB_DeviceCcidEvent, kUSB_DeviceClassTypeCcid},
+ #endif
+ 
++#if ((defined(USB_DEVICE_CONFIG_MCTP)) && (USB_DEVICE_CONFIG_MCTP > 0U))
++    {USB_DeviceMctpInit, USB_DeviceMctpDeinit, USB_DeviceMctpEvent, kUSB_DeviceClassTypeMctp},
++#endif
++
+     /* please make sure the following member is in the end of s_UsbDeviceClassInterfaceMap*/
+     {(usb_device_class_init_call_t)NULL, (usb_device_class_deinit_call_t)NULL, (usb_device_class_event_callback_t)NULL,
+      (usb_device_class_type_t)0},
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/middleware/usb/device/class/usb_device_class.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/middleware/usb/device/class/usb_device_class.h
+--- SDK_25_03_00_FRDM-MCXN236/middleware/usb/device/class/usb_device_class.h	2025-08-29 17:40:28.245424663 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/middleware/usb/device/class/usb_device_class.h	2025-07-30 11:32:11.550414469 +0800
+@@ -35,6 +35,7 @@
+     kUSB_DeviceClassTypePrinter,
+     kUSB_DeviceClassTypeDfu,
+     kUSB_DeviceClassTypeCcid,
++    kUSB_DeviceClassTypeMctp = 0x14U,
+ } usb_device_class_type_t;
+ 
+ /*! @brief Available common class events. */
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/include/mpu_syscall_numbers.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/include/mpu_syscall_numbers.h
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/include/mpu_syscall_numbers.h	2025-08-29 17:40:28.325424669 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/include/mpu_syscall_numbers.h	2025-07-30 11:32:11.550414469 +0800
+@@ -100,6 +100,32 @@
+ #define SYSTEM_CALL_xStreamBufferBytesAvailable            67
+ #define SYSTEM_CALL_xStreamBufferSetTriggerLevel           68
+ #define SYSTEM_CALL_xStreamBufferNextMessageLengthBytes    69
+-#define NUM_SYSTEM_CALLS                                   70  /* Total number of system calls. */
++
++
++// Unused 70-76
++#define NV_SYSTEM_CALL_SelfTest_GetTestingFwResult                  77
++#define NV_SYSTEM_CALL_SelfTest_GetTRNGConfig                       78
++// Unused 79-80
++#define NV_SYSTEM_CALL_SPDM_Get_L4_Cert_Len                         81
++#define NV_SYSTEM_CALL_SPDM_Get_L5_Cert_Len                         82
++#define NV_SYSTEM_CALL_SPDM_Get_L4_Csr_Len                          83
++#define NV_SYSTEM_CALL_SPDM_Read_L4_Csr                             84
++#define NV_SYSTEM_CALL_SPDM_Read_L4_Cert                            85
++#define NV_SYSTEM_CALL_SPDM_Read_L5_Cert                            86
++#define NV_SYSTEM_CALL_SPDM_Get_L5_Private_Key                      87
++#define NV_SYSTEM_CALL_Crypto_Image_Auth_Ecdsa                      88
++#define NV_SYSTEM_CALL_Gpio_Init_Interrupt                          89
++#define NV_SYSTEM_CALL_SPDM_Read_DevIk_Request                      90
++#define NV_SYSTEM_CALL_SPDM_Construct_L4_Cert                       91
++#define NV_SYSTEM_CALL_SPDM_Construct_L5_Cert                       92
++#define NV_SYSTEM_CALL_SPDM_Erase_L4_Cert                           93
++#define NV_SYSTEM_CALL_SPDM_Erase_L5_Cert                           94
++#define NV_SYSTEM_CALL_uxTaskGetTaskNumber                          95
++#define NV_SYSTEM_CALL_Fccob_Driver_Phrase_Write                    96
++#define NV_SYSTEM_CALL_Fccob_Driver_Erase                           97
++#define NV_SYSTEM_CALL_Fccob_Driver_Read                            98
++#define NV_SYSTEM_CALL_IPC_Write_Queue_Request                      99
++#define NV_SYSTEM_CALL_IPC_Write_Event_Request                      100
++#define NUM_SYSTEM_CALLS                                            101  /* Total number of system calls. */
+ 
+ #endif /* MPU_SYSCALL_NUMBERS_H */
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/include/mpu_wrappers.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/include/mpu_wrappers.h
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/include/mpu_wrappers.h	2025-08-29 17:40:28.325424669 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/include/mpu_wrappers.h	2025-07-15 11:40:45.095721028 +0800
+@@ -105,6 +105,10 @@
+             #define xTaskGetApplicationTaskTagFromISR    MPU_xTaskGetApplicationTaskTagFromISR
+             #define xTaskGenericNotifyFromISR            MPU_xTaskGenericNotifyFromISR
+             #define vTaskGenericNotifyGiveFromISR        MPU_vTaskGenericNotifyGiveFromISR
++
++
++            #define vTaskSetTaskNumber                   MPU_vTaskSetTaskNumber
++            #define uxTaskGetTaskNumber                  MPU_uxTaskGetTaskNumber
+         #endif /* #if ( configUSE_MPU_WRAPPERS_V1 == 0 ) */
+ 
+ /* Map standard queue.h API functions to the MPU equivalents. */
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/ARMv8M/non_secure/portmacrocommon.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/ARMv8M/non_secure/portmacrocommon.h
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/ARMv8M/non_secure/portmacrocommon.h	2025-08-29 17:40:28.355424673 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/ARMv8M/non_secure/portmacrocommon.h	2025-07-15 11:40:45.095721028 +0800
+@@ -322,12 +322,12 @@
+ /**
+  * @brief SVC numbers.
+  */
+-#define portSVC_ALLOCATE_SECURE_CONTEXT    100
+-#define portSVC_FREE_SECURE_CONTEXT        101
+-#define portSVC_START_SCHEDULER            102
+-#define portSVC_RAISE_PRIVILEGE            103
+-#define portSVC_SYSTEM_CALL_EXIT           104
+-#define portSVC_YIELD                      105
++#define portSVC_ALLOCATE_SECURE_CONTEXT    200
++#define portSVC_FREE_SECURE_CONTEXT        201
++#define portSVC_START_SCHEDULER            202
++#define portSVC_RAISE_PRIVILEGE            203
++#define portSVC_SYSTEM_CALL_EXIT           204
++#define portSVC_YIELD                      205
+ /*-----------------------------------------------------------*/
+ 
+ /**
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/Common/mpu_wrappers_v2.c SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/Common/mpu_wrappers_v2.c
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/Common/mpu_wrappers_v2.c	2025-08-29 17:40:28.365424671 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/Common/mpu_wrappers_v2.c	2025-07-30 11:32:11.560414473 +0800
+@@ -4999,6 +4999,117 @@
+     #endif
+ /*-----------------------------------------------------------*/
+ 
++#if ( configUSE_TRACE_FACILITY == 1 )
++
++    void MPU_vTaskSetTaskNumber( TaskHandle_t xTask,
++                             const UBaseType_t uxHandle ) PRIVILEGED_FUNCTION;
++
++    UBaseType_t MPU_uxTaskGetTaskNumberImpl( TaskHandle_t xTask ) PRIVILEGED_FUNCTION;
++
++
++    void MPU_vTaskSetTaskNumber( TaskHandle_t xTask,
++                             const UBaseType_t uxHandle ) /* PRIVILEGED_FUNCTION */
++    {
++        int32_t lIndex;
++        TaskHandle_t xInternalTaskHandle = NULL;
++
++        if( xTask == NULL )
++        {
++            xTask = xTaskGetCurrentTaskHandle();
++            vTaskSetTaskNumber( xTask , uxHandle );
++        }
++        else
++        {
++            lIndex = ( int32_t ) xTask;
++
++            if( IS_EXTERNAL_INDEX_VALID( lIndex ) != pdFALSE )
++            {
++                xInternalTaskHandle = MPU_GetTaskHandleAtIndex( CONVERT_TO_INTERNAL_INDEX( lIndex ) );
++
++                if( xInternalTaskHandle != NULL )
++                {
++                    vTaskSetTaskNumber( xInternalTaskHandle , uxHandle );
++                }
++            }
++        }
++    }
++
++    UBaseType_t MPU_uxTaskGetTaskNumberImpl( TaskHandle_t xTask ) /* PRIVILEGED_FUNCTION */
++    {
++        UBaseType_t uxReturn = 0;
++        int32_t lIndex;
++        TaskHandle_t xInternalTaskHandle = NULL;
++
++        if( xTask == NULL )
++        {
++            xTask = xTaskGetCurrentTaskHandle();
++            uxReturn = uxTaskGetTaskNumber( xTask );
++        }
++        else
++        {
++            lIndex = ( int32_t ) xTask;
++
++            if( IS_EXTERNAL_INDEX_VALID( lIndex ) != pdFALSE )
++            {
++                xInternalTaskHandle = MPU_GetTaskHandleAtIndex( CONVERT_TO_INTERNAL_INDEX( lIndex ) );
++
++                if( xInternalTaskHandle != NULL )
++                {
++                    uxReturn = uxTaskGetTaskNumber( xInternalTaskHandle );
++                }
++            }
++        }
++        return uxReturn;
++    }
++
++#endif /* #if ( configUSE_TRACE_FACILITY == 1 ) */
++
++uint32_t MPU_uxTaskGetTaskNumber( TaskHandle_t xTask) __attribute__((naked)) FREERTOS_SYSTEM_CALL;
++uint32_t MPU_uxTaskGetTaskNumber( TaskHandle_t xTask)
++{
++    __asm volatile
++    (
++        " .syntax unified                                       \n"
++        " .extern MPU_uxTaskGetTaskNumberImpl                   \n"
++        "                                                       \n"
++        " push {r0}                                             \n"
++        " mrs r0, ipsr                                          \n"
++        " cmp r0, #0                                            \n"
++        " bne MPU_uxTaskGetTaskNumberImpl_Priv                  \n"
++        " mrs r0, control                                       \n"
++        " tst r0, #1                                            \n"
++        " bne MPU_uxTaskGetTaskNumberImpl_Unpriv                \n"
++        " MPU_uxTaskGetTaskNumberImpl_Priv:                     \n"
++        "     pop {r0}                                          \n"
++        "     b MPU_uxTaskGetTaskNumberImpl                     \n"
++        " MPU_uxTaskGetTaskNumberImpl_Unpriv:                   \n"
++        "     pop {r0}                                          \n"
++        "     svc %0                                            \n"
++        "                                                       \n"
++        : : "i" ( NV_SYSTEM_CALL_uxTaskGetTaskNumber ) : "memory"
++    );
++}
++
++extern void SelfTest_GetTestingFwResult_Priv();
++extern void SelfTest_GetTRNGConfig_Priv();
++extern void SPDM_Get_L4_Cert_Len_Priv();
++extern void SPDM_Get_L5_Cert_Len_Priv();
++extern void SPDM_Get_L4_Csr_Len_Priv();
++extern void SPDM_Read_L4_Csr_Priv();
++extern void SPDM_Read_L4_Cert_Priv();
++extern void SPDM_Read_L5_Cert_Priv();
++extern void SPDM_Get_L5_Private_Key_Priv();
++extern void Crypto_Image_Auth_Ecdsa_Priv();
++extern void Gpio_Init_Interrupt_Priv();
++extern void SPDM_Read_DevIk_Request_Priv();
++extern void SPDM_Construct_L4_Cert_Priv();
++extern void SPDM_Construct_L5_Cert_Priv();
++extern void SPDM_Erase_L4_Cert_Priv();
++extern void SPDM_Erase_L5_Cert_Priv();
++extern void Fccob_Driver_Phrase_Write_Priv();
++extern void Fccob_Driver_Erase_Priv();
++extern void Fccob_Driver_Read_Priv();
++
+ /**
+  * @brief Array of system call implementation functions.
+  *
+@@ -5248,7 +5359,7 @@
+             ( UBaseType_t ) MPU_xStreamBufferSpacesAvailableImpl,           /* SYSTEM_CALL_xStreamBufferSpacesAvailable. */
+             ( UBaseType_t ) MPU_xStreamBufferBytesAvailableImpl,            /* SYSTEM_CALL_xStreamBufferBytesAvailable. */
+             ( UBaseType_t ) MPU_xStreamBufferSetTriggerLevelImpl,           /* SYSTEM_CALL_xStreamBufferSetTriggerLevel. */
+-            ( UBaseType_t ) MPU_xStreamBufferNextMessageLengthBytesImpl     /* SYSTEM_CALL_xStreamBufferNextMessageLengthBytes. */
++            ( UBaseType_t ) MPU_xStreamBufferNextMessageLengthBytesImpl,    /* SYSTEM_CALL_xStreamBufferNextMessageLengthBytes. */
+         #else
+             ( UBaseType_t ) 0,                                              /* SYSTEM_CALL_xStreamBufferSend. */
+             ( UBaseType_t ) 0,                                              /* SYSTEM_CALL_xStreamBufferReceive. */
+@@ -5260,6 +5371,37 @@
+             ( UBaseType_t ) 0,                                              /* SYSTEM_CALL_xStreamBufferNextMessageLengthBytes. */
+         #endif
+ 
++            ( UBaseType_t ) 0,                                               /* (70)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (71)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (72)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (73)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (74)  NV_SYSTEM_CALL_USB_Enable_HID_RX. */
++            ( UBaseType_t ) 0,                                               /* (75)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (76)  Unused. */
++            ( UBaseType_t ) SelfTest_GetTestingFwResult_Priv,                /* (77)  NV_SYSTEM_CALL_SelfTest_GetTestingFwResult. */
++            ( UBaseType_t ) SelfTest_GetTRNGConfig_Priv,                     /* (78)  NV_SYSTEM_CALL_SelfTest_GetTRNGConfig. */
++            ( UBaseType_t ) 0,                                               /* (79)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (80)  Unused. */
++            ( UBaseType_t ) SPDM_Get_L4_Cert_Len_Priv,                       /* (81)  NV_SYSTEM_CALL_SPDM_Get_L4_Cert_Len. */
++            ( UBaseType_t ) SPDM_Get_L5_Cert_Len_Priv,                       /* (82)  NV_SYSTEM_CALL_SPDM_Get_L5_Cert_Len. */
++            ( UBaseType_t ) SPDM_Get_L4_Csr_Len_Priv,                        /* (83)  NV_SYSTEM_CALL_SPDM_Get_L4_Csr_Len. */
++            ( UBaseType_t ) SPDM_Read_L4_Csr_Priv,                           /* (84)  NV_SYSTEM_CALL_SPDM_Read_L4_Csr. */
++            ( UBaseType_t ) SPDM_Read_L4_Cert_Priv,                          /* (85)  NV_SYSTEM_CALL_SPDM_Read_L4_Cert. */
++            ( UBaseType_t ) SPDM_Read_L5_Cert_Priv,                          /* (86)  NV_SYSTEM_CALL_SPDM_Read_L5_Cert. */
++            ( UBaseType_t ) SPDM_Get_L5_Private_Key_Priv,                    /* (87)  NV_SYSTEM_CALL_SPDM_Get_L5_Private_Key. */
++            ( UBaseType_t ) Crypto_Image_Auth_Ecdsa_Priv,                    /* (88)  NV_SYSTEM_CALL_Crypto_Image_Auth_Ecdsa. */
++            ( UBaseType_t ) Gpio_Init_Interrupt_Priv,                        /* (89)  NV_SYSTEM_CALL_Gpio_Init_Interrupt. */
++            ( UBaseType_t ) SPDM_Read_DevIk_Request_Priv,                    /* (90)  NV_SYSTEM_CALL_SPDM_Read_DevIk_Request. */
++            ( UBaseType_t ) SPDM_Construct_L4_Cert_Priv,                     /* (91)  NV_SYSTEM_CALL_SPDM_Construct_L4_Cert. */
++            ( UBaseType_t ) SPDM_Construct_L5_Cert_Priv,                     /* (92)  NV_SYSTEM_CALL_SPDM_Construct_L5_Cert. */
++            ( UBaseType_t ) SPDM_Erase_L4_Cert_Priv,                         /* (93)  NV_SYSTEM_CALL_SPDM_Erase_L4_Cert. */
++            ( UBaseType_t ) SPDM_Erase_L5_Cert_Priv,                         /* (94)  NV_SYSTEM_CALL_SPDM_Erase_L5_Cert. */
++            ( UBaseType_t ) MPU_uxTaskGetTaskNumber,                         /* (95)  NV_SYSTEM_CALL_uxTaskGetTaskNumber. */
++            ( UBaseType_t ) Fccob_Driver_Phrase_Write_Priv,                  /* (96)  NV_SYSTEM_CALL_Fccob_Driver_Phrase_Write. */
++            ( UBaseType_t ) Fccob_Driver_Erase_Priv,                         /* (97)  NV_SYSTEM_CALL_Fccob_Driver_Erase. */
++            ( UBaseType_t ) Fccob_Driver_Read_Priv,                          /* (98)  NV_SYSTEM_CALL_Fccob_Driver_Read. */
++            ( UBaseType_t ) 0,                                               /* (99)  Unused. */
++            ( UBaseType_t ) 0,                                               /* (100) Unused. */
+     };
+ /*-----------------------------------------------------------*/
+ 
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33/non_secure/portmacrocommon.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33/non_secure/portmacrocommon.h
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33/non_secure/portmacrocommon.h	2025-08-29 17:40:28.365424671 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33/non_secure/portmacrocommon.h	2025-07-15 11:40:45.105640785 +0800
+@@ -322,12 +322,12 @@
+ /**
+  * @brief SVC numbers.
+  */
+-#define portSVC_ALLOCATE_SECURE_CONTEXT    100
+-#define portSVC_FREE_SECURE_CONTEXT        101
+-#define portSVC_START_SCHEDULER            102
+-#define portSVC_RAISE_PRIVILEGE            103
+-#define portSVC_SYSTEM_CALL_EXIT           104
+-#define portSVC_YIELD                      105
++#define portSVC_ALLOCATE_SECURE_CONTEXT    200
++#define portSVC_FREE_SECURE_CONTEXT        201
++#define portSVC_START_SCHEDULER            202
++#define portSVC_RAISE_PRIVILEGE            203
++#define portSVC_SYSTEM_CALL_EXIT           204
++#define portSVC_YIELD                      205
+ /*-----------------------------------------------------------*/
+ 
+ /**
+diff -ru --strip-trailing-cr '--exclude=FRDM-MCXN236_manifest_v3_15.xml' '--exclude=SW-Content-Register.txt' SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33_NTZ/non_secure/portmacrocommon.h SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33_NTZ/non_secure/portmacrocommon.h
+--- SDK_25_03_00_FRDM-MCXN236/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33_NTZ/non_secure/portmacrocommon.h	2025-08-29 17:40:28.365424671 +0800
++++ SDK_25_03_00_FRDM-MCXN236_753e2fa5e/rtos/freertos/freertos-kernel/portable/GCC/ARM_CM33_NTZ/non_secure/portmacrocommon.h	2025-07-15 11:40:45.105640785 +0800
+@@ -322,12 +322,12 @@
+ /**
+  * @brief SVC numbers.
+  */
+-#define portSVC_ALLOCATE_SECURE_CONTEXT    100
+-#define portSVC_FREE_SECURE_CONTEXT        101
+-#define portSVC_START_SCHEDULER            102
+-#define portSVC_RAISE_PRIVILEGE            103
+-#define portSVC_SYSTEM_CALL_EXIT           104
+-#define portSVC_YIELD                      105
++#define portSVC_ALLOCATE_SECURE_CONTEXT    200
++#define portSVC_FREE_SECURE_CONTEXT        201
++#define portSVC_START_SCHEDULER            202
++#define portSVC_RAISE_PRIVILEGE            203
++#define portSVC_SYSTEM_CALL_EXIT           204
++#define portSVC_YIELD                      205
+ /*-----------------------------------------------------------*/
+ 
+ /**

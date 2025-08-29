@@ -1,0 +1,33 @@
+# ===============  YAML configuration for Certification Block V21  ================
+# ======================================================================================================================
+#                                   == ISK (Image signing key) Certificate Settings ==
+# ======================================================================================================================
+useIsk: False  # [Required], Use ISK for signature certification.
+
+## Only available when useIsk = True
+# iskPublicKey: ../keystore/<KEY_SET>/MCXN236_ECDSA_P384_ISK<KEY_INDEX>_pub.pem
+
+# signProvider: type=nvsp;key_number=<KEY_INDEX>;key_set=<KEY_SET>;key_type=secp384r1;isk_sign=0
+
+# iskCertificateConstraint: <ISK_KEY_ID>
+
+# ======================================================================================================================
+#                                                == Root Keys Settings ==
+# ======================================================================================================================
+# ROT0:
+rootCertificate0File: ../keystore/<KEY_SET>/MCXN236_ECDSA_P384_ROTK0_fake_pvt.pem  # [Required], Root Certificate File 0.
+# ROT1:
+rootCertificate1File: ../keystore/<KEY_SET>/MCXN236_ECDSA_P384_ROTK1_fake_pvt.pem  # [Required], Root Certificate File 1.
+# ROT2:
+rootCertificate2File: ../keystore/<KEY_SET>/MCXN236_ECDSA_P384_ROTK2_fake_pvt.pem  # [Required], Root Certificate File 2.
+# ROT3:
+rootCertificate3File: ../keystore/<KEY_SET>/MCXN236_ECDSA_P384_ROTK3_fake_pvt.pem  # [Required], Root Certificate File 3.
+
+mainRootCertId: <KEY_INDEX>  # [Conditionally required] Index of root key that is used as a main.
+# ======================================================================================================================
+#                                                  == Basic Settings ==
+# ======================================================================================================================
+# --------------------------------------===== cert block filename [Required] =====--------------------------------------
+# Description: Generated cert block filename.
+containerOutputFile: <OUTPUT>
+# ---------------------------------------------------------------------------------

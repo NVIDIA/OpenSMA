@@ -1,0 +1,64 @@
+# ==============================  Secure Binary v3.1 Configuration template for mcxn547.  ==============================
+
+# ======================================================================================================================
+#                                                 == General Options ==                                                 
+# ======================================================================================================================
+# -------------------------------------===== The chip family name [Required] =====--------------------------------------
+# Description: NXP chip family identifier.
+# Possible options: <k32w148, kw45b41z5, kw45b41z8, lpc55s36, mcxn235, mcxn236, mcxn546, mcxn547, mcxn946, mcxn947,
+# mcxw716a, mcxw716c, mimxrt798s, rw610, rw612>
+family: mcxn547
+# -----------------------------------------===== MCU revision [Optional] =====------------------------------------------
+# Description: Revision of silicon. The 'latest' name, means most current revision.
+# Possible options: <a0, a1, latest>
+revision: latest
+# ======================================================================================================================
+#                                                  == Basic Settings ==                                                 
+# ======================================================================================================================
+# ---------------------------------------===== Firmware version. [Optional] =====---------------------------------------
+# Description: Value compared with Secure_FW_Version monotonic counter value stored in protected memory (MCU specific).
+# If value is lower than value in protected memory, then is image rejected (rollback protection).
+firmwareVersion: 0
+# -----------------------------------------===== SB3 filename [Required] =====------------------------------------------
+# Description: Generated SB3 container filename.
+containerOutputFile: <OUTPUT>
+# ======================================================================================================================
+#                                              == Image Signing Settings ==                                             
+# ======================================================================================================================
+# -------------------------------===== Signature Provider [Conditionally required] =====--------------------------------
+# Description: Signature provider configuration in format 'type=<sp_type>;<key1>=<value1>;<key2>=<value2>'.
+signProvider: <SING_PROVIDER>
+# ======================================================================================================================
+#                                              == Certificate Block V2.1 ==                                             
+# ======================================================================================================================
+# -----------------------------===== Certificate Block binary/config file [Required] =====------------------------------
+# Description: Path to certificate block binary or config file.
+certBlock: <CERT_BLOCK>
+# ======================================================================================================================
+#                                           == Secure Binary v3.1 Settings ==                                           
+# ======================================================================================================================
+# ----------------------------------------===== Part Common Key [Optional] =====----------------------------------------
+# Description: Path to PCK/NPK 256 or 128 bit key in plain hex string format or path to binary file or hex string.
+containerKeyBlobEncryptionKey: <ENC_KEY_FILE>
+# ------------------------------------------===== Description [Optional] =====------------------------------------------
+# Description: Description up to 16 characters, longer will be truncated. Stored in SB3.1 manifest.
+description: MCXN547 SB3
+# ======================================================================================================================
+#                                       == Secure Binary v3.1 Commands Settings ==                                      
+# ======================================================================================================================
+commands: <COMMANDS>
+
+
+# ALL SUPPORTED SB COMMANDS:
+# - checkFwVersion(value, counterId);
+# - configureMemory(configAddress, memoryId);
+# - copy(addressFrom, memoryIdFrom, size, addressTo, memoryIdTo);
+# - erase(address, size, memoryId);
+# - execute(address);
+# - fillMemory(address, size, pattern);
+# - load(address, memoryId, file, values, value, authentication);
+# - loadCMAC(address, memoryId, file);
+# - loadHashLocking(address, memoryId, file);
+# - loadKeyBlob(offset, wrappingKeyId, file);
+# - programFuses(address, values);
+# - programIFR(address, file, value, values);

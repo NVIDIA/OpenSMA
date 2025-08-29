@@ -1,0 +1,41 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#include "corepdk/modules/spdm/src/app/pdk-spdm-app-res-certificate-plat.h"
+#include "nv/spdm/spdm_cert_chain.h"
+
+namespace pdk::spdm::platforms::res::certificate {
+
+size_t
+get_certificate(uint8_t slot, size_t offset, size_t length, std::span<uint8_t> buffer_to_write)
+{
+    if (offset > std::numeric_limits<uint16_t>::max()
+        || length > std::numeric_limits<uint16_t>::max()) {
+        return 0;
+    }
+    auto const CopyCertLength = nv::spdm::cert::get_cert_data_for_slot(
+        slot, buffer_to_write.data(), offset, length);
+    return CopyCertLength;
+}
+
+size_t get_certificate_length(uint8_t slot)
+{
+    const auto CertLength = nv::spdm::cert::get_cert_chain_length(slot);
+    return static_cast<size_t>(CertLength);
+}
+
+}  // namespace pdk::spdm::platforms::res::certificate

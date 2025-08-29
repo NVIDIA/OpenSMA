@@ -1,0 +1,26 @@
+--wide-character-encoding=8
+--pp-off='!pp off'
+--pp-on='!pp on'
+--indentation=3
+--indent-continuation=2
+--keyword-lower-case
+--pragma-lower-case
+--attribute-mixed-case
+--enum-mixed-case
+--type-mixed-case
+--number-mixed-case
+--name-mixed-case
+--alignment
+--align-modes
+--no-compact
+--RM-style-spacing
+--no-separate-is 
+--no-separate-return 
+--no-separate-then 
+--no-separate-loop-then
+--vertical-named-aggregates
+--par-threshold=3
+--comments-unchanged
+--no-end-id
+--eol=unix
+--max-line-length=96

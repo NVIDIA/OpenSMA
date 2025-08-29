@@ -1,0 +1,690 @@
+:root {
+    --nvgreen: #76b900;
+    --nvemerald: #008564;
+    --nvamethyst: #5d1682;
+    --nvblue: #0070c5;
+    --nvgarnet: #890c57;
+    --nvfluorite: #fac200;
+    --nvblack: #000000;
+    --nvoffwhite: #f7f7f7;
+    --nvlight-gray: #cdcdcd;
+    --nvgray: #8c8c8c;
+    --nvdark-gray: #5e5e5e;
+    --nvwhite: #ffffff;
+    --nvlow: #F07878;
+    --nvmed: #ffe050;
+    --nvhi: #d0ffd0;
+    --nvcov: #d0ffd0;
+    --nvnocov: #ffd0d0;
+    --nvfontsize: 12pt;
+    --nvcodesize: 10pt;
+    --nvcodefont: "Roboto Mono", Inconsolata, Monospace;
+}
+
+@font-face {
+    font-family: NVIDIA;
+    font-style: normal;
+    font-weight: 300;
+    src: url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Lt.woff) format("woff"), url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Lt.woff2) format("woff2")
+}
+
+@font-face {
+    font-family: NVIDIA;
+    font-style: normal;
+    font-weight: 400;
+    src: url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Rg.woff) format("woff"), url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Rg.woff2) format("woff2")
+}
+
+@font-face {
+    font-family: NVIDIA;
+    font-style: normal;
+    font-weight: 500;
+    src: url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Md.woff) format("woff"), url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Md.woff2) format("woff2")
+}
+
+@font-face {
+    font-family: NVIDIA;
+    font-style: normal;
+    font-weight: 700;
+    src: url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Bd.woff) format("woff"), url(https://images.nvidia.com/etc/designs/nvidiaGDC/clientlibs_base/fonts/nvidia-sans/GLOBAL/NVIDIASans_W_Bd.woff2) format("woff2")
+}
+
+/* All views: initial background and text color */
+body {
+    line-height: 1.25 !important;
+    padding-top: 2px;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    font-family: var(--nvcodefont);
+    bottom: 0
+}
+html, body { 
+    height: 100%; 
+    width: 100%;
+    margin: 0px;
+    padding: 0px;
+    border: 0px;
+    outline: 0px;
+    font: 12pt NVIDIA, sans-serif;
+    font-weight: normal;
+    color: var(--nvblack);
+    background-color: var(--nvwhite);
+}
+table {
+    border-collapse: collapse;
+}
+
+/* All views: standard link format*/
+a:link, a:visited {
+    color: var(--nvgreen);
+    text-decoration: none;
+}
+
+a:active, a:hover {
+    color: var(--nvgreen);
+    text-decoration: underline;
+}
+
+td {
+    white-space: nowrap;
+    padding: 2px;
+}
+
+tr.tbody {
+    border-bottom: 1px solid var(--nvemerald);
+}
+
+/* All views: main title format */
+td.title {
+    text-align: center;
+    font-size: 20pt;
+    font-weight: bold;
+    font-variant-caps: small-caps;
+    background-image: url("logo-trans.png");
+    background-repeat: no-repeat;
+    background-color: var(--nvblack);
+    color: var(--nvwhite);
+    height: 52px;
+}
+
+/* All views: color of horizontal ruler */
+td.ruler {
+    padding:0px;
+    background-color: var(--nvemerald);
+}
+
+/* All views: top left menu */
+td.headerItem {
+    text-align: right;
+}
+
+td.headerValue {
+    color: var(--nvgreen);
+}
+
+td.headerCovTableHead {
+    text-align: right;
+}
+
+/* All views: top right coverage report */
+td.headerCovTableEntry {
+    text-align: right;
+    color: var(--nvemerald);
+    background-color: var(--nvoffwhite);
+}
+
+td.headerCovTableEntryHi {
+    text-align: right;
+    color: var(--nvblack);
+    background-color: var(--nvhi);
+}
+
+td.headerCovTableEntryMed {
+    text-align: right;
+    color: var(--nvblack);
+    background-color: var(--nvmed);
+}
+
+td.headerCovTableEntryLo {
+    text-align: right;
+    color: var(--nvblack);
+    background-color: var(--nvlow);
+}
+
+/* All views: header legend value for legend entry */
+td.headerValueLeg {
+    text-align: left;
+    color: var(--nvblack);
+}
+
+/* All views: version string format */
+td.versionInfo {
+    text-align: right;
+    font-size: 6pt;
+}
+
+/* Directory view/File view (all)/Test case descriptions:
+   table headline format */
+td.tableHead {
+    text-align: center;
+    color: var(--nvwhite);
+    background-color: var(--nvemerald);
+}
+
+span.tableHeadSort {
+    padding-right: 0px;
+}
+
+/* Directory view/File view (all): filename entry format */
+td[class*="cover"] {
+    border-bottom: 1px solid var(--nvlight-gray);
+}
+td.coverFile {
+    text-align: left;
+    color: var(--nvgreen);
+    background-color: var(--nvoffwhite);
+    font-family: var(--nvcodefont);
+    font-size: var(--nvcodesize);
+}
+
+/* Directory view/File view (all): bar-graph entry format*/
+td.coverBar {
+    background-color: var(--nvoffwhite);
+}
+
+/* Directory view/File view (all): bar-graph outline color */
+td.coverBarOutline {
+    background-color: var(--nvblack);
+    padding: 1px;
+}
+
+/* Directory view/File view (all): percentage entry for files with
+   high coverage rate */
+td.coverPerHi {
+    text-align: right;
+    background-color: var(--nvhi);
+}
+
+/* Directory view/File view (all): line count entry for files with
+   high coverage rate */
+td.coverNumHi {
+    text-align: right;
+    background-color: var(--nvhi);
+}
+
+/* Directory view/File view (all): percentage entry for files with
+   medium coverage rate */
+td.coverPerMed {
+    text-align: right;
+    background-color: var(--nvmed);
+}
+
+/* Directory view/File view (all): line count entry for files with
+   medium coverage rate */
+td.coverNumMed {
+    text-align: right;
+    background-color: var(--nvmed);
+}
+
+/* Directory view/File view (all): percentage entry for files with
+   low coverage rate */
+td.coverPerLo {
+    text-align: right;
+    background-color: var(--nvlow);
+}
+
+/* Directory view/File view (all): line count entry for files with
+   low coverage rate */
+td.coverNumLo {
+    text-align: right;
+    background-color: var(--nvlow);
+}
+
+/* File view (all): "show/hide details" link format */
+a.detail:link {
+    color: #B8D0FF;
+}
+
+/* File view (all): "show/hide details" link - visited format */
+a.detail:visited {
+    color: #B8D0FF;
+}
+
+/* File view (all): "show/hide details" link - activated format */
+a.detail:active {
+    color: var(--nvwhite);
+}
+
+/* File view (detail): test name entry */
+td.testName {
+    text-align: right;
+    background-color: var(--nvlight-gray);
+}
+
+/* File view (detail): test percentage entry */
+td.testPer {
+    text-align: right;
+    background-color: var(--nvlight-gray);
+}
+
+/* File view (detail): test lines count entry */
+td.testNum {
+    text-align: right;
+    background-color: var(--nvlight-gray);
+}
+
+/* Test case descriptions: test name format*/
+dt {
+    font-weight: bold;
+}
+
+/* Test case descriptions: description table body */
+td.testDescription {
+    background-color: var(--nvlight-gray);
+}
+
+/* Source code view: function entry */
+td.coverFn {
+    text-align: left;
+    color: var(--nvgreen);
+    background-color: var(--nvoffwhite);
+    font-family: var(--nvcodefont);
+}
+
+/* Source code view: function entry zero count*/
+td.coverFnLo {
+    text-align: right;
+    background-color: var(--nvlow);
+}
+
+/* Source code view: function entry nonzero count*/
+td.coverFnHi {
+    text-align: right;
+    background-color: var(--nvhi);
+}
+
+/* Source code view: source code format */
+pre.source {
+    font-family: var(--nvcodefont);
+    font-size: var(--nvcodesize);
+    white-space: pre;
+}
+
+/* Source code view: line number format */
+span.lineNum {
+    background-color: var(--nvlight-gray);
+}
+
+/* Source code view: format for lines which were executed */
+td.lineCov, span.lineCov, span.coverLegendCov, span.branchCov
+, td.tlaGIC, td.tlaBgGIC, span.tlaGIC, span.tlaBgGIC, a.tlaGIC, td.headerCovTableHeadGIC
+, td.tlaGNC, td.tlaBgGNC, span.tlaGNC, span.tlaBgGNC, a.tlaGNC, td.headerCovTableHeadGNC
+, td.tlaCBC, td.tlaBgCBC, span.tlaCBC, span.tlaBgCBC, a.tlaCBC, td.headerCovTableHeadCBC
+, td.tlaGBC, td.tlaBgGBC, span.tlaGBC, span.tlaBgGBC, a.tlaGBC, td.headerCovTableHeadGBC {
+    background-color: var(--nvcov);
+}
+
+/* Source code view: format for lines which were not executed */
+td.lineNoCov, span.lineNoCov, span.coverLegendNoCov, span.branchNoCov, span.branchNoExec 
+, span.tlaUNC, span.tlaBgUNC, a.tlaBgUNC, td.headerCovTableHeadUNC 
+, td.tlaLBC, td.tlaBgLBC, a.tlaBgLBC, td.headerCovTableHeadLBC 
+, td.tlaUIC, td.tlaBgUIC, span.tlaUIC, span.tlaBgUIC, a.tlaUIC, td.headerCovTableHeadUIC 
+, td.tlaUBC, td.tlaBgUBC, span.tlaUBC, span.tlaBgUBC, a.tlaUBC, td.headerCovTableHeadUBC {
+    background-color: var(--nvnocov);
+}
+
+pre.source>a {
+    text-decoration: none;
+}
+/* Source code view (function table): standard link - visited format */
+td.lineNoCov>a:visited, td.lineCov>a:visited {
+    color: black;
+    text-decoration: underline;
+}
+
+/* Source code view: format for lines which were executed only in a
+   previous version */
+span.lineDiffCov {
+    background-color: #B5F7AF;
+}
+
+/* Source code view: format for the source code heading line */
+pre.sourceHeading {
+    white-space: pre;
+    font-weight: bold;
+    font-size: 12pt;
+    color: var(--nvemerald);
+    margin: 0px;
+}
+
+/* All views: header legend value for low rate */
+td.headerValueLegL {
+    text-align: center;
+    background-color: var(--nvlow);
+}
+
+/* All views: header legend value for med rate */
+td.headerValueLegM {
+    text-align: center;
+    background-color: var(--nvmed);
+}
+
+/* All views: header legend value for hi rate */
+td.headerValueLegH {
+    text-align: center;
+    background-color: var(--nvhi);
+}
+
+/* All views except source code view: legend format for low coverage */
+span.coverLegendCovLo {
+    background-color: var(--nvlow);
+}
+
+/* All views except source code view: legend format for med coverage */
+span.coverLegendCovMed {
+    background-color: var(--nvmed);
+}
+
+/* All views except source code view: legend format for hi coverage */
+span.coverLegendCovHi {
+    background-color: var(--nvhi);
+}
+
+/* new stuff */
+a.branchTla:link {
+  color: var(--nvblack);
+}
+
+a.branchTla:visited {
+  color: var(--nvblack);
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered New Code (+ => 0):
+Newly added code is not tested" */
+td.tlaUNC
+{
+  text-align: right;
+  background-color: #FF6230;
+}
+td.tlaBgUNC {
+  background-color: #FF6230;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered New Code (+ => 0):
+Newly added code is not tested" */
+span.tlaUNC
+{
+  text-align: left;
+}
+a.tlaBgUNC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Lost Baseline Coverage (1 => 0):
+Unchanged code is no longer tested" */
+td.tlaLBC
+{
+  text-align: right;
+}
+/* Source code view/table entry backround: format for lines classified as "Lost Baseline Coverage (1 => 0):
+Unchanged code is no longer tested" */
+span.tlaLBC
+{
+  text-align: left;
+}
+a.tlaBgLBC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered Included Code (# => 0):
+Previously unused code is untested" */
+td.tlaUIC
+{
+  text-align: right;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered Included Code (# => 0):
+Previously unused code is untested" */
+span.tlaUIC
+{
+  text-align: left;
+}
+a.tlaBgUIC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered Baseline Code (0 => 0):
+Unchanged code was untested before, is untested now" */
+td.tlaUBC
+{
+  text-align: right;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Uncovered Baseline Code (0 => 0):
+Unchanged code was untested before, is untested now" */
+span.tlaUBC
+{
+  text-align: left;
+}
+a.tlaBgUBC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained Baseline Coverage (0 => 1):
+Unchanged code is tested now" */
+td.tlaGBC
+{
+  text-align: right;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained Baseline Coverage (0 => 1):
+Unchanged code is tested now" */
+span.tlaGBC
+{
+  text-align: left;
+}
+a.tlaBgGBC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained Included Coverage (# => 1):
+Previously unused code is tested now" */
+td.tlaGIC
+{
+  text-align: right;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained Included Coverage (# => 1):
+Previously unused code is tested now" */
+span.tlaGIC
+{
+  text-align: left;
+}
+a.tlaBgGIC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained New Coverage (+ => 1):
+Newly added code is tested" */
+td.tlaGNC
+{
+  text-align: right;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Gained New Coverage (+ => 1):
+Newly added code is tested" */
+span.tlaGNC
+{
+  text-align: left;
+}
+a.tlaBgGNC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Covered Baseline Code (1 => 1):
+Unchanged code was tested before and is still tested" */
+td.tlaCBC
+{
+  text-align: right;
+}
+/* Source code view/table entry backround: format for lines classified as "Covered Baseline Code (1 => 1):
+Unchanged code was tested before and is still tested" */
+span.tlaCBC
+{
+  text-align: left;
+}
+a.tlaBgCBC {
+  color: #000000;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Excluded Uncovered Baseline (0 => #):
+Previously untested code is unused now" */
+td.tlaEUB
+{
+  text-align: right;
+  background-color: #FFFFFF;
+}
+td.tlaBgEUB {
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Excluded Uncovered Baseline (0 => #):
+Previously untested code is unused now" */
+span.tlaEUB
+{
+  text-align: left;
+  background-color: #FFFFFF;
+}
+span.tlaBgEUB {
+  background-color: #FFFFFF;
+}
+a.tlaBgEUB {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+
+td.headerCovTableHeadEUB {
+  text-align: center;
+  padding-right: 6px;
+  padding-left: 6px;
+  padding-bottom: 0px;
+  font-family: sans-serif;
+  white-space: nowrap;
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Excluded Covered Baseline (1 => #):
+Previously tested code is unused now" */
+td.tlaECB
+{
+  text-align: right;
+  background-color: #FFFFFF;
+}
+td.tlaBgECB {
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Excluded Covered Baseline (1 => #):
+Previously tested code is unused now" */
+span.tlaECB
+{
+  text-align: left;
+  background-color: #FFFFFF;
+}
+span.tlaBgECB {
+  background-color: #FFFFFF;
+}
+a.tlaBgECB {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+
+td.headerCovTableHeadECB {
+  text-align: center;
+  padding-right: 6px;
+  padding-left: 6px;
+  padding-bottom: 0px;
+  font-family: sans-serif;
+  white-space: nowrap;
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Deleted Uncovered Baseline (0 => -):
+Previously untested code has been deleted" */
+td.tlaDUB
+{
+  text-align: right;
+  background-color: #FFFFFF;
+}
+td.tlaBgDUB {
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Deleted Uncovered Baseline (0 => -):
+Previously untested code has been deleted" */
+span.tlaDUB
+{
+  text-align: left;
+  background-color: #FFFFFF;
+}
+span.tlaBgDUB {
+  background-color: #FFFFFF;
+}
+a.tlaBgDUB {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+
+td.headerCovTableHeadDUB {
+  text-align: center;
+  padding-right: 6px;
+  padding-left: 6px;
+  padding-bottom: 0px;
+  font-family: sans-serif;
+  white-space: nowrap;
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Deleted Covered Baseline (1 => -):
+Previously tested code has been deleted" */
+td.tlaDCB
+{
+  text-align: right;
+  background-color: #FFFFFF;
+}
+td.tlaBgDCB {
+  background-color: #FFFFFF;
+}
+
+/* Source code view/table entry backround: format for lines classified as "Deleted Covered Baseline (1 => -):
+Previously tested code has been deleted" */
+span.tlaDCB
+{
+  text-align: left;
+  background-color: #FFFFFF;
+}
+span.tlaBgDCB {
+  background-color: #FFFFFF;
+}
+a.tlaBgDCB {
+  background-color: #FFFFFF;
+  color: #000000;
+}
+
+td.headerCovTableHeadDCB {
+  text-align: center;
+  padding-right: 6px;
+  padding-left: 6px;
+  padding-bottom: 0px;
+  font-family: sans-serif;
+  white-space: nowrap;
+  background-color: #FFFFFF;
+}
+
+/* Source code view: format for date/owner bin that is not hit */
+span.missBins
+{
+  background-color: #ff0000 /* red */
+}

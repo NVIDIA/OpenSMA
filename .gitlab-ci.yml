@@ -1,0 +1,119 @@
+stages:
+  - build
+  - test
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+.common_rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+
+.build_matrix: &build_matrix
+  - PROJECT: "p3957"
+    PLATFORM: "mcxn236"
+    BOARD: "p3957"
+    MODE: "rel"
+  - PROJECT: "et816"
+    PLATFORM: "mcxn236"
+    BOARD: "et816"
+    MODE: "rel"
+
+
+build:
+  extends: .common_rules
+  stage: build
+  image: ${CI_REGISTRY_IMAGE}/env:latest
+  tags:
+    - opensma
+  before_script:
+    # Create toolchain symlinks
+    - mkdir -p ${CI_PROJECT_DIR}/libexec/toolchain
+    - ln -sf /toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi ${CI_PROJECT_DIR}/libexec/toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
+    - ln -sf /toolchain/gnat_arm_elf_14.2.1_524d4d41 ${CI_PROJECT_DIR}/libexec/toolchain/gnat_arm_elf_14.2.1_524d4d41
+    - ln -sf /toolchain/gcc-arm-none-eabi-10.3-2021.10 ${CI_PROJECT_DIR}/libexec/toolchain/gcc-arm-none-eabi-10.3-2021.10
+    # Create SDK symlinks
+    - mkdir -p ${CI_PROJECT_DIR}/libexec/sdk
+    - ln -sf /sdk/SDK_25_03_00_FRDM-MCXN236 ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_03_00_FRDM-MCXN236
+    # Patch SDK_25_03_00_FRDM-MCXN236
+    - cd ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_03_00_FRDM-MCXN236
+    - patch -p1 < ${CI_PROJECT_DIR}/libexec/patch/mcu.patch
+    # Create make symlink
+    - mkdir -p ${CI_PROJECT_DIR}/corepdk/ubs/bin
+    - ln -sf /usr/bin/make ${CI_PROJECT_DIR}/corepdk/ubs/bin/make
+
+  script:
+    - cd ${CI_PROJECT_DIR}
+    - echo "Building ${PROJECT} firmware..."
+    - ./ubs build --local PROJECT=${PROJECT} PLATFORM=${PLATFORM} BOARD=${BOARD} MODE=${MODE}
+    - ./ubs local-sign --local PROJECT=${PROJECT} PLATFORM=${PLATFORM} BOARD=${BOARD} MODE=${MODE} SIGN_KEY=local
+    - echo "${PROJECT} firmware build completed successfully"
+
+  artifacts:
+    paths:
+      - build/${PROJECT}-${PLATFORM}-${MODE}/*_signed.*
+      - build/${PROJECT}-${PLATFORM}-${MODE}/${PROJECT}.bin
+    when: always
+  parallel:
+    matrix: *build_matrix
+
+
+.test_matrix: &test_matrix
+  - PROJECT: "p3957"
+    PLATFORM: "mcxn236"
+    BOARD: "p3957"
+    MODE: "rel"
+  - PROJECT: "et816"
+    PLATFORM: "mcxn236"
+    BOARD: "et816"
+    MODE: "rel"
+
+test:
+  extends: .common_rules
+  stage: test
+  image: ${CI_REGISTRY_IMAGE}/test:latest
+  tags:
+    - opensma-test
+  parallel:
+    matrix: *test_matrix
+  needs:
+    - job: "build"
+  variables:
+    SSH_CMD: "sshpass -p ${PASS} ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@${HOSTNAME}"
+    BIN_FILE: "build/${PROJECT}-${PLATFORM}-${MODE}/${PROJECT}.bin"
+    REMOTE_BIN: "/tmp/opensma-test/${PROJECT}.bin"
+  before_script:
+    - ${SSH_CMD} "mkdir -p /tmp/opensma-test"
+  script:
+    - echo "Running firmware test for ${PROJECT}..."
+    - echo "Target RPi - pi@${HOSTNAME}"
+    - ls -la ${BIN_FILE}
+    - echo "Step 1 - Transferring binary to RPi..."
+    - sshpass -p ${PASS} rsync -avz -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" ${BIN_FILE} pi@${HOSTNAME}:${REMOTE_BIN}
+    - echo "Step 2 - Erasing flash..."
+    - ${SSH_CMD} "nxpdebugmbox erase"
+    - echo "Step 3 - Entering ISP mode..."
+    - ${SSH_CMD} "mcu_isp_enter"
+    - sleep 2
+    - echo "Step 4 - Flashing firmware..."
+    - ${SSH_CMD} "blhost -u 0x1fc9:0x0158 write-memory 0x00000000 ${REMOTE_BIN}"
+    - echo "Step 5 - Resetting MCU..."
+    - ${SSH_CMD} "mcu_reset"
+    - sleep 5
+    - echo "Step 6 - Checking for NVIDIA USB device..."
+    - |
+      if ${SSH_CMD} "lsusb | grep '0955:cf11 NVIDIA'"; then
+        echo "✅ SUCCESS: NVIDIA USB device detected!"
+      else
+        echo "❌ FAILURE: NVIDIA USB device not found!"
+        ${SSH_CMD} "lsusb"
+        exit 1
+      fi
+  after_script:
+    - ${SSH_CMD} "rm -rf /tmp/opensma-test"

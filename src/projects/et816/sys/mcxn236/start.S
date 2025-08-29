@@ -1,0 +1,1 @@
+../../../testrunner/sys/mcxn236/start.S
