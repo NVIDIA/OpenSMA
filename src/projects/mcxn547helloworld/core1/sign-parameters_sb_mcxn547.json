@@ -1,0 +1,43 @@
+{
+    "mbi": false,
+    "sb3": true,
+    "mbiconfig": {
+        "outputImageExecutionAddress": "0x0",
+        "firmwareVersion": "0x0",
+        "imageVersion": "0x0"
+    },
+    "sb3config": {
+        "commands": [
+            {
+                "checkFwVersion": {
+                    "value": 0,
+                    "counterId": "secure"
+                }
+            },
+            {
+                "erase": {
+                    "address": 0,
+                    "size": "0x00080000"
+                }
+            },
+            {
+                "erase": {
+                    "address": "0x00100000",
+                    "size": "0x00080000"
+                }
+            },
+            {
+                "erase": {
+                    "address": "0x000F0000",
+                    "size": "0x0000E000"
+                }
+            },
+            {
+                "load": {
+                    "address": 0,
+                    "file": "signed_mbi.bin"
+                }
+            }
+        ]
+    }
+}

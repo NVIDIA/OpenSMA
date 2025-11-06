@@ -1,0 +1,10 @@
+{
+    "mbi": true,
+    "sb4": false,
+    "keySet": "s1",
+    "mbiconfig": {
+        "outputImageExecutionAddress": "0x0",
+        "fuse_version": 0,
+        "imageVersion": "0x0"
+    }
+}

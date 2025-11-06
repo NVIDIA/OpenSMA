@@ -1,0 +1,61 @@
+stages:
+  - build
+  - test
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+.common_rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+
+.build_matrix: &build_matrix
+  - PROJECT: "mcxn547helloworld"
+    PLATFORM: "mcxn556-both"
+    BOARD: "mcxn547helloworld"
+    MODE: "rel"
+
+
+build:
+  extends: .common_rules
+  stage: build
+  image: ${CI_REGISTRY_IMAGE}/env:latest
+  tags:
+    - opensma
+  before_script:
+    # Create toolchain symlinks
+    - mkdir -p ${CI_PROJECT_DIR}/libexec/toolchain
+    - ln -sf /toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi ${CI_PROJECT_DIR}/libexec/toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
+    - ln -sf /toolchain/gnat_arm_elf_14.2.1_524d4d41 ${CI_PROJECT_DIR}/libexec/toolchain/gnat_arm_elf_14.2.1_524d4d41
+    - ln -sf /toolchain/gcc-arm-none-eabi-10.3-2021.10 ${CI_PROJECT_DIR}/libexec/toolchain/gcc-arm-none-eabi-10.3-2021.10
+    # Create SDK symlinks
+    - mkdir -p ${CI_PROJECT_DIR}/libexec/sdk
+    - ln -sf /sdk/SDK_25_09_00_MCXN556S ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
+    # Patch SDK_25_09_00_MCXN556S
+    - cd ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
+    - patch -p1 -N < ${CI_PROJECT_DIR}/libexec/patch/mcu.patch
+    # Create make symlink
+    - mkdir -p ${CI_PROJECT_DIR}/corepdk/ubs/bin
+    - ln -sf /usr/bin/make ${CI_PROJECT_DIR}/corepdk/ubs/bin/make
+    # Install 3.4.0 spsdk
+    - pip3 install --break-system-packages spsdk==3.4.0
+
+  script:
+    - cd ${CI_PROJECT_DIR}
+    - echo "Building ${PROJECT} firmware..."
+    - ./mcu_build.sh PROJECT=${PROJECT} BOARD=${BOARD} PLATFORM=${PLATFORM} MODE=${MODE} SIGN_KEYSET=local RUN_LOCAL=1
+    - echo "${PROJECT} firmware build completed successfully"
+
+  artifacts:
+    paths:
+      - build/${PROJECT}-${PLATFORM}-${MODE}/*_signed.*
+      - build/${PROJECT}-${PLATFORM}-${MODE}/${PROJECT}.bin
+    when: always
+  parallel:
+    matrix: *build_matrix

@@ -1,0 +1,14 @@
+OpenSMA NOTICE
+
+Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
+
+Licensed under the Apache License, Version 2.0. See LICENSE.md for details.
+
+This repository contains build scripts, configuration, and supporting assets for
+firmware development. It does not redistribute third-party SDKs or toolchains.
+If a published release or distribution of this project includes third-party
+components, their required license texts and notices will be provided alongside
+those artifacts or in their respective subdirectories.
+
+Third-Party Notices
+- None bundled at this time.

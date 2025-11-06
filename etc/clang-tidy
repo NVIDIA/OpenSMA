@@ -1,0 +1,37 @@
+---
+Checks: '
+  modernize-*,
+  hicpp-*,
+  cert-*,
+  cppcoreguidelines-*,
+  google-runtime-int,
+  google-build-explicit-make-pair,
+  misc-*,
+  -*-pointer-arithmetic,
+  -modernize-use-nodiscard,
+  -modernize-use-trailing-return-type,
+  -hicpp-uppercase-literal-suffix,
+  -misc-non-private-member-variables-in-classes,
+  -misc-include-cleaner,
+  -cppcoreguidelines-pro-type-vararg,
+  -hicpp-vararg,
+  -misc-header-include-cycle,
+  -clang-diagnostic-macro-redefined,
+  -clang-diagnostic-unused-function,
+  -hicpp-signed-bitwise
+  '
+
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'src/.+(?!/ext).h$'
+FormatStyle:     file
+User:            ssaulters
+CheckOptions:
+  cppcoreguidelines-macro-usage.AllowedRegexp: '^NV_*|TEST|TEST_F'
+  cppcoreguidelines-macro-usage.CheckCapsOnly: 'false'
+  cppcoreguidelines-macro-usage.IgnoreCommandLineMacros: 'true'
+  cppcoreguidelines-avoid-magic-numbers.IgnorePowersOf2IntegerValues: 'true'
+  cppcoreguidelines-avoid-magic-numbers.IgnoredIntegerValues: '-1;0;1;2;3;4;5;6;7;8'
+  cppcoreguidelines-avoid-magic-numbers.IgnoredFloatingPointValues: '0.0;0.1;0.01;0.5;1.0;2.0;10.0;100.0;1000.0'
+  misc-include-cleaner.IgnoreHeaders: 'chrono;FreeRTOS.h;time.h;bits/*'
+...
+

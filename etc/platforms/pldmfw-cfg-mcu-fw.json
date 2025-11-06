@@ -1,0 +1,51 @@
+{
+    "PackageVersion": "mcxn236FwPkg-114.71.8192",
+    "FirmwareDevices": [
+        {
+            "UpdateOptions": [],
+            "ApplicableComponents": [
+                0
+            ],
+            "Descriptors": [
+                {
+                    "Type": "0x01",
+                    "Data": "0x1647"
+                },
+                {
+                    "Type": "0x02",
+                    "Data": "b5f8ee87f7aa4f1d9d9ab17b349f88c1"
+                },
+                {
+                    "Type": "0x00",
+                    "Data": "0x10de"
+                },
+                {
+                    "Type": "0x100",
+                    "Data": "0x2fad"
+                },
+                {
+                    "Type": "0x101",
+                    "Data": "0x10de"
+                },
+                {
+                    "Type": "0x102",
+                    "Data": "0x21ac"
+                },
+                {
+                    "Type": "0xFFFF",
+                    "Title": "APSKU",
+                    "Data": "0x00000007"
+                }
+            ]
+        }
+    ],
+    "Components": [
+        {
+            "Classifier": "0xA",
+            "Identifier": "0xff02",
+            "Options": [],
+            "ActivationMethod": [],
+            "Version": "mcxn236Mcufw-114.71.8192"
+        }
+    ]
+}

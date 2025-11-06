@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# get the UBS folder from this file
+export UBS=$(dirname $([ -h $0 ] && readlink $0 || echo $0))
+
+# setup root path
+export UBS_PATH_ROOT=$UBS/src/ubs
+
+# TODO: remove this line once docker image is fixed
+export LANG=en_US.UTF-8
+
+# permit some arguments
+verbose=0
+run_local=''
+njobs=$(nproc)
+GETOPT=$(getopt -o vlJ --long verbose,local, -n $0 -- "$@")
+eval set -- "$GETOPT"
+
+while :; 
+do
+    case "$1" in
+        -v|--verbose)  verbose=$((verbose + 1)); ARGS="--trace" ;;
+        -l|--local)    run_local=1 ;; # force to run locally, no docker
+        -J) njobs=1 ;; # force single job
+        --) shift; break ;;
+        *) break ;;
+    esac
+    shift;
+done
+
+MAKE=$UBS/bin/make
+COMMAND=$1
+
+# Parse UBS_DOCKER from arguments if provided
+for arg in "$@"; do
+    case $arg in
+        UBS_DOCKER=*)
+            UBS_DOCKER="${arg#*=}"
+            echo "UBS_DOCKER provided as argument: $UBS_DOCKER"
+            ;;
+    esac
+done
+
+# Docker Priority: (1) Argument UBS_DOCKER, (2) ubsrc file, (3) UBS Default
+if [ -z "$UBS_DOCKER" ]; then
+    # Load ubsrc if it exists
+    [ -f etc/ubsrc ] && source etc/ubsrc
+fi
+
+# Set default if still not set
+: ${UBS_DOCKER:='gitlab-master.nvidia.com:5005/gfw/chips/pdk/ubs:main'}
+#echo "[DEBUG] Using UBS_DOCKER: $UBS_DOCKER"
+
+UBS_ARGS="$ARGS --no-builtin-rules --no-print-directory --jobs=$njobs"
+
+# checks if we need to build the python extension plugin
+MAKE_PLUGIN="$MAKE $UBS_ARGS --silent --makefile $UBS_PATH_ROOT/ubs-plugin.mk bootstrap"
+# forward args to UBS
+MAKE_FORWARD="$MAKE $UBS_ARGS --makefile $UBS_PATH_ROOT/ubs.mk -- $*"
+
+export PATH=/usr/bin
+
+# dont execute in docker if we are already in it via CICD pipeline or if forced
+if [ -f /.dockerenv ] || [ -n "$run_local" ] ; then
+    export run_local=$run_local
+    $MAKE_PLUGIN
+    $MAKE_FORWARD
+    forward_rc=$?
+    if [ $forward_rc -ne 0 ]; then
+        exit 1
+    fi
+else
+    # if temp_container exists, remove it
+    docker rm -f temp_container 2>/dev/null || true
+    # run locally inside of UBS docker container
+    docker run --name temp_container --user=$UID:$GID -it -v$PWD:/tmp/ubs -w/tmp/ubs $UBS_DOCKER bash -c "
+    export UBS=$UBS
+    export UBS_PATH_ROOT=$UBS_PATH_ROOT
+    export LANG=en_US.UTF-8
+    export UBS_DOCKER=$UBS_DOCKER
+    $MAKE_PLUGIN
+    $MAKE_FORWARD
+    "
+    forward_rc=$?
+    if [ $forward_rc -eq 0 ]; then
+        case "$COMMAND" in
+            sign-request*|flash)
+                echo "Committing the docker container..."
+                docker commit temp_container $UBS_DOCKER
+                echo "Committed the docker container"
+                ;;
+        esac
+    fi
+    docker rm temp_container > /dev/null 2>&1
+    if [ $forward_rc -ne 0 ]; then
+        exit 1
+    fi
+fi
