@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -43,6 +43,7 @@ ADA_FLAGS += -fno-unwind-tables -fno-exceptions
 # -- global defines ----------------------------------------------------------------------------
 GD_SDK_OS_FREE_RTOS := 1
 GD_SDK_DEBUGCONSOLE := 1
+GD_I3C_DMA_USE_STOP_OFFLOAD := 1
 
 # -- flags -------------------------------------------------------------------------------------
 UBS_LIBS 	+= -Wl,--start-group -lc -lgcc -Wl,--end-group
@@ -77,6 +78,9 @@ SOURCES += \
 	$(PATH_SDK_DEVICE)/drivers/fsl_i3c_edma.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_edma.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_edma_soc.c \
+	$(PATH_SDK_DEVICE)/drivers/fsl_smartdma.c \
+	$(PATH_SDK_DEVICE)/drivers/fsl_smartdma_mcxn.c \
+	$(PATH_SDK_DEVICE)/drivers/smartdma_i3c.c \
 	$(PATH_SDK_DEVICE)/utilities/debug_console_lite/fsl_assert.c \
 	$(PATH_SDK_DEVICE)/utilities/debug_console_lite/fsl_debug_console.c \
 	$(PATH_SDK_DEVICE)/utilities/fsl_sbrk.c \
@@ -127,6 +131,7 @@ SOURCES += \
 	$(PATH_SDK)/middleware/multicore/mcmgr/src/mcmgr.c \
 	$(PATH_SDK)/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c \
 	$(PATH_SYS)/sys/usb/usb_device_mctp.c \
+	$(PATH_SYS)/sys/usb/usb_device_spi.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/flash/src/fsl_flash.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/mem_interface/src/fsl_mem_interface.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/runbootloader/src/fsl_runbootloader.c \
@@ -136,10 +141,8 @@ SOURCES += \
 	$(PATH_SDK_DEVICE)/drivers/fsl_vref.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_wwdt.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi.c \
-	$(PATH_SDK_DEVICE)/drivers/romapi/nboot/src/fsl_nboot.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio_sgpio_target.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio_sgpio_edma.c
+	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi_edma.c \
+	$(PATH_SDK_DEVICE)/drivers/romapi/nboot/src/fsl_nboot.c
 
 
 # -- CRYPTO flags ------------------------------------------------------------------------------

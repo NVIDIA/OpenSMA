@@ -183,7 +183,7 @@ standard names. */
 /* MPU Wrappers V2 config */
 #define configPROTECTED_KERNEL_OBJECT_POOL_SIZE 128
 // 0x222 fail
-#define configSYSTEM_CALL_STACK_SIZE            0x244
+#define configSYSTEM_CALL_STACK_SIZE            0x284
 
 /* Message buffer length type */
 #define configMESSAGE_BUFFER_LENGTH_TYPE size_t

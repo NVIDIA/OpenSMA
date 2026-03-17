@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <array>
 #include <span>
+#include <utility>
 
 // Include the enum definition
 #include "nv/mctp/enums.h"
@@ -43,13 +44,9 @@ enum TelemId : uint8_t
     MaxItem
 };
 
-/**
- * @brief Mapping from Type3TemperatureSensors to TelemId
- *        Provides one-to-one mapping for temperature sensors
- *        Uses compact structure with only valid mappings
- */
-static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId>, 22>
-    Type3ToTelemIdMapping = {
+// This table is only for GB products telemetries: temperature and power telemetries
+static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId>, 8>
+    TempSensorIdToTelemIdMapping = {
         {
          // Legacy Sensor ID for GB products
             {nv::mctp::Type3TemperatureSensors::TempGpu1, TelemId::Gpu1Temp},  // TempGpu1
@@ -67,14 +64,24 @@ static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId
         }
 };
 
+static constexpr std::array<std::pair<nv::mctp::Type3PowerSensors, TelemId>, 3>
+    PowerSensorIdToTelemIdPowerMapping = {
+        {
+         // Legacy Power Sensor enum for GB products
+            {nv::mctp::Type3PowerSensors::PowerGpu1, TelemId::Gpu1Power},      // PowerGpu1
+            {nv::mctp::Type3PowerSensors::PowerGpu2, TelemId::Gpu2Power},      // PowerGpu2
+            {nv::mctp::Type3PowerSensors::PowerModule, TelemId::ModulePower},  // PowerModule
+        }
+};
+
 /**
  * @brief Get TelemId from Type3TemperatureSensors
  * @param type3Sensor The Type3TemperatureSensors value
  * @return Corresponding TelemId or TelemId::MaxItem if not found
  */
-constexpr TelemId getTelemIdFromType3(uint8_t type3Sensor)
+constexpr TelemId getTelemIdFromTempSensorId(uint8_t type3Sensor)
 {
-    for (const auto& mapping : Type3ToTelemIdMapping) {
+    for (const auto& mapping : TempSensorIdToTelemIdMapping) {
         if (mapping.first == type3Sensor) {
             return mapping.second;
         }
@@ -83,13 +90,18 @@ constexpr TelemId getTelemIdFromType3(uint8_t type3Sensor)
 }
 
 /**
- * @brief Check if Type3TemperatureSensors has a valid mapping to TelemId
- * @param type3Sensor The Type3TemperatureSensors value
- * @return true if mapping exists, false otherwise
+ * @brief Get TelemId from Type3PowerSensors
+ * @param type3PowerSensor The Type3PowerSensors value
+ * @return Corresponding TelemId or TelemId::MaxItem if not found
  */
-constexpr bool hasValidTelemIdMapping(nv::mctp::Type3TemperatureSensors type3Sensor)
+constexpr TelemId getTelemIdFromPowerSensorId(uint8_t type3PowerSensor)
 {
-    return getTelemIdFromType3(type3Sensor) != TelemId::MaxItem;
+    for (const auto& mapping : PowerSensorIdToTelemIdPowerMapping) {
+        if (mapping.first == type3PowerSensor) {
+            return mapping.second;
+        }
+    }
+    return TelemId::MaxItem;
 }
 
 uint32_t buffer_to_uint32(std::span<uint8_t> buffer);

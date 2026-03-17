@@ -104,17 +104,19 @@ void Pca9555::i2c_read(uint8_t& return_data, bool new_transaction)
             break;
         }
         default: {
+#if 0
             nv::warn("Ignoring invalid PCA9555 read command Register: %x Bank: %x\n",
                      _active_register,
                      _active_bank);
+#endif
             return_data = DummyData;
             break;
         }
     }
 }
 
-void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-                        uint8_t                                                    data_length)
+void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                        uint8_t                                            data_length)
 {
     // FIRST BYTE IS COMMAND (register to write to)
     const auto CommandRegister = static_cast<Pca9555Register>(i2c_data.at(0) / 2);
@@ -143,7 +145,7 @@ void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize
         // nv::info("write Item:%x reg:%x bank:%x\n", Item, CommandRegister, command_bank);
         switch (CommandRegister) {
             case Input: {
-                nv::warn("trying to write to PCA9555 input pin\n");
+                // nv::warn("trying to write to PCA9555 input pin\n");
                 return;
             }
             case Output: {
@@ -166,7 +168,7 @@ void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize
                 break;
             }
             default: {
-                nv::warn("Ignoring invalid PCA9555 command %x\n", i2c_data.at(0));
+                // nv::warn("Ignoring invalid PCA9555 command %x\n", i2c_data.at(0));
                 break;
             }
         }
@@ -177,11 +179,13 @@ void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize
 void Pca9555::update_input_pins(uint16_t target_pin_values, uint16_t pin_mask)
 {
     // coverity[cert_int31_c_violation] dont care about lost bits
-    uint16_t direction_vector = (_gpio_direction_config[One] << 8U)
-                              + _gpio_direction_config[Zero];
+    const uint16_t direction_vector = (_gpio_direction_config[One] << 8U)
+                                    + _gpio_direction_config[Zero];
     if ((pin_mask & static_cast<uint16_t>(~direction_vector)) != 0) {
+#if 0
         nv::warn("Parent task tried to change PCA9555 output register\nDirection vector:%x",
                  direction_vector);
+#endif
     }
 
     // Modify pin mask to only include pins configured as inputs
@@ -209,10 +213,12 @@ void Pca9555::update_input_pins(uint16_t target_pin_values, uint16_t pin_mask)
 }
 void Pca9555::update_input_pins(uint8_t target_pin_values, uint8_t pin_mask, Pca9555Bank bank)
 {
-    uint8_t direction_vector = _gpio_direction_config.at(bank);
+    const uint8_t direction_vector = _gpio_direction_config.at(bank);
     if ((pin_mask & static_cast<uint8_t>(~direction_vector)) != 0) {
+#if 0
         nv::warn("Parent task tried to change PCA9555 output register\nDirection vector:%x",
                  direction_vector);
+#endif
     }
 
     // Modify pin mask to only include pins configured as inputs
@@ -315,6 +321,7 @@ void Pca9555::correct_direction_violations_and_apply(const uint8_t target_direct
                                     & static_cast<uint8_t>(~_required_outputs.at(bank));
 
     if (target_direction != _gpio_direction_config.at(bank)) {
+#if 0
         nv::error(
             "Direction write command violated allowed inputs/outputs in PCA9555.\nTarget: %x "
             "Required Inputs: %x Required Outputs: %x Modified New Register: %x\n",
@@ -322,6 +329,7 @@ void Pca9555::correct_direction_violations_and_apply(const uint8_t target_direct
             _required_inputs.at(bank),
             _required_outputs.at(bank),
             _gpio_direction_config.at(bank));
+#endif
     }
 }
 

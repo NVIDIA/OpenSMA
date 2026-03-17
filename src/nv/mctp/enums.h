@@ -28,6 +28,8 @@ using MsgType = pdk::mctp::app::MsgType;
 
 using Ccode = pdk::mctp::platforms::Ccode;
 
+using Rcode = pdk::mctp::platforms::Rcode;
+
 using Cmd = pdk::mctp::app::Cmd;
 
 using SetEndpoint = pdk::mctp::app::SetEndpoint;
@@ -105,6 +107,7 @@ enum class NsmMsgType : uint8_t
     DeviceConfiguration       = 5,
     Firmware                  = 6,
     Reserved                  = 7,
+    NvInternal                = 0xFF,  // NVIDIA internal commands (not for external use)
 };
 
 // NVIDIA TYPE 0 Device Capability Discovery Command Code
@@ -144,6 +147,8 @@ enum class NsmFWCmdCode : uint8_t
     QuerySecVerNum     = 0x5,  // Query firmware security version number
     UpdateMinSecVerNum = 0x6,  // Update minimum security version number
     QueryFwCompId      = 0x7,  // Query firmware component ID
+    SetRotProperty     = 0x8,  // Set RoT property
+    ImageCopyControl   = 0x9,  // Image copy control
 };
 
 // NVIDIA Type 0 Device Capability Discovery Event
@@ -189,22 +194,26 @@ typedef enum
 
 typedef enum
 {
-    TagBackgroundCopyPolicy = 1,   // Size: Enum8
-    TagActiveFirmwareSlot   = 2,   // Size: NvU8
-    TagActiveKeySet         = 3,   // Size: NvU8
-    TagWriteProtectState    = 4,   // Size: Enum8
-    TagFirmwareSlotCount    = 5,   // Size: NvU8
-    TagFirmwareSlotId       = 6,   // Size: NvU8
-    TagFirmwareVerString    = 7,   // Size: Char array
-    TagVerComparisonStamp   = 8,   // Size: NvU32
-    TagBuildType            = 9,   // Size: Enum8
-    TagSigningType          = 10,  // Size: Enum8
-    TagFirmwareState        = 11,  // Size: Enum8
-    TagSecurityVerNum       = 12,  // Size: NvU16
-    TagMinSecurityVerNum    = 13,  // Size: NvU16
-    TagSigningKeyIndex      = 14,  // Size: NvU16
-    TagInbandUpdatePolicy   = 15,  // Size: Enum8
-    TagBootStatusCode       = 16,  // Size: NvU64
+    TagRedundancyPolicyPersistent   = 1,   // Size: Enum8
+    TagActiveFirmwareSlot           = 2,   // Size: NvU8
+    TagActiveKeySet                 = 3,   // Size: NvU8
+    TagWriteProtectState            = 4,   // Size: Enum8
+    TagFirmwareSlotCount            = 5,   // Size: NvU8
+    TagFirmwareSlotId               = 6,   // Size: NvU8
+    TagFirmwareVerString            = 7,   // Size: Char array
+    TagVerComparisonStamp           = 8,   // Size: NvU32
+    TagBuildType                    = 9,   // Size: Enum8
+    TagSigningType                  = 10,  // Size: Enum8
+    TagFirmwareState                = 11,  // Size: Enum8
+    TagSecurityVerNum               = 12,  // Size: NvU16
+    TagMinSecurityVerNum            = 13,  // Size: NvU16
+    TagSigningKeyIndex              = 14,  // Size: NvU16
+    TagInbandUpdatePolicyPersistent = 15,  // Size: Enum8
+    TagBootStatusCode               = 16,  // Size: NvU64
+    TagInbandUpdatePolicyCurrent    = 17,  // Size: Enum8
+    TagRedundancyPolicyCurrent      = 18,  // Size: Enum8
+    TagApSkuId                      = 19,  // Size: NvU32
+    TagGlobalFailoverPolicy         = 20,  // Size: Enum8
 } GetRotTag;
 
 // Device Capabilities V2 Tags
@@ -229,25 +238,77 @@ typedef enum
                                 // PrivateHeader 4 - MCTP Header 4 - NSM V2 Header 12)
 } DeviceBufferSize;
 
-typedef enum
+// ROT Tag Length constants (used for telemetry record sizing)
+// These represent the length in powers of 2 (log2 of actual byte size)
+namespace RotTagLength {
+constexpr uint8_t TagRedundancyPolicyPersistentLen   = 0;  // Size: Enum8
+constexpr uint8_t TagActiveFirmwareSlotLen           = 0;  // Size: NvU8
+constexpr uint8_t TagActiveKeySetLen                 = 0;  // Size: NvU8
+constexpr uint8_t TagWriteProtectStateLen            = 0;  // Size: Enum8
+constexpr uint8_t TagFirmwareSlotCountLen            = 0;  // Size: NvU8
+constexpr uint8_t TagFirmwareSlotIdLen               = 0;  // Size: NvU8
+constexpr uint8_t TagFirmwareVerStringLen            = 5;  // Size: Char array
+constexpr uint8_t TagVerComparisonStampLen           = 2;  // Size: NvU32
+constexpr uint8_t TagBuildTypeLen                    = 0;  // Size: Enum8
+constexpr uint8_t TagSigningTypeLen                  = 0;  // Size: Enum8
+constexpr uint8_t TagFirmwareStateLen                = 0;  // Size: Enum8
+constexpr uint8_t TagSecurityVerNumLen               = 1;  // Size: NvU16
+constexpr uint8_t TagMinSecurityVerNumLen            = 1;  // Size: NvU16
+constexpr uint8_t TagSigningKeyIndexLen              = 1;  // Size: NvU16
+constexpr uint8_t TagInbandUpdatePolicyPersistentLen = 0;  // Size: Enum8
+constexpr uint8_t TagBootStatusCodeLen               = 3;  // Size: NvU64
+constexpr uint8_t TagInbandUpdatePolicyCurrentLen    = 0;  // Size: Enum8
+constexpr uint8_t TagRedundancyPolicyCurrentLen      = 0;  // Size: Enum8
+constexpr uint8_t TagApSkuIdLen                      = 2;  // Size: NvU32
+constexpr uint8_t TagGlobalFailoverPolicyLen         = 0;  // Size: Enum8
+}  // namespace RotTagLength
+
+enum class NsmRedundancyPolicy : uint8_t
 {
-    TagBackgroundCopyPolicyLen = 0,  // Size: Enum8
-    TagActiveFirmwareSlotLen   = 0,  // Size: NvU8
-    TagActiveKeySetLen         = 0,  // Size: NvU8
-    TagWriteProtectStateLen    = 0,  // Size: Enum8
-    TagFirmwareSlotCountLen    = 0,  // Size: NvU8
-    TagFirmwareSlotIdLen       = 0,  // Size: NvU8
-    TagFirmwareVerStringLen    = 5,  // Size: Char array
-    TagVerComparisonStampLen   = 2,  // Size: NvU32
-    TagBuildTypeLen            = 0,  // Size: Enum8
-    TagSigningTypeLen          = 0,  // Size: Enum8
-    TagFirmwareStateLen        = 0,  // Size: Enum8
-    TagSecurityVerNumLen       = 1,  // Size: NvU16
-    TagMinSecurityVerNumLen    = 1,  // Size: NvU16
-    TagSigningKeyIndexLen      = 1,  // Size: NvU16
-    TagInbandUpdatePolicyLen   = 0,  // Size: Enum8
-    TagBootStatusCodeLen       = 3,  // Size: NvU64
-} RotTagLength;
+    Manual        = 0x00,
+    Automatic     = 0x01,
+    NotApplicable = 0xFF,
+};
+
+enum class NsmInBandUpdatePolicy : uint8_t
+{
+    Disabled      = 0x00,
+    Enabled       = 0x01,
+    NotApplicable = 0xFF,
+};
+
+enum class NsmGlobalFailoverPolicy : uint8_t
+{
+    Disabled      = 0x00,
+    Enabled       = 0x01,
+    NotApplicable = 0xFF,
+};
+
+enum class NsmSetRotPropertyRequest : uint8_t
+{
+    SetRedundancyPolicy     = 0x00,
+    SetInbandUpdatePolicy   = 0x01,
+    SetApSkuId              = 0x02,
+    SetGlobalFailoverPolicy = 0x03,
+};
+
+enum class NsmImageCopyControlRequest : uint8_t
+{
+    QueryImageCopyProgress = 0x00,
+    InitiateImageCopy      = 0x01,
+};
+
+enum class NsmImageCopyStatus : uint8_t
+{
+    NotTriggered              = 0x00,
+    InProgress                = 0x01,
+    Completed                 = 0x02,
+    UndefinedFailed           = 0x03,
+    NoValidImage              = 0x04,
+    DestinationWriteProtected = 0x05,
+    FailFlashAccess           = 0x06,
+    FailVerifySignature       = 0x07,
+};
 
 typedef enum
 {
@@ -297,7 +358,15 @@ typedef enum
     OtpL4SignatureReadFail            = 15,
     OtpL4SignatureProgrammedFail      = 16,
     OtpL4SignatureProgrammedCheckFail = 17,
+    L4verifyL5CertFail                = 18,
+    InvalidTemplate                   = 19,
 } ProgramCertificateStatus;
+
+// NVIDIA TYPE 2 PciLinks Command Code
+enum class NsmPciLinksCmdCode : uint8_t
+{
+    AssertPcieFundamentalReset = 0x60,
+};
 
 // NVIDIA TYPE 3 Platform Environmental Telemetry  Command Code
 enum class NsmPlatEnvCmdCode : uint8_t
@@ -307,8 +376,69 @@ enum class NsmPlatEnvCmdCode : uint8_t
     GetThermalParameter        = 0x02,
     GetCurrentPowerDraw        = 0x03,
     GetInventoryInformation    = 0x0C,
+    GetVoltage                 = 0x0F,
     GetLeakDetectionInfo       = 0x17,
     SetLeakDetectionThresholds = 0x16,
+};
+
+// NVIDIA TYPE 4 Device Diagnostics Command Code
+enum class NsmDevDiagCmdCode : uint8_t
+{
+    GetDeviceResetStatistics     = 0x0,
+    GetDeviceDiagnostics         = 0x40,
+    GetDeviceHscAlert            = 0x64,
+    EnableDisableWriteProtection = 0x65,
+    ClearHscFaults               = 0x6D,
+    GetCpldRegisterTable         = 0x6E,
+    BridgePortRecovery           = 0x70,
+};
+
+// NVIDIA TYPE 5 Device Configuration Command Code
+enum class NsmDevCfgCmdCode : uint8_t
+{
+    SetErrorInjectionMode           = 0x03,
+    GetErrorInjectionMode           = 0x04,
+    GetSupportedErrorInjectionTypes = 0x05,
+    SetCurrentErrorInjectionTypes   = 0x06,
+    GetCurrentErrorInjectionTypes   = 0x07,
+    GetErrorInjectionPayload        = 0x0A,
+    SetErrorInjectionPayload        = 0x0B,
+    ActivateErrorInjection          = 0x0C,
+    SetGpuDegradeMode               = 0x60,
+    EnableDisablePowerSupply        = 0x61,
+    GetSmaBaseboardSettings         = 0x64,
+    SetDeviceModeSettings           = 0x82,
+    GetDeviceModeSettings           = 0x83,
+    GetSupportedDeviceModes         = 0x84,
+};
+
+// NVIDIA Type FF (Internal) Command Codes
+enum class NsmTypeFFCmdCode : uint8_t
+{
+    SetRackPowerSmoothingParam    = 0xA0,
+    GetRackPowerSmoothingParam    = 0xA1,
+    GetRackPowerSmoothingTestHook = 0xA2,
+    SetRackPowerSmoothingTestHook = 0xA3,
+    GetDebugTelemetry             = 0xA4,
+    TriggerAdcCalibration         = 0xA5,  // Start ADC calibration test
+    GetAdcCalibrationResults      = 0xA6,  // Retrieve calibration results
+};
+
+enum class DeviceModeIndex : uint32_t
+{
+    L1PowerMode                      = 0x00,
+    NVLinkPortClock                  = 0x01,
+    NVLinkAssymetricFlowTimers       = 0x02,
+    DpuOperationMode                 = 0x03,
+    PcieDeviceMode                   = 0x04,
+    Bar0Firewall                     = 0x05,
+    WprContiguousSize                = 0x06,
+    MaxACPowerRampRate               = 0x07,
+    SoCPowerSmoothEnabled            = 0x08,
+    SoCPowerSmoothCurrentPresetIndex = 0x09,
+    SoCPowerBrakeEnabled             = 0x0A,
+    NcsiMac                          = 0x11,
+    SoCThermBrakeEnabled             = 0x12,
 };
 
 /** Sensors used in Type 3 - Get Temperature Reading */
@@ -316,33 +446,43 @@ enum Type3TemperatureSensors : uint8_t
 {
     // Legacy Sensor ID for GB products
 
-    TempGpu1        = 0,  // Temperature value of GPU1 in SXM7.1
-    TempGpu2        = 1,  // Temperature value of GPU2 in SXM7.1
-    TempTMP451_1    = 2,  // TMP451 ambient sensor temp 1
-    TempTMP451_2    = 3,  // TMP451 ambient sensor temp 2
-    TempMaxModule   = 4,  // Maximum of TMP451 sensors
-    TempSMAInternal = 5,  // Internal SMA temperature sensor
-    TempCX8_1       = 6,  // CX8 1 Sensor
-    TempCX8_2       = 7,  // CX8 2 Sensor
+    TempGpu1          = 0,  // Temperature value of GPU1 in SXM7.1
+    TempGpu2          = 1,  // Temperature value of GPU2 in SXM7.1
+    TempTMP451_1      = 2,  // TMP451 ambient sensor temp 1
+    TempTMP451_2      = 3,  // TMP451 ambient sensor temp 2
+    TempMaxModule     = 4,  // Maximum of TMP451 sensors
+    TempSMAInternal   = 5,  // Internal SMA temperature sensor
+    TempCX8_1         = 6,  // CX8 1 Sensor
+    TempCX8_2         = 7,  // CX8 2 Sensor
+    GB_TempSensor_End = 8,
 
     // Sensor ID for VR products and future products that can compatible with existing NSM T3
     // Spec
-    SMA_External        = 16,  // SMA External temperature sensor
-    VR_TempSensor_Start = SMA_External,
-    SMA_Internal        = 17,   // SMA Internal temperature sensor
-    GPU1_Die_A          = 138,  // GPU1 Die A temperature sensor
-    GPU1_Die_B          = 139,  // GPU1 Die B temperature sensor
-    GPU2_Die_A          = 140,  // GPU2 Die A temperature sensor
-    GPU2_Die_B          = 141,  // GPU2 Die B temperature sensor
-    PCB_Temp_1          = 144,  // PCB temperature sensor
-    PCB_Temp_2          = 145,  // PCB temperature sensor
-    HSCC_Temp           = 168,  // HSCC temperature sensor
-    HSC_Temp            = 192,  // HSC temperature sensor
-    CPU1_Die            = 216,  // CPU1 Die temperature sensor
-    CPU1_SoC            = 217,  // CPU1 SoC temperature sensor
-    CPU2_Die            = 218,  // CPU2 Die temperature sensor
-    CPU2_SoC            = 219,  // CPU2 SoC temperature sensor
-    TempSensor_End      = 220,  // Last sensor ID + 1
+    SMA_External   = 16,   // SMA External temperature sensor
+    SMA_Internal   = 17,   // SMA Internal temperature sensor
+    NvLink_Temp    = 18,   // NvLink temperature sensor
+    BusBar_Temp    = 19,   // Busbar temperature sensor
+    GPU1_Die_A     = 138,  // GPU1 Die A temperature sensor
+    GPU1_Die_B     = 139,  // GPU1 Die B temperature sensor
+    GPU2_Die_A     = 140,  // GPU2 Die A temperature sensor
+    GPU2_Die_B     = 141,  // GPU2 Die B temperature sensor
+    PCB_Temp_1     = 144,  // PCB temperature sensor
+    PCB_Temp_2     = 145,  // PCB temperature sensor
+    PCB_Temp_3     = 146,  // PCB temperature sensor 3
+    PCB_Temp_4     = 147,  // PCB temperature sensor 4
+    HSCC_Temp      = 168,  // HSCC temperature sensor. Fractal North HSCC
+    HSCC_Temp_2    = 169,  // HSCC temperature sensor 2. Fractal South HSCC
+    CPLD_Temp      = 190,  // CPLD temperature sensor
+    HSC_Temp       = 192,  // HSC temperature sensor. Fractal East A
+    HSC_Temp_2     = 193,  // HSC temperature sensor 2. Fractal East B
+    HSC_Temp_3     = 194,  // HSC temperature sensor 3. Fractal West A
+    HSC_Temp_4     = 195,  // HSC temperature sensor 4. Fractal West B
+    HSC_Sby_Temp   = 196,  // HSC SBY temperature sensor
+    CPU1_Die       = 216,  // CPU1 Die temperature sensor
+    CPU1_SoC       = 217,  // CPU1 SoC temperature sensor
+    CPU2_Die       = 218,  // CPU2 Die temperature sensor
+    CPU2_SoC       = 219,  // CPU2 SoC temperature sensor
+    TempSensor_End = 220,  // Last sensor ID + 1
 };
 
 enum I2cTempSensorIndex : uint8_t
@@ -356,9 +496,40 @@ enum I2cTempSensorIndex : uint8_t
 
 enum Type3PowerSensors : uint8_t
 {
+    // Legacy Power Sensor enum for GB products
     PowerGpu1   = 0,  // GPU1 power in SXM7.1
     PowerGpu2   = 1,  // GPU2 power in SXM7.1
     PowerModule = 2,  // SXM module power (sum of GPUs which are currently reported on HSC)
+    GB_PowerSensor_End = 3,
+
+    // Power sensors for VR products
+    Power_Gpu1   = 9,    // GPU1 power
+    Power_Gpu2   = 10,   // GPU2 power
+    PowerHsc     = 128,  // HSC power, Fractal East A
+    PowerHsc_2   = 129,  // HSC power 2, Fractal East B
+    PowerHsc_3   = 130,  // HSC power 3, Fractal West A
+    PowerHsc_4   = 131,  // HSC power 4, Fractal West B
+    PowerHsc_Sby = 138,  // Fractal HSC SBY power
+    PowerHscc    = 192,  // HSCC power, Fractal North HSCC
+    PowerHscc_2  = 193,  // HSCC power 2, Fractal South HSCC
+};
+
+enum T3Voltage : uint8_t
+{
+    Voltage_Hsc_Vout     = 128,  // HSC voltage output, Fractal East A
+    Voltage_Hsc_Vout_2   = 129,  // HSC voltage output 2, Fractal East B
+    Voltage_Hsc_Vout_3   = 130,  // HSC voltage output 3, Fractal West A
+    Voltage_Hsc_Vout_4   = 131,  // HSC voltage output 4, Fractal West B
+    Voltage_Hsc_Sby_Vout = 138,  // Fractal HSC SBY voltage output
+    Voltage_Hsc_Vin      = 192,  // HSC voltage input, Fractal East A
+    Voltage_Hsc_Vin_2    = 193,  // HSC voltage input 2, Fractal East B
+    Voltage_Hsc_Vin_3    = 194,  // HSC voltage input 3, Fractal West A
+    Voltage_Hsc_Vin_4    = 195,  // HSC voltage input 4, Fractal West B
+    Voltage_Hsc_Sby_Vin  = 202,  // Fractal HSC SBY voltage input
+    Voltage_Hscc_Vout    = 208,  // HSCC voltage output, Fractal North HSCC
+    Voltage_Hscc_Vout_2  = 209,  // HSCC voltage output 2, Fractal South HSCC
+    Voltage_Hscc_Vin     = 224,  // HSCC voltage input, Fractal North HSCC
+    Voltage_Hscc_Vin_2   = 225,  // HSCC voltage input 2, Fractal South HSCC
 };
 
 enum NsmPlatEnvLeakSensors : uint8_t
@@ -366,6 +537,7 @@ enum NsmPlatEnvLeakSensors : uint8_t
     NsmPlatEnvLeakSensorDripTray  = 0,
     NsmPlatEnvLeakSensorManifold  = 1,
     NsmPlatEnvLeakSensorOrchidCPX = 2,
+    NsmPlatEnvLeakSensorBF4       = 3,
     NsmPlatEnvLeakSensorsSize
 };
 
@@ -397,35 +569,78 @@ enum Type4CommonDiagnosticEntries : uint8_t
 // NVIDIA TYPE 4 MCU Variant Specific Entries
 enum Type4McuDiagnosticEntries : uint8_t
 {
-    // Sensors <= 230
-    DIAG_CX8_1_TEMP      = 220,  // CacheTemperatureTelemetry
-    DIAG_CX8_2_TEMP      = 221,  // CacheTemperatureTelemetry
-    DIAG_GPU1_TEMP       = 222,  // CacheTemperatureTelemetry
-    DIAG_GPU2_TEMP       = 223,  // CacheTemperatureTelemetry
-    DIAG_GPU1_POWER      = 224,  // CachePowerTelemetry
-    DIAG_GPU2_POWER      = 225,  // CachePowerTelemetry
-    DIAG_MODULE_POWER    = 226,  // CachePowerTelemetry
-    DIAG_MODULE_TEMP1    = 227,  // CacheTemperatureTelemetry
-    DIAG_MODULE_TEMP2    = 228,  // CacheTemperatureTelemetry
-    DIAG_INTERNAL_TEMP   = 229,  // CacheTemperatureTelemetry
-    DIAG_MAX_MODULE_TEMP = 230,  // CacheTemperatureTelemetry
+    // Sensors <= 230 (VR)
+    // Voltage
+    DIAG_VR_HSCC_Vin_1   = 176,
+    DIAG_VR_HSCC_Vin_2   = 177,
+    DIAG_VR_HSC_Vin_1    = 178,
+    DIAG_VR_HSC_Vin_2    = 179,
+    DIAG_VR_HSC_Vin_3    = 180,
+    DIAG_VR_HSC_Vin_4    = 181,
+    DIAG_VR_HSC_Vin_5    = 182,
+    DIAG_VR_HSC_Sby_Vin  = DIAG_VR_HSC_Vin_5,
+    DIAG_VR_HSCC_Vout_1  = 183,
+    DIAG_VR_HSCC_Vout_2  = 184,
+    DIAG_VR_HSC_Vout_1   = 185,
+    DIAG_VR_HSC_Vout_2   = 186,
+    DIAG_VR_HSC_Vout_3   = 187,
+    DIAG_VR_HSC_Vout_4   = 188,
+    DIAG_VR_HSC_Vout_5   = 189,
+    DIAG_VR_HSC_Sby_Vout = DIAG_VR_HSC_Vout_5,
+    // Power
+    DIAG_VR_HSCC_POWER_1  = 190,
+    DIAG_VR_HSCC_POWER_2  = 191,
+    DIAG_VR_HSC_POWER_1   = 192,
+    DIAG_VR_HSC_POWER_2   = 193,
+    DIAG_VR_HSC_POWER_3   = 194,
+    DIAG_VR_HSC_POWER_4   = 195,
+    DIAG_VR_HSC_POWER_5   = 196,
+    DIAG_VR_HSC_Sby_POWER = DIAG_VR_HSC_POWER_5,
+    // Temperature
+    DIAG_VR_HSCC_Temp    = 197,                 // HSCC temperature sensor
+    DIAG_VR_HSCC_Temp_2  = 198,                 // HSCC temperature sensor 2
+    DIAG_VR_HSC_Temp     = 199,                 // HSC temperature sensor
+    DIAG_VR_HSC_Temp_2   = 200,                 // HSC temperature sensor 2
+    DIAG_VR_HSC_Temp_3   = 201,                 // HSC temperature sensor 3
+    DIAG_VR_HSC_Temp_4   = 202,                 // HSC temperature sensor 4
+    DIAG_VR_HSC_Temp_5   = 203,                 // HSC temperature sensor 5
+    DIAG_VR_HSC_Sby_Temp = DIAG_VR_HSC_Temp_5,  // HSC SBY temperature sensor
+    DIAG_VR_CPU1_Die     = 204,                 // CPU1 Die temperature sensor
+    DIAG_VR_CPU1_SoC     = 205,                 // CPU1 SoC temperature sensor
+    DIAG_VR_CPU2_Die     = 206,                 // CPU2 Die temperature sensor
+    DIAG_VR_CPU2_SoC     = 207,                 // CPU2 SoC temperature sensor
+    DIAG_VR_PCB_Temp_1   = 208,                 // PCB temperature sensor
+    DIAG_VR_PCB_Temp_2   = 209,                 // PCB temperature sensor
+    DIAG_VR_PCB_Temp_3   = 210,                 // PCB temperature sensor
+    DIAG_VR_PCB_Temp_4   = 211,                 // PCB temperature sensor
+    DIAG_VR_GPU1_Die_A   = 212,                 // GPU1 Die A temperature sensor
+    DIAG_VR_GPU1_Die_B   = 213,                 // GPU1 Die B temperature sensor
+    DIAG_VR_GPU2_Die_A   = 214,                 // GPU2 Die A temperature sensor
+    DIAG_VR_GPU2_Die_B   = 215,                 // GPU2 Die B temperature sensor
+    DIAG_VR_CPLD_TEMP    = 216,                 // CPLD temperature sensor
+    DIAG_VR_BUSBAR_TEMP  = 217,                 // BusBar temperature sensor
+    DIAG_VR_NvLink_Temp  = 218,                 // NvLink temperature sensor
+    DIAG_VR_SMA_External = 219,                 // SMA External temperature sensor
+
+    // Sensors <= 230 (B300/GB300)
+    DIAG_CX8_1_TEMP      = 220,                 // TemperatureTelemetry
+    DIAG_CX8_2_TEMP      = 221,                 // TemperatureTelemetry
+    DIAG_GPU1_TEMP       = 222,                 // TemperatureTelemetry
+    DIAG_GPU2_TEMP       = 223,                 // TemperatureTelemetry
+    DIAG_GPU1_POWER      = 224,                 // PowerTelemetry
+    DIAG_GPU2_POWER      = 225,                 // PowerTelemetry
+    DIAG_MODULE_POWER    = 226,                 // PowerTelemetry
+    DIAG_MODULE_TEMP1    = 227,                 // TemperatureTelemetry
+    DIAG_MODULE_TEMP2    = 228,                 // TemperatureTelemetry
+    DIAG_INTERNAL_TEMP   = 229,                 // TemperatureTelemetry
+    DIAG_VR_SMA_Internal = DIAG_INTERNAL_TEMP,  // same ID for Internal Temp
+    DIAG_MAX_MODULE_TEMP = 230,                 // TemperatureTelemetry
 
     // Counters 231-250
-    DIAG_I3C0_BUS_ERROR = 231,
-    /* DIAG_I3Cn_BUS_ERROR is implicit as
-     * DIAG_I3C0_BUS_ERROR + n */
-
-    DIAG_I2C_UPSTREAM_ERROR = 233,
-
-    DIAG_I2C0_DOWNSTREAM_BUS_ERROR = 234,
-    /* DIAG_I2Cn_DOWNSTREAM_BUS_ERROR is implicit as
-     * DIAG_I2C0_DOWNSTREAM_BUS_ERROR + n */
-
-    DIAG_SPI0_DOWNSTREAM_BUS_ERROR = 240,
-    /* DIAG_SPIn_DOWNSTREAM_BUS_ERROR is implicit as
-     * DIAG_SPI0_DOWNSTREAM_BUS_ERROR + n */
-
-    DIAG_ERROR_COUNTER_BOUNDARY = 251,  // last Counter + 1
+    DIAG_I3C0_BUS_ERROR            = 231,  // i3c range 231-233 (4 items)
+    DIAG_I2C_UPSTREAM_ERROR        = 234,  // i2c up range 234-235 (2 items)
+    DIAG_I2C0_DOWNSTREAM_BUS_ERROR = 236,  // i2c down range 236-246 (11 items)
+    DIAG_SPI0_DOWNSTREAM_BUS_ERROR = 247,  // spi down range 247-250 (4 items)
 
     DIAG_GPIO_VALUE_BITMAP = 254,  // GpioTelemetry
     DIAG_CurrentTimestamp  = 255   // TimestampTelemetry
@@ -433,13 +648,51 @@ enum Type4McuDiagnosticEntries : uint8_t
 
 enum Type4TelemetryTypes : uint8_t
 {
-    FirmwareInfoTelemetry     = 0,
-    PerformanceTelemetry      = 1,
-    GpioTelemetry             = 2,
-    ErrorCounterTelemetry     = 3,
-    CachePowerTelemetry       = 4,
-    CacheTemperatureTelemetry = 5,
-    TimestampTelemetry        = 6
+    FirmwareInfoTelemetry = 0,
+    PerformanceTelemetry  = 1,
+    GpioTelemetry         = 2,
+    ErrorCounterTelemetry = 3,
+    PowerTelemetry        = 4,
+    TemperatureTelemetry  = 5,
+    VoltageTelemetry      = 6,
+    TimestampTelemetry    = 7
+};
+
+enum class FanControlMode : uint8_t
+{
+    Disabled    = 0x00,
+    Enabled     = 0x01,
+    Steady      = 0x02,
+    Rpm         = 0x03,
+    Temperature = 0x04,
+};
+
+// NSM T4 Enable Disable Write Protection (0x65)
+enum Type4WriteProtectionFunction : uint8_t
+{
+    WP_BASEBOARD_FRU_EEPROM = 129,  // Baseboard FRU EEPROM
+    WP_NVSW_QM4_SPI         = 131,  // NVSW (QM4) SPI
+    WP_GPU_SPI              = 170,  // GPU SPI
+    WP_CX9_SPI              = 183,  // CX9 SPI
+};
+
+// Power Sensor Faults device selector
+enum class PowerSensorFaults : uint8_t
+{
+    HSC     = 128,
+    HSC_2   = 129,
+    HSC_3   = 130,
+    HSC_4   = 131,
+    HSC_Sby = 132,
+    HSCC    = 192,
+    HSCC_2  = 193,
+};
+
+enum GpioEventSource : uint8_t
+{
+    PhysicalGpio = 0,
+    VirtualGpio  = 1,
+    SpoofingGpio = 2,
 };
 
 }  // namespace nv::mctp

@@ -25,6 +25,9 @@
 
 namespace nv::mctp {
 
+// NSM OCP V2 Protocol Constants
+constexpr uint32_t NsmV2ChunkHeaderSize = 12;  // offset(4) + length(4) + remaining(4)
+
 /**
  * @brief The Constants class provides some constants
  */
@@ -44,14 +47,18 @@ public:
 
     // Nsm Constants
 
-    // This HeaderSizeResponse represents a packet format with the following fields (12
-    // bytes):
     // - 6 bytes: NVIDIA OEM binding
     // - 1 bytes: command code
     // - 1 bytes: completion code
     // - 2 bytes: reserved
     // - 2 bytes: data size
     constexpr static uint8_t NsmHeaderResponseSize = 12;
+
+    // - 6 bytes: NVIDIA OEM binding
+    // - 1 bytes: command code
+    // - 1 bytes: completion code
+    // - 2 bytes: reason code
+    constexpr static uint8_t NsmHeaderReasonResponseSize = 10;
 
     // - 6 bytes: NVIDIA OEM binding
     // - 1 bytes: command code
@@ -79,6 +86,13 @@ public:
     // - 2 bytes: event state
     // - 1 bytes: data size
     constexpr static uint8_t NsmHeaderEventMsgSize = 12;
+
+    // Type4 Debug Token response format
+    // - 6 bytes: NVIDIA OEM binding
+    // - 1 bytes: type4_cmd_code
+    // - 1 bytes: completion_code
+    // - 2 bytes: error_code/reason
+    constexpr static uint8_t NsmType4ResponseSize = 10;
 };
 
 }  // namespace nv::mctp

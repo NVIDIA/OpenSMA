@@ -66,6 +66,9 @@ bool Task::setup(const std::span<uint8_t>& stack_region,
         // NOLINT(*-reinterpret-cast) .xRegions{}, .pxTaskBuffer   = &tcb(),
     };
 
+    if (id() == TaskId::I2c0) {
+        td.uxPriority |= portPRIVILEGE_BIT;
+    }
     if ((id() >= TaskId::Privileged) && (id() < TaskId::EndPrivileged)) {
         td.uxPriority |= portPRIVILEGE_BIT;
     }

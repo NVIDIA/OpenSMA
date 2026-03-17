@@ -15,14 +15,17 @@
 --  See the License for the specific language governing permissions and
 --  limitations under the License.
 --
-with Pdk.Cmn.Console;          use Pdk.Cmn.Console;
+
+with Pdk.Cmn.Log;
 with Pdk.Cmn.Flowcontrol.Plat; use Pdk.Cmn.Flowcontrol.Plat;
 package body Pdk.Cmn.Flowcontrol is
    procedure Assert(Condition: Boolean; Msg: in String) is
+      Result: Log.Status := Log.Ok with
+        unreferenced;
    begin
       if not Condition then
-         Error("CorePDK Assertion Failed: " & Msg);
+         Result := Log.Error("CorePDK Assertion Failed: " & Msg);
          Exit_Program(1);
       end if;
    end assert;
-end Pdk.Cmn.FlowControl;
+end;

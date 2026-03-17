@@ -61,11 +61,16 @@ Status Driver::handler(const Header hdr, nv::ipc::Queue::Item item)
         case Id::I3c1:
             status = to_i3c(item, nv::i3c::Task::GetQueueFromIpchandlerId<Id::I3c1>());
             break;
+        case Id::I2c0: status = to_i2c(item, nv::ipc::QueueId::I2c0); break;
         case Id::I2c1: status = to_i2c(item, nv::ipc::QueueId::I2c1); break;
         case Id::I2c2: status = to_i2c(item, nv::ipc::QueueId::I2c2); break;
         case Id::I2c3: status = to_i2c(item, nv::ipc::QueueId::I2c3); break;
         case Id::I2c4: status = to_i2c(item, nv::ipc::QueueId::I2c4); break;
         case Id::I2c5: status = to_i2c(item, nv::ipc::QueueId::I2c5); break;
+        case Id::I2c6: status = to_i2c(item, nv::ipc::QueueId::I2c6); break;
+        case Id::I2c7: status = to_i2c(item, nv::ipc::QueueId::I2c7); break;
+        case Id::I2c8: status = to_i2c(item, nv::ipc::QueueId::I2c8); break;
+        case Id::I2c9: status = to_i2c(item, nv::ipc::QueueId::I2c9); break;
         case Id::Usb : {
             status = to_usb(item);
         } break;
@@ -82,10 +87,12 @@ Status Driver::handler(const Header hdr, nv::ipc::Queue::Item item)
 
 Status Driver::to_i3c(nv::ipc::Queue::Item item, nv::ipc::QueueId queue_id)
 {
+    using namespace std::chrono_literals;
     nv::ipc::Queue& queue  = nv::ipc::Queue::make(queue_id);
     auto            status = queue.send(item);
     if (status != nv::ipc::Queue::Status::Ok) {
-        nv::info("queue status = %d\n", status);
+        nv::logger::info(nv::logger::Event::IpcForwardError,
+                         {static_cast<uint8_t>(queue_id), static_cast<uint8_t>(status)});
         return Status::SendQueueFail;
     }
     return Status::Success;
@@ -93,10 +100,12 @@ Status Driver::to_i3c(nv::ipc::Queue::Item item, nv::ipc::QueueId queue_id)
 
 Status Driver::to_i2c(nv::ipc::Queue::Item item, nv::ipc::QueueId queue_id)
 {
+    using namespace std::chrono_literals;
     nv::ipc::Queue& queue  = nv::ipc::Queue::make(queue_id);
-    auto            status = queue.send(item);
+    auto            status = queue.send(item, 100ms);
     if (status != nv::ipc::Queue::Status::Ok) {
-        nv::info("queue status = %d\n", status);
+        nv::logger::info(nv::logger::Event::IpcForwardError,
+                         {static_cast<uint8_t>(queue_id), static_cast<uint8_t>(status)});
         return Status::SendQueueFail;
     }
     return Status::Success;
@@ -104,11 +113,14 @@ Status Driver::to_i2c(nv::ipc::Queue::Item item, nv::ipc::QueueId queue_id)
 
 Status Driver::to_usb(nv::ipc::Queue::Item item)
 {
+    using namespace std::chrono_literals;
     nv::ipc::Queue& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::UsbHid);
-    auto            status = queue.send(item);
+    auto            status = queue.send(item, 100ms);
 
     if (status != nv::ipc::Queue::Status::Ok) {
-        nv::info("queue status = %d\n", status);
+        nv::logger::info(
+            nv::logger::Event::IpcForwardError,
+            {static_cast<uint8_t>(nv::ipc::QueueId::UsbHid), static_cast<uint8_t>(status)});
         return Status::SendQueueFail;
     }
     return Status::Success;
@@ -116,10 +128,14 @@ Status Driver::to_usb(nv::ipc::Queue::Item item)
 
 Status Driver::to_pldm(nv::ipc::Queue::Item item)
 {
+    using namespace std::chrono_literals;
     nv::ipc::Queue& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::PldmRx);
-    auto            status = queue.send(item);
+    auto            status = queue.send(item, 100ms);
 
     if (status != nv::ipc::Queue::Status::Ok) {
+        nv::logger::info(
+            nv::logger::Event::IpcForwardError,
+            {static_cast<uint8_t>(nv::ipc::QueueId::PldmRx), static_cast<uint8_t>(status)});
         return Status::SendQueueFail;
     }
     return Status::Success;

@@ -114,6 +114,8 @@ public:
     /// Null constructor for storage initialization only.
     Queue() noexcept : sys::ipc::Queue() {}
 
+    void reset();
+
 private:
     Queue(QueueId id);
     const QueueInfo Info;

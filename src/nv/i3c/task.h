@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -31,7 +31,6 @@
 #include "nv/i3c/gpu.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/i3c/smbpbi.h"
-#include "nv/sgpio/driver.h"
 #include "nv/i3c/topology_info.h"
 
 #include NV_IPC_CONFIG_H
@@ -65,7 +64,8 @@ public:
         WdtEvent,
         Init,
         CheckApStatus,
-        OcpAddr
+        OcpAddr,
+        SyncCBCSn
     };
 
     enum class GpuOobResetStatus : uint8_t
@@ -94,6 +94,14 @@ public:
         Request,
     };
 
+    enum class NvlCms1Status : uint8_t
+    {
+        Success,
+        FailToConfigure,
+        FailToProgram,
+        FailToRead
+    };
+
     struct sensor_info
     {
         uint8_t                offset;
@@ -114,23 +122,23 @@ public:
 
     struct Config
     {
-        nv::ipc::TaskId                task_id;
-        std::string_view               task_name;
-        nv::mctp::Client               client;
-        nv::ipc::EventId               event_id;
-        nv::ipc::QueueId               queue_id;
-        Driver::Port                   port_id;
-        nv::ipc::BootedEventBits       boot_event;
-        nv::i3c::Driver::Freq          freq;
-        bool                           is_gpu;
-        uint8_t                        gpu_recovery_addr;
-        uint8_t                        gpu_smbpbi_addr;
-        nv::ipc::TimerId               timer_id;
-        sensor_info                    temp_sensor;
-        gpio_info                      gpu_error;
-        nv::ipchandler::Id             ipchandler_id;
-        FruI2cInfo                     fru_i2c_info;
-        nv::sgpio::Driver::SgpioConfig sgpio_config;
+        nv::ipc::TaskId                           task_id;
+        std::string_view                          task_name;
+        nv::mctp::Client                          client;
+        nv::ipc::EventId                          event_id;
+        nv::ipc::QueueId                          queue_id;
+        Driver::Port                              port_id;
+        nv::ipc::BootedEventBits                  boot_event;
+        nv::i3c::Driver::Freq                     freq;
+        bool                                      is_gpu;
+        uint8_t                                   gpu_recovery_addr;
+        uint8_t                                   gpu_smbpbi_addr;
+        nv::ipc::TimerId                          timer_id;
+        sensor_info                               temp_sensor;
+        gpio_info                                 gpu_error;
+        nv::ipchandler::Id                        ipchandler_id;
+        FruI2cInfo                                fru_i2c_info;
+        sys::topology::TopologyInfo::PlatformInfo platform_info;
         Config(nv::ipc::TaskId          task_id_,
                const std::string_view&  task_name_,
                nv::mctp::Client         client_,
@@ -147,7 +155,8 @@ public:
                gpio_info                gpu_error_,
                nv::ipchandler::Id       ipchandler_id_ = nv::ipchandler::Id::Unuse,
                FruI2cInfo               fru_i2c_info_  = FruI2cInfo{nv::i2c::Port::End, 0xFF},
-               nv::sgpio::Driver::SgpioConfig sgpio_config_ = nv::sgpio::Driver::SgpioConfig{})
+               sys::topology::TopologyInfo::PlatformInfo platform_info_ =
+                   sys::topology::TopologyInfo::PlatformInfo{0, 0, 0, 0})
         : task_id(task_id_)
         , task_name(task_name_)
         , client(client_)
@@ -164,15 +173,16 @@ public:
         , gpu_error(gpu_error_)
         , ipchandler_id(ipchandler_id_)
         , fru_i2c_info(fru_i2c_info_)
-        , sgpio_config(sgpio_config_)
+        , platform_info(platform_info_)
         {}
     };
 
     struct [[gnu::packed]] Request
     {
         RequestType       type;
-        uint8_t           length;
+        uint16_t          length;
         Driver::I3cBuffer buffer;
+        uint8_t           _padding[2]{};  // word-align to 76/524 bytes
     };
 
     static void   make(Config config);
@@ -184,6 +194,7 @@ public:
     static Status init_bus(nv::mctp::Client client, bool init);
     static void   check_ap_status(nv::ipc::Timer& timer);
     static Status update_ocp_address(nv::mctp::Client client, nv::i3c::Gpu::I2cAddr addr);
+    static Status sync_cbc_sn(nv::mctp::Client client);
 
     template<nv::ipchandler::Id EnumVal>
     static constexpr nv::ipc::QueueId GetQueueFromIpchandlerId()
@@ -203,11 +214,11 @@ public:
 
     Task(Config config) noexcept;
     void        start();
-    void        on_ibi(uint8_t address, std::span<uint8_t> data);
+    void        on_ibi(uint8_t address, std::span<volatile uint8_t> data);
     static bool to_i2c(ipchandler::Id     src_id,
                        uint8_t            address,
                        nv::ipchandler::Id i2c_ipchandler_id,
-                       uint8_t            write_length,
+                       uint16_t           write_length,
                        uint16_t           read_length,
                        ipc::Queue::Item&  item);
 
@@ -256,7 +267,10 @@ private:
     uint8_t get_smbpbi_command_index();
     void    update_smbpbi_command_index();
     void    update_smbpbi_items(uint32_t value);
+    void    prepare_nvl_topology_info();
+    void    handle_sync_cbc_sn(std::span<uint8_t> buffer);
 
+    static constexpr uint8_t  DaaRetry      = 5;
     constexpr static uint32_t ThresholdTick = 10000;  // 10 ms
     void                      handle_ap_status(APStatus set_status);
 
@@ -269,11 +283,9 @@ private:
     uint8_t                  smbpbi_not_ready_count       = 0;
     constexpr static uint8_t SmbpbiNotReadyCountThreshold = 3;
     std::array<nv::telemetry::TelemId, smbpbi::NumSmbPbiCommandToRead> _smbpbi_items{};
-    nv::sgpio::Driver                                                  _sgpio_driver;
-    FruI2cInfo                                                         _fru_i2c_info;
-    constexpr static uint32_t                                          SgpioBufferSize = 80;
-    alignas(16) std::array<uint8_t, SgpioBufferSize> _sgpio_tx_buffer{};
-    alignas(16) std::array<uint8_t, SgpioBufferSize> _sgpio_rx_buffer{};
+
+    FruI2cInfo                                _fru_i2c_info;
+    sys::topology::TopologyInfo::PlatformInfo _platform_info;
 };
 
 }  // namespace nv::i3c

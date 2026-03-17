@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "pdk-mctp-app-router-plat.h"
+#include "pdk-mctp-platforms-config.h"
 #include "pdk-mctp-platforms-router.h"
 #include "ubs/unittest.hpp"
 
@@ -33,4 +34,15 @@ UBS_TEST(MctpRouter, SetAndGetCureid)
         platforms::set_cur_eid(test_info, i, test_eid);
         ensure::is_eq(platforms::get_cur_eid(test_info, i), test_eid);
     }
+};
+
+UBS_TEST(MctpRouter, GetCureidInvalidInterfaceIndex)
+{
+    uint8_t    default_eid       = 159;
+    const auto default_interface = static_cast<uint8_t>(platforms::DefaultInterface);
+    const auto invalid_interface = static_cast<uint8_t>(platforms::Interface::UsEnd);
+    platforms::RoutingTable test_info{};
+    ensure::is_eq(platforms::get_cur_eid(test_info, invalid_interface), 0);
+    platforms::set_cur_eid(test_info, default_interface, default_eid);
+    ensure::is_eq(platforms::get_cur_eid(test_info, invalid_interface), default_eid);
 };

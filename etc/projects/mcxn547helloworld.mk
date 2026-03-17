@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -43,7 +43,7 @@ PATH_PROJECTS 		:= $(UBS_PATH_SRC)/projects
 PATH_PROJECT   		:= $(PATH_PROJECTS)/$(PROJECT)/$(CORE)
 PATH_PROJECT_SYS  	:= $(PATH_PROJECT)/sys/$(PLATFORM_BASE)
 
-SRCS_ALL := $(shell find $(UBS_PATH_SRC)/nv -name *.cpp -not -name '*-test.cpp') 
+SRCS_ALL := $(shell find $(UBS_PATH_SRC)/nv -name *.cpp -not -name '*-test.cpp')
 SRCS_ALL += $(shell find $(PATH_SYS) -name *.cpp -not -name '*-test.cpp')
 SRCS_ALL += $(filter-out $(wildcard $(PATH_PROJECT)/*-test.cpp), $(wildcard $(PATH_PROJECT)/*.cpp))
 SRCS_ALL += $(filter-out $(wildcard $(PATH_PROJECT_SYS)/*-test.cpp), $(wildcard $(PATH_PROJECT_SYS)/*.cpp))
@@ -89,6 +89,7 @@ GD_MCU_AP_SKU       := $(shell echo $$(( $(AP_SKU_PLAT) | $(AP_SKU_PRJ) )))
 GD_MCU_SSDID		:= 0x21ab
 
 FW_VERSION          = $(shell printf "%04d.%02d.%04d.%04d" $(GD_MCU_FW_MAJOR) $(GD_MCU_FW_MINOR) $(GD_MCU_FW_PATCH) $(GD_MCU_FW_BUILD))
+COMP_STAMP          = $(shell printf "0x%02x%04x%02x" $(GD_MCU_FW_MINOR) $(GD_MCU_FW_PATCH) $$(($(GD_MCU_FW_BUILD)&0xFF)))
 AP_SKU              = $(shell printf "0x%x" $(GD_MCU_AP_SKU))
 SSDID               = $(shell printf "0x%x" $(GD_MCU_SSDID))
 SIGN_KEYSET         ?= S1
@@ -111,8 +112,8 @@ CXX_FLAGS   += -ffreestanding -DNV_IPC_CONFIG_H=\"$(GDS_NV_IPC_CONFIG_H)\" -DNV_
 			     $(GLOBAL_DEDINES)
 ADA_FLAGS   += $(GLOBAL_DEDINES)
 
-CC_FLAGS    += -fno-builtin 
-CXX_FLAGS 	+= -fno-builtin 
+CC_FLAGS    += -fno-builtin
+CXX_FLAGS 	+= -fno-builtin
 
 # We should fix up -Wmissing-field-initializers warnings and remove
 #  -Wno-missing-field-initializers & -Wno-unused-parameter
@@ -152,7 +153,7 @@ $(foreach DIR,$1, \
 	$(shell [ -d $(UBS_PATH_SRC)/nv/$(DIR) ] && find $(UBS_PATH_SRC)/nv/$(DIR) \( -name "*.adb" -or -name "*.ads" -or -name "*.cpp" \) -not -name "*-test.adb" -not -name "*-test.ads" -not -name "*-test.cpp") \
 )
 endef
-MODULES := common ipc mctp i2c pldm usb flash bootloader gpio i3c logger ctimer spdm uart watchdog perf_mon ipchandler sensor debugtoken telemetry spi fw_parser crypto c2c_mailbox ap_operation fru sgpio
+MODULES := common ipc mctp i2c pldm usb flash bootloader gpio i3c logger ctimer spdm uart watchdog perf_mon ipchandler sensor debugtoken telemetry spi fw_parser crypto c2c_mailbox ap_operation fru smartdma lstp ssif
 SOURCES += $(FREERTOS_SRC) $(FREERTOS_SRC_ARCH) $(UBS_PATH_SRC)/nv/nv.ads $(PATH_PROJECT_SYS)/linker_script.ld
 SOURCES += $(call nvsrcfiles,$(MODULES))
 

@@ -6,11 +6,11 @@
 /* clang-format off */
 /* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
 !!GlobalInfo
-product: TEE v10.0
+product: TEE v11.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.09.10
+processor_version: 25.12.10
 toolOptions:
   _output_type_: c_code
   _legacy_source_names_: 'no'
@@ -528,6 +528,7 @@ void BOARD_INITTEE_BOARD_InitAHBSE()
     CLOCK_EnableClock(kCLOCK_Gpio2);
     CLOCK_EnableClock(kCLOCK_Gpio3);
     CLOCK_EnableClock(kCLOCK_Gpio4);
+
     /*--------------------------------------------------------------------
      - Pins: Access protection on IO pins and GPIO port IRQ/DMA requests
      -------------------------------------------------------------------*/

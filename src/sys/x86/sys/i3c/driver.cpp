@@ -135,3 +135,23 @@ nv::i3c::Driver::i2c_write_read([[maybe_unused]] uint8_t            address,
     // TODO implement
     return nv::i2c::I2cStatus::Ok;
 }
+
+bool nv::i3c::Driver::gpu_configure_cms1([[maybe_unused]] uint8_t address)
+{
+    // TODO implement
+    return true;
+}
+
+bool nv::i3c::Driver::gpu_program_cms1([[maybe_unused]] uint8_t            address,
+                                       [[maybe_unused]] std::span<uint8_t> buffer)
+{
+    // TODO implement
+    return true;
+}
+
+bool nv::i3c::Driver::gpu_read_cms1([[maybe_unused]] uint8_t            address,
+                                    [[maybe_unused]] std::span<uint8_t> buffer)
+{
+    // TODO implement
+    return true;
+}

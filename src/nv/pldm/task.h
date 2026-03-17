@@ -68,9 +68,8 @@ public:
         BgStart       = 3,
         BgEnd         = 4,
         WdtEvent      = 5,
-        BgInit        = 6,
-        EventRequest  = 7,
-        ProtocolReset = 8,
+        EventRequest  = 6,
+        ProtocolReset = 7,
     };
 
     enum PldmEventBits : uint32_t
@@ -82,7 +81,6 @@ public:
         BgStartBit       = common::bit(nv::pldm::Task::PldmTask::BgStart),
         BgEndBit         = common::bit(nv::pldm::Task::PldmTask::BgEnd),
         WdtEventBit      = common::bit(nv::pldm::Task::PldmTask::WdtEvent),
-        BgInitBit        = common::bit(nv::pldm::Task::PldmTask::BgInit),
         EventRequestBit  = common::bit(nv::pldm::Task::PldmTask::EventRequest),
         ProtocolResetBit = common::bit(nv::pldm::Task::PldmTask::ProtocolReset),
     };
@@ -93,7 +91,7 @@ public:
     void        get_interface_info(PldmContextRecord&   pldm_context,
                                    PldmfwInterfaceInfo& interface_info,
                                    uint16_t&            size);
-    bool        is_background_copy_enabled();
+    static bool is_background_copy_automatic();
 
     [[noreturn]] void main();
 
@@ -113,7 +111,6 @@ public:  // static api section
      */
     static nv::pldm::Status pldm_tx(const nv::mctp::Packet& packet);
     static nv::pldm::Status pldm_bg_start();
-    static nv::pldm::Status pldm_bg_init();
     static void             on_timer([[maybe_unused]] ipc::Timer& id);
     static void             set_timer(std::chrono::microseconds ms);
     static void             clear_timer();

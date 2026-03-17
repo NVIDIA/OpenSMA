@@ -103,7 +103,8 @@ is
                                         Ap_Sku_Id : out NvU32);
    pragma Import (C, Get_FW_Info_From_Metadata, "get_fw_info_from_metadata");
 
-   procedure Parse_Header (Current_fw_offset : NvU32;
+   procedure Parse_Header (Component_Id     : NvU16;
+                           Current_fw_offset : NvU32;
                            Transfer_size     : NvU32;
                            Buffer     : ARR_NvU8_IDX32;
                            Metadata : in out ARR_NvU8_IDX16;
@@ -133,5 +134,8 @@ is
    pragma Import(C,Get_Arr_Comp_Id_Address,"get_arr_comp_id_address");
 
    subtype Comp_Id_Array is ARR_NvU16_IDX32 (0 .. MAX_PASS_COMPONENT_ID_NUM - 1);
+
+   function Get_Write_Fail_Retry (Comp_id: NvU16) return NvU8;
+   pragma Import (C, Get_Write_Fail_Retry, "get_write_fail_retry");
 
 end Pldm_Wrap;

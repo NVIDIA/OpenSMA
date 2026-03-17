@@ -26,93 +26,95 @@
 #include "nv/bootloader.h"
 #include "nv/mctp/interface.h"
 #include "nv/nv.h"
+#include "nv/i2c/lattice_driver.h"
 #include "library/spdm_lib_config.h"
 using namespace std::chrono_literals;
 using namespace nv::ipc;
 using namespace nv;
 
 namespace nv::spdm {
-namespace {
+// namespace {
 
-enum class SpdmLockFuseBlockCode : uint32_t
-{
-    LockSuccess     = 0,
-    ReadFuseFail    = 1,
-    ProgramFuseFail = 2,
-    AlreadyLock     = 3
-};
+// enum class SpdmLockFuseBlockCode : uint32_t
+// {
+//     LockSuccess     = 0,
+//     ReadFuseFail    = 1,
+//     ProgramFuseFail = 2,
+//     AlreadyLock     = 3
+// };
 
-void lock_fuse_block()
-{
-    constexpr uint32_t EfuseLockFieldIndex = 0;
-    uint32_t           current_fuse_data   = 0;
-    // read current fuse lock configuration
-    auto flash_status = nv::flash::Flash::read_efuse(EfuseLockFieldIndex, current_fuse_data);
-    if (nv::flash::Status::Ok != flash_status) {
-        nv::logger::error(nv::logger::Event::SpdmLockFuseBlock,
-                          nv::logger::data_from_two_u32(
-                              std::to_underlying(SpdmLockFuseBlockCode::ReadFuseFail),
-                              std::to_underlying(flash_status)));
-        return;
-    }
-    /**
-     * @brief Lock Fuse Config
-     *
-     * - Byte_0
-     *
-     *   Reserved
-     *
-     * - Byte_1
-     *
-     *   OSCAA_KEY_LOCK[0]\(Bit_7) + PRINCE_CFG_LOCK[2:0] + BOOT_CFG_LOCK[2:0] + Reserved(Bit_0)
-     *
-     * - Byte_2
-     *
-     *   CUST_LOCK1[2:0]\(Bit_7) + CUST_LOCK0[2:0] + OSCAA_KEY_LOCK[2:1]\(Bit_0)
-     *
-     * - Byte_3
-     *
-     *   Reserved[1:0]\(Bit_7) + CUST_LOCK3[2:0] + CUST_LOCK2[2:0]\(Bit_0)
-     *
-     *
-     * Item to be set
-     *
-     * - PRINCE_CFG_LOCK[0]
-     *
-     * - OSCAA_KEY_LOCK[0]
-     *
-     * - CUST_LOCK0[0]
-     *
-     * - CUST_LOCK1[0]
-     *
-     */
-    constexpr uint32_t LockAllFuseConfig = 0x00249000;
-    if ((current_fuse_data & LockAllFuseConfig) == LockAllFuseConfig) {  // do nothing
-                                                                         // when fuse is
-                                                                         // already
-                                                                         // locked.
-        nv::logger::info(nv::logger::Event::SpdmLockFuseBlock,
-                         nv::logger::data_from_two_u32(
-                             std::to_underlying(SpdmLockFuseBlockCode::AlreadyLock),
-                             std::to_underlying(nv::flash::Status::Ok)));
-    }
-    else {  // lock fuse.
-        flash_status = nv::flash::Flash::program_efuse(EfuseLockFieldIndex, LockAllFuseConfig);
-        if (nv::flash::Status::Ok != flash_status) {
-            nv::logger::error(nv::logger::Event::SpdmLockFuseBlock,
-                              nv::logger::data_from_two_u32(
-                                  std::to_underlying(SpdmLockFuseBlockCode::ProgramFuseFail),
-                                  std::to_underlying(flash_status)));
-        }
-        else {
-            nv::logger::info(nv::logger::Event::SpdmLockFuseBlock,
-                             nv::logger::data_from_two_u32(
-                                 std::to_underlying(SpdmLockFuseBlockCode::LockSuccess),
-                                 std::to_underlying(flash_status)));
-        }
-    }
-}
-}  // namespace
+// void lock_fuse_block()
+// {
+//     constexpr uint32_t EfuseLockFieldIndex = 0;
+//     uint32_t           current_fuse_data   = 0;
+//     // read current fuse lock configuration
+//     auto flash_status = nv::flash::Flash::read_efuse(EfuseLockFieldIndex, current_fuse_data);
+//     if (nv::flash::Status::Ok != flash_status) {
+//         nv::logger::error(nv::logger::Event::SpdmLockFuseBlock,
+//                           nv::logger::data_from_two_u32(
+//                               std::to_underlying(SpdmLockFuseBlockCode::ReadFuseFail),
+//                               std::to_underlying(flash_status)));
+//         return;
+//     }
+//     /**
+//      * @brief Lock Fuse Config
+//      *
+//      * - Byte_0
+//      *
+//      *   Reserved
+//      *
+//      * - Byte_1
+//      *
+//      *   OSCAA_KEY_LOCK[0]\(Bit_7) + PRINCE_CFG_LOCK[2:0] + BOOT_CFG_LOCK[2:0] +
+//      Reserved(Bit_0)
+//      *
+//      * - Byte_2
+//      *
+//      *   CUST_LOCK1[2:0]\(Bit_7) + CUST_LOCK0[2:0] + OSCAA_KEY_LOCK[2:1]\(Bit_0)
+//      *
+//      * - Byte_3
+//      *
+//      *   Reserved[1:0]\(Bit_7) + CUST_LOCK3[2:0] + CUST_LOCK2[2:0]\(Bit_0)
+//      *
+//      *
+//      * Item to be set
+//      *
+//      * - PRINCE_CFG_LOCK[0]
+//      *
+//      * - OSCAA_KEY_LOCK[0]
+//      *
+//      * - CUST_LOCK0[0]
+//      *
+//      * - CUST_LOCK1[0]
+//      *
+//      */
+//     constexpr uint32_t LockAllFuseConfig = 0x00249000;
+//     if ((current_fuse_data & LockAllFuseConfig) == LockAllFuseConfig) {  // do nothing
+//                                                                          // when fuse is
+//                                                                          // already
+//                                                                          // locked.
+//         nv::logger::info(nv::logger::Event::SpdmLockFuseBlock,
+//                          nv::logger::data_from_two_u32(
+//                              std::to_underlying(SpdmLockFuseBlockCode::AlreadyLock),
+//                              std::to_underlying(nv::flash::Status::Ok)));
+//     }
+//     else {  // lock fuse.
+//         flash_status = nv::flash::Flash::program_efuse(EfuseLockFieldIndex,
+//         LockAllFuseConfig); if (nv::flash::Status::Ok != flash_status) {
+//             nv::logger::error(nv::logger::Event::SpdmLockFuseBlock,
+//                               nv::logger::data_from_two_u32(
+//                                   std::to_underlying(SpdmLockFuseBlockCode::ProgramFuseFail),
+//                                   std::to_underlying(flash_status)));
+//         }
+//         else {
+//             nv::logger::info(nv::logger::Event::SpdmLockFuseBlock,
+//                              nv::logger::data_from_two_u32(
+//                                  std::to_underlying(SpdmLockFuseBlockCode::LockSuccess),
+//                                  std::to_underlying(flash_status)));
+//         }
+//     }
+// }
+// }  // namespace
 
 nv::mctp::Header& Task::get_last_header()
 {
@@ -247,6 +249,7 @@ Task::Task()
     // use dummy certificate
     if constexpr (nv::ipc::SpdmDummyCertificates == true) {
         nv::info("use dummy certificate\n");
+        this->certificate_chain_slot_mask = 0x01;
     }
     else {
         // log the dda ordinal number on efuse
@@ -258,10 +261,19 @@ Task::Task()
         nv::logger::info(nv::logger::Event::SpdmCertDdaOtpValue,
                          nv::logger::data_from_two_u32(std::to_underlying(flash_status),
                                                        dda_ordinal_number));
-
-        if (nv::spdm::cert::verify_l2_l3_cert() and nv::spdm::cert::generate_l4_cert()
-            and nv::spdm::cert::generate_l5_cert()) {
-            lock_fuse_block();
+        bool could_lock = true;
+        if (!nv::spdm::cert::verify_l2_l3_cert()) {
+            could_lock = false;
+        }
+        if (!nv::spdm::cert::generate_l4_cert()) {
+            could_lock = false;
+        }
+        if (!nv::spdm::cert::generate_l5_cert()) {
+            could_lock = false;
+        }
+        if (could_lock) {
+            this->certificate_chain_slot_mask = 0x01;
+            // lock_fuse_block();
         }
     }
 

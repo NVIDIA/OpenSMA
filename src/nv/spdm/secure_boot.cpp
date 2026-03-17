@@ -10,34 +10,22 @@ void SecureBoot::secure_boot_main()
 {
     auto prepare_result = nv::ap_operation::secure_boot_ap_fw_authenticate_prepare();
     if (prepare_result != nv::ap_operation::ApOperationErrorCode::Success) {
-        nv::info("secure_boot_ap_fw_authenticate_prepare: %d", prepare_result);
-        auto status = nv::flash::Flash::set_ap_fw_authenticate_data(
+        nv::flash::Flash::set_ap_fw_authenticate_data(
             nv::spdm::secure_boot::SecureBoot::AuthenticateData{
                 .ap_auth_result = nv::spdm::crypto::CryptoStatus::FailUnknown,
             },
             nv::flash::Key::NpdsActiveApFwAuthenticateData);
-        if (status != nv::flash::Status::Ok) {
-            nv::info("secure_boot_main: set ActiveSlot ap fw authenticate data failed\n");
-        }
-        status = nv::flash::Flash::set_ap_fw_authenticate_data(
+        nv::flash::Flash::set_ap_fw_authenticate_data(
             nv::spdm::secure_boot::SecureBoot::AuthenticateData{
                 .ap_auth_result = nv::spdm::crypto::CryptoStatus::FailUnknown,
             },
             nv::flash::Key::NpdsUpdateApFwAuthenticateData);
-        if (status != nv::flash::Status::Ok) {
-            nv::info("secure_boot_main: set UpdateSlot ap fw authenticate data failed\n");
-        }
         return;
     }
     auto auth_result = nv::spdm::crypto::authenticate_ap_firmware(
         nv::fw_parser::ap::ParsingApFwType::ActiveSlot);
 
-    auto callback_result = nv::ap_operation::secure_boot_ap_fw_authenticate_callback(
-        auth_result);
-    if (callback_result != nv::ap_operation::ApOperationErrorCode::Success) {
-        nv::info("secure_boot_ap_fw_authenticate_callback: %d", callback_result);
-        return;
-    }
+    nv::ap_operation::secure_boot_ap_fw_authenticate_callback(auth_result);
 }
 
 void SecureBoot::secure_boot_ap_auth_callback(
@@ -49,34 +37,30 @@ void SecureBoot::secure_boot_ap_auth_callback(
     authenticate_data.ap_metadata_tbs_data = tbs_data;
     authenticate_data.ap_auth_result       = ap_auth_result;
     if (auth_ap_type == nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
-        nv::info("secure_boot_ap_auth_callback: ActiveSlot, ap_auth_result: %d\n",
-                 ap_auth_result);
-        auto status = nv::flash::Flash::set_ap_fw_authenticate_data(
+        nv::flash::Flash::set_ap_fw_authenticate_data(
             authenticate_data, nv::flash::Key::NpdsActiveApFwAuthenticateData);
-
-        if (status != nv::flash::Status::Ok) {
-            nv::info(
-                "secure_boot_ap_auth_callback: ActiveSlot, set ap fw authenticate data "
-                "failed\n");
-        }
-        status = nv::flash::Flash::set_ap_fw_authenticate_data(
+        auto status = nv::flash::Flash::set_ap_fw_authenticate_data(
             authenticate_data, nv::flash::Key::NpdsUpdateApFwAuthenticateData);
         if (status != nv::flash::Status::Ok) {
-            nv::info(
-                "secure_boot_ap_auth_callback: UpdateSlot, set ap fw authenticate data "
-                "failed\n");
+            (void)nv::flash::Flash::set_data(
+                nv::flash::Key::NpdsAp0FwStatus,
+                static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_Failed));
+        }
+        else {
+            (void)nv::flash::Flash::set_data(
+                nv::flash::Key::NpdsAp0FwStatus,
+                static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Sb_Auth_Success));
         }
     }
     else if (auth_ap_type == nv::fw_parser::ap::ParsingApFwType::UpdateSlot) {
-        nv::info("secure_boot_ap_auth_callback: UpdateSlot, ap_auth_result: %d\n",
-                 ap_auth_result);
-        auto status = nv::flash::Flash::set_ap_fw_authenticate_data(
+        nv::flash::Flash::set_ap_fw_authenticate_data(
             authenticate_data, nv::flash::Key::NpdsUpdateApFwAuthenticateData);
-        if (status != nv::flash::Status::Ok) {
-            nv::info(
-                "secure_boot_ap_auth_callback: UpdateSlot, set ap fw authenticate data "
-                "failed\n");
-        }
+    }
+
+    if (ap_auth_result != nv::spdm::crypto::CryptoStatus::Success) {
+        (void)nv::flash::Flash::set_data(
+            nv::flash::Key::NpdsAp0FwStatus,
+            static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_Failed));
     }
 }
 

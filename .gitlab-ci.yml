@@ -49,13 +49,12 @@ build:
   script:
     - cd ${CI_PROJECT_DIR}
     - echo "Building ${PROJECT} firmware..."
-    - ./mcu_build.sh PROJECT=${PROJECT} BOARD=${BOARD} PLATFORM=${PLATFORM} MODE=${MODE} SIGN_KEYSET=local RUN_LOCAL=1
+    - ./mcu_build.sh PROJECT=${PROJECT} BOARD=${BOARD} PLATFORM=${PLATFORM} MODE=${MODE} SIGN_KEYSET=local RUN_LOCAL=1 BUILD_ONLY=1
     - echo "${PROJECT} firmware build completed successfully"
 
   artifacts:
     paths:
-      - build/${PROJECT}-${PLATFORM}-${MODE}/*_signed.*
-      - build/${PROJECT}-${PLATFORM}-${MODE}/${PROJECT}.bin
+      - build
     when: always
   parallel:
     matrix: *build_matrix

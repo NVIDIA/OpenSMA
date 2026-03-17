@@ -24,14 +24,15 @@
 
 namespace pdk::mctp::platforms {
 // moving testrunner's config here for x86 build since we can't use nv::ipc in mctp-cpp module
-constexpr uint8_t DownStreamNum           = 0;
-constexpr uint8_t UpStreamNum             = 1;
-constexpr uint8_t DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
-constexpr uint8_t EidPoolSize             = DownStreamNum;
-constexpr uint8_t RoutingInfoUpdateSize   = 4;
-constexpr uint8_t RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
-constexpr bool    I2cIsEndpoint           = false;
-constexpr bool    I2cTransparent          = false;
+constexpr uint8_t   DownStreamNum           = 0;
+constexpr uint8_t   UpStreamNum             = 1;
+constexpr uint8_t   DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
+constexpr uint8_t   EidPoolSize             = DownStreamNum;
+constexpr uint8_t   RoutingInfoUpdateSize   = 4;
+constexpr uint8_t   RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
+constexpr bool      I2cIsEndpoint           = false;
+constexpr bool      I2cTransparent          = false;
+constexpr Interface DefaultInterface        = Interface::UsUsb;
 constexpr inline std::array<RoutingTableEntry, DownStreamNum> DownStreamInfos{
 
 };

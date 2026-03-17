@@ -292,7 +292,7 @@ is
          Dl_Send_Time            => 0,
          Dl_M0_Time              => 0,
          Dl_M1_Time              => 0,
-         Trasnfer_Fail_CC        => 0,
+         Transfer_Fail_CC        => 0,
          Verify_Fail_CC          => 0,
          Current_Rate            => 0,
          Limited_Rate            => Info.Max,
@@ -307,7 +307,8 @@ is
          Metadata                =>
            (Data =>
               [others => 0]),
-         Auth_Request_Id         => 0);
+         Auth_Request_Id         => 0,
+         Write_Fail_Retry        => 0);
 
    end Pldmfw_Context_Init;
 
@@ -631,6 +632,7 @@ is
                Offset := Offset + NvU32 (Component_Infos (i).Pending_Version_String_Length);
             end if;
          else
+            Comp.Pending_Comp_Stamp         := 0;
             Comp.Pending_Comp_Ver_Str_Type := FW_STR_TYPE_UNKNOWN;
             Comp.Pending_Comp_Ver_Str_Len                                     := 0;
             --  Comp
@@ -1013,6 +1015,7 @@ is
       Context.Dl_M1_Time             := 0;
       Context.Slot_State             := Pldmfw_Slot_State_Init;
       Context.Spi_Flash_Retry        := 0;
+      Context.Write_Fail_Retry       := Pldm_Hook_Get_Write_Fail_Retry (Comp_Id => Context.Comp_Id);
 
       Resp.Component_Resp := PLDMFW_COMP_COMPATIBILITY_RESPONSE_CAN_BE_UPDATE;
       Resp.Component_Resp_Code := PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_CAN_BE_UPDATE;
@@ -1373,14 +1376,15 @@ is
                      Ret   => Ret);
                   if Ret = Pldmfw_Ret_Wp_On
                   then
-                     Context.Trasnfer_Fail_CC := PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_WP_ERROR;
+                     Context.Transfer_Fail_CC := PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_WP_ERROR;
                   elsif Ret /= Pldmfw_Ret_Success
                   then
-                     Context.Trasnfer_Fail_CC :=
+                     Context.Transfer_Fail_CC :=
                        PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_INTERNAL_ERROR;
                   end if;
 
                   Pldm_Hook_Set_Timer (Ret, PLDMFW_TIMEING_PT2 * MSEC_TO_NSEC);
+                  Add_U8 (Context.Spi_Flash_Retry, 1, Context.Spi_Flash_Retry);
                   goto Exit_Point;
                elsif Context.Fw_Current_Offset = 0
                then
@@ -1419,14 +1423,15 @@ is
                  (State => PLDMFW_STATE_DL, Cmd => PLDMFW_COMMAND_REQUEST_FW_DATA, Ret => Ret);
                if Ret = Pldmfw_Ret_Wp_On
                then
-                  Context.Trasnfer_Fail_CC := PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_WP_ERROR;
+                  Context.Transfer_Fail_CC := PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_WP_ERROR;
                elsif Ret /= Pldmfw_Ret_Success
                then
-                  Context.Trasnfer_Fail_CC :=
+                  Context.Transfer_Fail_CC :=
                     PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_INTERNAL_ERROR;
                end if;
 
                Pldm_Hook_Set_Timer (Ret, PLDMFW_TIMEING_PT2 * MSEC_TO_NSEC);
+               Add_U8 (Context.Spi_Flash_Retry, 1, Context.Spi_Flash_Retry);
                goto Exit_Point;
             elsif Context.Fw_Current_Offset = 0
             then
@@ -1524,7 +1529,7 @@ is
          when Pldmfw_Slot_State_Trans_Error =>
             Req.Transfer_Result := PLDMFW_CMD_TRANSFER_COMPLETE_RESULT_ERROR;
          when Pldmfw_Slot_State_Spiflash_Error =>
-            Req.Transfer_Result := Context.Trasnfer_Fail_CC;
+            Req.Transfer_Result := Context.Transfer_Fail_CC;
          when others =>
             --  invalid state
             Ret := Pldmfw_Ret_Invalid_Slot_State;

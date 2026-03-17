@@ -17,6 +17,8 @@
 
 include $(ubs_check_platform_file '$(UBS_PLATFORM)')
 
+# export platform type
+GD_UBS_PLATFORM := "$(UBS_PLATFORM)"
 UBS_SUPPORTED_LANG := CC CXX ADA BIND CPP LD LINK
 
 

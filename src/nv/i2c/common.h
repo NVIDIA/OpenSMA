@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,9 +20,13 @@
 #include <stdint.h>
 #include <cstddef>
 
+#include "nv/i2c/i2c_types.h"
+
+#include NV_IPC_CONFIG_H
+
 namespace nv::i2c {
 
-static constexpr size_t I2cBufferSize = 64;
+constexpr static size_t I2cBufferSize = nv::lstp::EnableI2c ? 512 : 64;
 
 using I2cBuffer = std::array<uint8_t, I2cBufferSize>;
 
@@ -30,39 +34,14 @@ static constexpr size_t I2cHidSmbBufferSize = 512;
 
 using I2cHidBuffer = std::array<uint8_t, I2cHidSmbBufferSize>;
 
-enum class I2cStatus : uint8_t
-{
-    Ok,
-    Error,
-    Busy,
-    Nak,
-    Timeout,
-    ArbLost
-};
-
-enum class I2cQueueError : uint8_t
-{
-    GetReqFail,
-    PutTxFail,
-    PutRxFail,
-    PutRoutingTableFail,
-    GetRoutingTableFail,
-    PutWdtNotifyFail
-};
-
-enum class I2cPktDrop : uint8_t
-{
-    Tx,
-    Rx,
-};
-
 struct [[gnu::packed]] I2cRequest
 {
     uint8_t   address;
-    uint8_t   write_length;
+    uint16_t  write_length;
     I2cBuffer write_buffer;
     uint16_t  read_length;
     uint8_t   src_id;
+    I2cFlags  flags;
 };
 
 struct [[gnu::packed]] I2cResponse

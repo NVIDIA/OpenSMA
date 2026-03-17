@@ -30,7 +30,15 @@ enum class DebugLevel
     Info,   ///< Maximum level of debug messaging that will have a heavy impact on performance.
 };
 
-#if defined(NV_DEBUG) && NV_DEBUG > 0
+// Allow projects to provide a lightweight per-build debug-console config header
+// (e.g. defining NV_UART_INSTANCE) without including the full project config.
+#if defined(NV_DEBUGCONSOLE_CONFIG_H)
+#include NV_DEBUGCONSOLE_CONFIG_H
+#endif
+
+#if defined(NV_UART_INSTANCE) && (NV_UART_INSTANCE == 0xfe)
+[[maybe_unused]] constexpr inline auto DbgLevel = DebugLevel::None;
+#elif defined(NV_DEBUG) && NV_DEBUG > 0
 [[maybe_unused]] constexpr inline auto DbgLevel = DebugLevel::Info;
 #else
 [[maybe_unused]] constexpr inline auto DbgLevel = DebugLevel::None;

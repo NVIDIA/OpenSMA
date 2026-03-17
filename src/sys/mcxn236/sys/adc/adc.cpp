@@ -179,15 +179,18 @@ void ADC::set_adc_command(AdcPeripheral           peripheral,
         .channelBNumber    = 0,
         .chainedNextCommandNumber   = static_cast<uint32_t>(config.chainedNextCommandNumber),
         .enableAutoChannelIncrement = false,
-        .loopCount                  = 0,
-        .hardwareAverageMode        = kLPADC_HardwareAverageCount128,
-        .sampleTimeMode             = kLPADC_SampleTimeADCK3,
-        .hardwareCompareMode        = kLPADC_HardwareCompareStoreOnTrue,
-        .hardwareCompareValueHigh   = config.hwCompareValueHigh,
-        .hardwareCompareValueLow    = config.hwCompareValueLow,
-        .conversionResolutionMode   = kLPADC_ConversionResolutionHigh,
-        .enableWaitTrigger          = false,
-        .enableChannelB             = false};
+        .loopCount                  = config.loopCount,
+        .hardwareAverageMode        = static_cast<lpadc_hardware_average_mode_t>(
+            config.hardwareAverageMode),
+        .sampleTimeMode      = static_cast<lpadc_sample_time_mode_t>(config.sampleTimeMode),
+        .hardwareCompareMode = static_cast<lpadc_hardware_compare_mode_t>(
+            config.hardwareCompareMode),
+        .hardwareCompareValueHigh = config.hwCompareValueHigh,
+        .hardwareCompareValueLow  = config.hwCompareValueLow,
+        .conversionResolutionMode = static_cast<lpadc_conversion_resolution_mode_t>(
+            config.conversionResolutionMode),
+        .enableWaitTrigger = false,
+        .enableChannelB    = false};
 
     ADC_Type* baseAddr = get_base(peripheral);
     LPADC_SetConvCommandConfig(baseAddr, commandId, &newcmd);
@@ -195,14 +198,15 @@ void ADC::set_adc_command(AdcPeripheral           peripheral,
 
 void ADC::set_adc_trigger(AdcPeripheral peripheral,
                           uint32_t      triggerSrc,
-                          uint32_t      targetCommandId)
+                          uint32_t      targetCommandId,
+                          uint8_t       fifoSelect)
 {
     const lpadc_conv_trigger_config_t triggerConfig = {
         .targetCommandId       = static_cast<uint8_t>(targetCommandId),
         .delayPower            = 0UL,
         .priority              = 0,
-        .channelAFIFOSelect    = 0,
-        .channelBFIFOSelect    = 0,
+        .channelAFIFOSelect    = fifoSelect,
+        .channelBFIFOSelect    = fifoSelect,
         .enableHardwareTrigger = false};
     ADC_Type* baseAddr = get_base(peripheral);
     LPADC_SetConvTriggerConfig(baseAddr, triggerSrc, &triggerConfig);

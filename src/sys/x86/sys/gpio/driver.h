@@ -17,11 +17,21 @@
  */
 #pragma once
 
+#include <cstdint>
+
 namespace sys::gpio {
 
 class Driver
 {
 public:
+    template<uint32_t port, uint32_t pin>
+    static void write(uint8_t data)
+    {}
+
+    template<uint32_t port, uint32_t pin>
+    static uint8_t read()
+    {}
+
 protected:
     static void init();
 };

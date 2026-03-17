@@ -34,7 +34,8 @@ void task_switch_hook(void)
     if (driver.mode == perf_mon::Mode::Disable) {
         return;
     }
-    auto tick   = ctimer::Driver::read_ticks();
+    auto tick = ctimer::Driver::read_ticks();
+    // coverity[check_return] - expected to return a valid value
     auto id     = ipc::Supervisor::inst().current_task_id();
     auto tmp_id = static_cast<uint32_t>(id);
 
@@ -179,16 +180,22 @@ void Driver::dump()
                     static_cast<uint32_t>(driver.buffer.at(0).cpu.at(i).execution_time)));
         }
 
-        const size_t                   dump_num = 7;
+        const size_t                   dump_num = 11;
         std::array<uint16_t, dump_num> dump_interface{};
 
-        dump_interface[0] = 0;
-        dump_interface[1] = static_cast<uint16_t>(mctp::Client::DsI2c0);
-        dump_interface[2] = static_cast<uint16_t>(mctp::Client::DsI2c1);
-        dump_interface[3] = static_cast<uint16_t>(mctp::Client::DsI2c2);
-        dump_interface[4] = static_cast<uint16_t>(mctp::Client::DsI2c3);
-        dump_interface[5] = static_cast<uint16_t>(mctp::Client::DsI3c0);
-        dump_interface[6] = static_cast<uint16_t>(mctp::Client::DsI3c1);
+        // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers)
+        dump_interface[0]  = 0;
+        dump_interface[1]  = static_cast<uint16_t>(mctp::Client::DsI2c0);
+        dump_interface[2]  = static_cast<uint16_t>(mctp::Client::DsI2c1);
+        dump_interface[3]  = static_cast<uint16_t>(mctp::Client::DsI2c2);
+        dump_interface[4]  = static_cast<uint16_t>(mctp::Client::DsI2c3);
+        dump_interface[5]  = static_cast<uint16_t>(mctp::Client::DsI3c0);
+        dump_interface[6]  = static_cast<uint16_t>(mctp::Client::DsI3c1);
+        dump_interface[7]  = static_cast<uint16_t>(mctp::Client::DsI2c4);
+        dump_interface[8]  = static_cast<uint16_t>(mctp::Client::DsI2c5);
+        dump_interface[9]  = static_cast<uint16_t>(mctp::Client::DsI2c6);
+        dump_interface[10] = static_cast<uint16_t>(mctp::Client::DsI2c7);
+        // NOLINTEND(cppcoreguidelines-avoid-magic-numbers)
 
         for (auto client : dump_interface) {
             nv::logger::info(nv::logger::Event::PerfInterfaceType,

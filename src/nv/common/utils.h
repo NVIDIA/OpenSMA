@@ -199,6 +199,9 @@ enum FirmwareState
     WriteInProgress      = 4,
     Inactive             = 5,
     FailedAuthentication = 6,
+    PendingImageCopy     = 7,
+    ImageCopyInProgress  = 8,
+    FailedImageCopy      = 9,
 };
 
 /**

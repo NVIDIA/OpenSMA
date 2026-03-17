@@ -24,12 +24,13 @@
 #include "nv/ipc/queue.h"
 
 namespace pdk::mctp::platforms {
-constexpr uint8_t DownStreamNum           = nv::ipc::DownStreamNum;
-constexpr uint8_t UpStreamNum             = nv::ipc::UpStreamNum;
-constexpr uint8_t DefaultRoutingTableSize = nv::ipc::DefaultRoutingTableSize;
-constexpr uint8_t EidPoolSize             = DownStreamNum;
-constexpr uint8_t RoutingInfoUpdateSize   = nv::ipc::RoutingInfoUpdateSize;
-constexpr uint8_t RoutingTableSize        = nv::ipc::RoutingTableSize;
+constexpr uint8_t   DownStreamNum           = nv::ipc::DownStreamNum;
+constexpr uint8_t   UpStreamNum             = nv::ipc::UpStreamNum;
+constexpr uint8_t   DefaultRoutingTableSize = nv::ipc::DefaultRoutingTableSize;
+constexpr uint8_t   EidPoolSize             = DownStreamNum;
+constexpr uint8_t   RoutingInfoUpdateSize   = nv::ipc::RoutingInfoUpdateSize;
+constexpr uint8_t   RoutingTableSize        = nv::ipc::RoutingTableSize;
+constexpr Interface DefaultInterface        = Interface::UsUsb;
 
 constexpr inline std::array<RoutingTableEntry, DownStreamNum>
     DownStreamInfos = nv::ipc::DownStreamInfos;

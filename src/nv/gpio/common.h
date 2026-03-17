@@ -17,6 +17,8 @@
  */
 #pragma once
 #include <cstdint>
+
+#include "sys/gpio/constant.h"
 namespace nv::gpio {
 using GpioPin  = uint32_t;
 using GpioPort = uint32_t;

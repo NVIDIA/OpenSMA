@@ -200,7 +200,11 @@ bool validate_certificate_signature(const CertArray& preceding_cert,
 
     // coverity[cert_int30_c_violation] -  already checked on above static_assert
     const uint32_t LengthOfCert = 4u + (current_cert[6] << 8u) + current_cert[7];
-    Signature      sig_cur_cert = parse_signature(current_cert);
+    // check the length of the cert is large enough to hold the need copy size
+    if (LengthOfCert > current_cert.size() - StartOffsetOfCert) {
+        return false;
+    }
+    Signature sig_cur_cert = parse_signature(current_cert);
     const std::array<uint8_t, Ecdsa384PublicKeySize> pre_pub_key = parse_ecdsa_p384_pubkey(
         preceding_cert);
 

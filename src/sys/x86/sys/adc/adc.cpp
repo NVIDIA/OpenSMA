@@ -105,7 +105,8 @@ void ADC::clear_status_flags([[maybe_unused]] AdcPeripheral peripheral,
 
 void ADC::set_adc_trigger([[maybe_unused]] AdcPeripheral peripheral,
                           [[maybe_unused]] uint32_t      triggerSrc,
-                          [[maybe_unused]] uint32_t      targetCommandId)
+                          [[maybe_unused]] uint32_t      targetCommandId,
+                          [[maybe_unused]] uint8_t       fifoSelect)
 {
     return;
 }

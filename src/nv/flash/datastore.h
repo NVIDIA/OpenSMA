@@ -42,10 +42,13 @@ enum class Key : uint32_t
     NpdsCfsr,
     NpdsHfsr,
     NpdsWdtEventBits,
-    NpdsDebugTokenAuthenticated,  ///< Debug token auth status: 0=not auth,
-                                  ///< non-zero=token_type_bitmap
-    NpdsDebugTokenFailCount,      ///< Debug token failure count for log throttling
-    NpdsAp0FwStatus,              ///< AP FW status
+    NpdsDebugTokenAuthenticated,     ///< Debug token auth status: 0=not auth,
+                                     ///< non-zero=token_type_bitmap
+    NpdsDebugTokenSubtypeDebugFw,    ///< Subtype bitmap for FlashDebugFw token
+    NpdsDebugTokenSubtypeMcuDebug,   ///< Subtype bitmap for MCU debug token
+    NpdsDebugTokenSubtypeCpldDebug,  ///< Subtype bitmap for CPLD debug token
+    NpdsDebugTokenFailCount,         ///< Debug token failure count for log throttling
+    NpdsAp0FwStatus,                 ///< AP FW status
     NpdsEnd,
     NpdsInvalid,
     // here is for active ap fw authenticate data
@@ -68,6 +71,138 @@ enum class Key : uint32_t
     PdsBackgroundSetup,         ///< Background update setup 0: Default 1: enable, 2: disable
     PdsBackgroundSetupOneTime,  ///< Background update setup for one time boot only 0: not setup
                                 ///< 2: disable 3: enable
+    PdsOtpSimultaneousFuseAddress0,
+    PdsOtpSimultaneousFuseAddress1,
+    PdsOtpSimultaneousFuseAddress2,
+    PdsOtpSimultaneousFuseAddress3,
+    PdsOtpSimultaneousFuseAddress4,
+    PdsOtpSimultaneousFuseAddress5,
+    PdsOtpSimultaneousFuseAddress6,
+    PdsOtpSimultaneousFuseAddress7,
+    PdsOtpSimultaneousFuseAddress8,
+    PdsOtpSimultaneousFuseAddress9,
+    PdsOtpSimultaneousFuseAddress10,
+    PdsOtpSimultaneousFuseAddress11,
+    PdsOtpSimultaneousFuseAddress12,
+    PdsOtpSimultaneousFuseAddress13,
+    PdsOtpSimultaneousFuseAddress14,
+    PdsOtpSimultaneousFuseAddress15,
+    PdsOtpSimultaneousFuseAddress16,
+    PdsOtpSimultaneousFuseAddress17,
+    PdsOtpSimultaneousFuseAddress18,
+    PdsOtpSimultaneousFuseAddress19,
+    PdsOtpSimultaneousFuseAddress20,
+    PdsOtpSimultaneousFuseAddress21,
+    PdsOtpSimultaneousFuseAddress22,
+    PdsOtpSimultaneousFuseAddress23,
+    PdsOtpSimultaneousFuseAddress24,
+    PdsOtpSimultaneousFuseAddress25,
+    PdsOtpSimultaneousFuseAddress26,
+    PdsOtpSimultaneousFuseAddress27,
+    PdsOtpSimultaneousFuseAddress28,
+    PdsOtpSimultaneousFuseAddress29,
+    PdsOtpSimultaneousFuseAddress30,
+    PdsOtpSimultaneousFuseAddress31,  // DDA ordinal number
+    PdsOtpSimultaneousFuseAddress32,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress33,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress34,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress35,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress36,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress37,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress38,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress39,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress40,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress41,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress42,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress43,  // Efuse signature R
+    PdsOtpSimultaneousFuseAddress44,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress45,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress46,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress47,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress48,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress49,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress50,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress51,
+    PdsOtpSimultaneousFuseAddress52,
+    PdsOtpSimultaneousFuseAddress53,
+    PdsOtpSimultaneousFuseAddress54,
+    PdsOtpSimultaneousFuseAddress55,
+    PdsOtpSimultaneousFuseAddress56,
+    PdsOtpSimultaneousFuseAddress57,
+    PdsOtpSimultaneousFuseAddress58,
+    PdsOtpSimultaneousFuseAddress59,
+    PdsOtpSimultaneousFuseAddress60,
+    PdsOtpSimultaneousFuseAddress61,
+    PdsOtpSimultaneousFuseAddress62,
+    PdsOtpSimultaneousFuseAddress63,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress64,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress65,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress66,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress67,  // Efuse signature S
+    PdsOtpSimultaneousFuseAddress68,
+    PdsOtpSimultaneousFuseAddress69,
+    PdsOtpSimultaneousFuseAddress70,
+    PdsOtpSimultaneousFuseAddress71,
+    PdsOtpSimultaneousFuseAddress72,
+    PdsOtpSimultaneousFuseAddress73,
+    PdsOtpSimultaneousFuseAddress74,
+    PdsOtpSimultaneousFuseAddress75,
+    PdsOtpSimultaneousFuseAddress76,
+    PdsOtpSimultaneousFuseAddress77,
+    PdsOtpSimultaneousFuseAddress78,
+    PdsOtpSimultaneousFuseAddress79,
+    PdsOtpSimultaneousFuseAddress80,
+    PdsOtpSimultaneousFuseAddress81,
+    // SoC Power Smoothing persistent settings (set via NSM Type 5 SetDeviceModeSettings)
+    PdsSoCPowerSmoothEnabled,  ///< SoC Power Smoothing enabled: 0=disabled, 1=enabled
+    PdsSoCPowerSmoothCurrentPresetIndex,  ///< Current preset index (0-3)
+    PdsSoCPowerBrakeEnabled,              ///< Power brake enabled: 0=disabled, 1=enabled
+    PdsMaxACPowerRampRate,                ///< Max AC power ramp rate (float stored as uint32_t)
+    // ADC Calibration data (32 points: each uint32_t =
+    // [expected_dac_code:16][actual_adc_code:16])
+    // ADC Calibration data (26 points: 0V to 2.5V in 100mV steps)
+    // Each uint32_t = [expected_dac_code:16][actual_adc_code:16]
+    PdsAdcCalibrationComplete,  ///< Calibration test completed: 0=never run, 1=complete
+    PdsAdcCalibrationData0,     ///< Calibration point 0  (0.0V)
+    PdsAdcCalibrationData1,     ///< Calibration point 1  (0.1V)
+    PdsAdcCalibrationData2,     ///< Calibration point 2  (0.2V)
+    PdsAdcCalibrationData3,     ///< Calibration point 3  (0.3V)
+    PdsAdcCalibrationData4,     ///< Calibration point 4  (0.4V)
+    PdsAdcCalibrationData5,     ///< Calibration point 5  (0.5V)
+    PdsAdcCalibrationData6,     ///< Calibration point 6  (0.6V)
+    PdsAdcCalibrationData7,     ///< Calibration point 7  (0.7V)
+    PdsAdcCalibrationData8,     ///< Calibration point 8  (0.8V)
+    PdsAdcCalibrationData9,     ///< Calibration point 9  (0.9V)
+    PdsAdcCalibrationData10,    ///< Calibration point 10 (1.0V)
+    PdsAdcCalibrationData11,    ///< Calibration point 11 (1.1V)
+    PdsAdcCalibrationData12,    ///< Calibration point 12 (1.2V)
+    PdsAdcCalibrationData13,    ///< Calibration point 13 (1.3V)
+    PdsAdcCalibrationData14,    ///< Calibration point 14 (1.4V)
+    PdsAdcCalibrationData15,    ///< Calibration point 15 (1.5V)
+    PdsAdcCalibrationData16,    ///< Calibration point 16 (1.6V)
+    PdsAdcCalibrationData17,    ///< Calibration point 17 (1.7V)
+    PdsAdcCalibrationData18,    ///< Calibration point 18 (1.8V)
+    PdsAdcCalibrationData19,    ///< Calibration point 19 (1.9V)
+    PdsAdcCalibrationData20,    ///< Calibration point 20 (2.0V)
+    PdsAdcCalibrationData21,    ///< Calibration point 21 (2.1V)
+    PdsAdcCalibrationData22,    ///< Calibration point 22 (2.2V)
+    PdsAdcCalibrationData23,    ///< Calibration point 23 (2.3V)
+    PdsAdcCalibrationData24,    ///< Calibration point 24 (2.4V)
+    PdsAdcCalibrationData25,    ///< Calibration point 25 (2.5V)
+    // Leak Detection thresholds (2 entries per slot, 4 slots)
+    // Part0: [sensorId:16 | minLeak:16]
+    // Part1: [maxLeak:16 | maxNormal:16]  (ADC counts, post-conversion)
+    PdsLeakDetSlot0Part0,
+    PdsLeakDetSlot0Part1,
+    PdsLeakDetSlot1Part0,
+    PdsLeakDetSlot1Part1,
+    PdsLeakDetSlot2Part0,
+    PdsLeakDetSlot2Part1,
+    PdsLeakDetSlot3Part0,
+    PdsLeakDetSlot3Part1,
+    PdsNcsiMacAddrLow,
+    PdsNcsiMacAddrHigh,
+    PdsSoCThermBrakeEnabled,
     PdsEnd,
     PdsInvalid,
 };

@@ -15,12 +15,12 @@
 --  See the License for the specific language governing permissions and
 --  limitations under the License.
 --
-with Pdk.Cmn.Console.Plat;     use Pdk.Cmn.Console.Plat;
+with Pdk.Cmn.Log.Plat;        use Pdk.Cmn.Log.Plat;
 with Pdk.Cmn.Flowcontrol.Plat; use Pdk.Cmn.Flowcontrol.Plat;
 procedure Main with
   spark_mode => On
 is
 begin
-   Print("mctp-ada main()");
+   Print(Info, "mctp-ada main()");
    Exit_Program(0);
 end main;

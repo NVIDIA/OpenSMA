@@ -1,0 +1,119 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+#pragma once
+
+#include "nv/common/fixed_point.h"
+#include "nv/soc_pwr_smoothing/offset_policy.h"
+#include "nv/soc_pwr_smoothing/power_brake_policy.h"
+#include "nv/soc_pwr_smoothing/thermal_brake_policy.h"
+
+namespace nv::soc_pwr_smoothing {
+
+// Enums for runtime policy control
+enum class PowerBrakeState
+{
+    PowerBrakeDisabled = 0,
+    PowerBrakeEnabled  = 1
+};
+
+enum class ThermBrakeState
+{
+    ThermBrakeDisabled = 0,
+    ThermBrakeEnabled  = 1
+};
+
+enum class ConstantPowerMode
+{
+    ConstantPowerModeOff = 0,  // Offset policy disabled
+    ConstantPowerModeOn  = 1   // Offset policy enabled
+};
+
+struct RuntimeCfg
+{
+    float                        max_ac_ramp_rate{0.0f};  // AC ramp rate limit (0 = disabled)
+    PowerBrakePolicy::RuntimeCfg power_brake_policy{.entry_threshold = to_sfxp22_10(0.5),
+                                                    .exit_threshold  = to_sfxp22_10(0.8),
+                                                    .enabled         = false};
+    ThermBrakePolicy::RuntimeCfg therm_brake_policy{.enabled = true};
+    OffsetPolicy::RuntimeCfg     isink_offset_policy{
+            .enabled = false,
+            .residency_pid =
+                {
+                                .target       = to_sfxp22_10(2),
+                                .kp           = to_sfxp22_10(-0.3),
+                                .ki           = to_sfxp22_10(-0.005),
+                                .kd           = to_sfxp22_10(0),
+                                .integral_min = to_sfxp22_10(-2000),
+                                .integral_max = to_sfxp22_10(2000),
+                                .output_min   = to_sfxp22_10(0),
+                                .output_max   = to_sfxp22_10(80),
+                                },
+            .critical_pid =
+                {
+                                .target       = to_sfxp22_10(70),
+                                .kp           = to_sfxp22_10(-100.0 / 20.0),
+                                .ki           = to_sfxp22_10(0),
+                                .kd           = to_sfxp22_10(0),
+                                .integral_min = to_sfxp22_10(0),
+                                .integral_max = to_sfxp22_10(100),
+                                .output_min   = to_sfxp22_10(0),
+                                .output_max   = to_sfxp22_10(100),
+                                },
+            .residency_threshold = to_sfxp22_10(70)
+    };
+    OffsetPolicy::RuntimeCfg edpp_offset_policy{
+        .enabled = false,
+        .residency_pid =
+            {
+                            .target       = to_sfxp22_10(2),
+                            .kp           = to_sfxp22_10(-0.3),
+                            .ki           = to_sfxp22_10(-0.005),
+                            .kd           = to_sfxp22_10(0),
+                            .integral_min = to_sfxp22_10(-2000),
+                            .integral_max = to_sfxp22_10(2000),
+                            .output_min   = to_sfxp22_10(0),
+                            .output_max   = to_sfxp22_10(80),
+                            },
+        .critical_pid =
+            {
+                            .target       = to_sfxp22_10(30),
+                            .kp           = to_sfxp22_10(100.0 / 20.0),
+                            .ki           = to_sfxp22_10(0),
+                            .kd           = to_sfxp22_10(0),
+                            .integral_min = to_sfxp22_10(0),
+                            .integral_max = to_sfxp22_10(100),
+                            .output_min   = to_sfxp22_10(0),
+                            .output_max   = to_sfxp22_10(100),
+                            },
+        .residency_threshold = to_sfxp22_10(30)
+    };
+
+    // Override parameters (test hooks for debugging/validation)
+    // These allow direct control of inputs/outputs, bypassing normal operation
+    struct OverrideConfig
+    {
+        bool      enabled{false};  // Override enable flag
+        SFXP22_10 value{0};        // Override value in SFXP22_10 format
+    };
+
+    OverrideConfig override_soc_input;     // Override SoC input (param 20)
+    OverrideConfig override_edpp_offset;   // Override EDPP output (param 21)
+    OverrideConfig override_isink_offset;  // Override ISINK output (param 22)
+};
+
+}  // namespace nv::soc_pwr_smoothing

@@ -37,7 +37,8 @@ constexpr uint32_t EcFirmwareMaxSize = sys::flash::config::FirmwareMaxSize;
 
 typedef struct [[gnu::packed]]
 {
-    nv::common::Uuid measurement_uuid;
+    nv::common::Uuid        measurement_uuid;
+    std::array<uint8_t, 16> measurement_rom_patch_cmac;
 } MeasurementCacheT;
 
 // measurement record version - update this when updating the measurement
@@ -72,60 +73,60 @@ typedef struct [[gnu::packed]]
 typedef enum
 : uint8_t
 {
-    MeasGetNumMeas = 0,  // illegal index, when requested, response is num meas
-    MeasVersion,
-    MeasReservedIndex2,
-    MeasReservedIndex3,
-    MeasReservedIndex4,
-    MeasMcuActiveFirmwareHash,
-    MeasMcuInactiveFirmwareHash,
-    MeasReservedIndex7,
-    MeasReservedIndex8,
-    MeasReservedIndex9,
-    MeasReservedIndex10,
-    MeasReservedIndex11,
-    MeasReservedIndex12,
-    MeasFuses,
-    MeasRollbackFuses,
-    MeasKeyRevocationFuses,
-    MeasReservedIndex16,
-    MeasReservedIndex17,
-    MeasMcuActiveFirmwareSecurityVersion,
-    MeasMcuInctiveFirmwareSecurityVersion,
-    MeasReservedIndex20,
-    MeasReservedIndex21,
-    MeasReservedIndex22,
-    MeasReservedIndex23,
-    MeasReservedIndex24,
-    MeasReservedIndex25,
-    MeasMcxn236Uuid,
-    MeasMcuActiveFirmwareHeaderHash,
-    MeasMcuInactiveFirmwareHeaderHash,
-    MeasReservedIndex29,
-    MeasReservedIndex30,
-    MeasReservedIndex31,
-    MeasReservedIndex32,
-    MeasReservedIndex33,
-    MeasReservedIndex34,
-    MeasReservedIndex35,
-    MeasReservedIndex36,
-    MeasReservedIndex37,
-    MeasMcuActiveFirmwareVersion,
-    MeasMcuInactiveFirmwareVersion,
-    MeasReservedIndex40,
-    MeasReservedIndex41,
-    MeasReservedIndex42,
-    MeasBootStatus,
-    MeasReservedIndex44,
-    MeasReservedIndex45,
-    MeasReservedIndex46,
-    MeasReservedIndex47,
-    MeasReservedIndex48,
-    MeasReservedIndex49,
-    MeasDebugTokenTlvConfiguration,
-    MeasDebugTokenStatus,
-    MeasDeviceIdentifiers,
-    MeasMax,  // total number of measurments + 1 (1-based index)
+    MeasGetNumMeas = 0,        // illegal index, when requested, response is num meas
+    MeasVersion,               // Index 1: Measurement Block Version
+    MeasApType,                // Index 2: AP Type (CPD/NON)
+    MeasRomPatchCmac,          // Index 3: ROM patch CMAC
+    MeasReservedIndex4,        // Index 4: Reserved
+    MeasReservedIndex5,        // Index 5: Reserved
+    MeasReservedIndex6,        // Index 6: Reserved
+    MeasReservedIndex7,        // Index 7: Reserved
+    MeasReservedIndex8,        // Index 8: Reserved
+    MeasApFirmwareHash,        // Index 9: AP Firmware (Update)
+    MeasReservedIndex10,       // Index 10: Reserved
+    MeasReservedIndex11,       // Index 11: Reserved
+    MeasReservedIndex12,       // Index 12: Reserved
+    MeasFuses,                 // Index 13: Fuses
+    MeasRollbackFuses,         // Index 14: Rollback fuses
+    MeasKeyRevocationFuses,    // Index 15: Key Revocation fuses
+    MeasApRollbackFuses,       // Index 16: AP Rollback fuses
+    MeasApKeyRevocationFuses,  // Index 17: AP Key Revocation fuses
+    MeasMcuActiveFirmwareSecurityVersion,   // Index 18: Firmware Security Version (Active)
+    MeasMcuInctiveFirmwareSecurityVersion,  // Index 19: Firmware Security Version (Inactive)
+    MeasReservedIndex20,                    // Index 20: Reserved
+    MeasApFirmwareSecurityVersion,          // Index 21: AP Firmware Security Version (Update)
+    MeasReservedIndex22,                    // Index 22: Reserved
+    MeasReservedIndex23,                    // Index 23: Reserved
+    MeasReservedIndex24,                    // Index 24: Reserved
+    MeasReservedIndex25,                    // Index 25: Reserved
+    MeasMcxnUuid,                           // Index 26: MCXN556 UUID
+    MeasMcuActiveFirmwareHeaderHash,        // Index 27: Firmware Header (Active)
+    MeasMcuInactiveFirmwareHeaderHash,      // Index 28: Firmware Header (Inactive)
+    MeasReservedIndex29,                    // Index 29: Reserved
+    MeasReservedIndex30,                    // Index 30: Reserved
+    MeasApMetadataHash,                     // Index 31: AP metadata hash (Update)
+    MeasReservedIndex32,                    // Index 32: Reserved
+    MeasReservedIndex33,                    // Index 33: Reserved
+    MeasReservedIndex34,                    // Index 34: Reserved
+    MeasReservedIndex35,                    // Index 35: Reserved
+    MeasReservedIndex36,                    // Index 36: Reserved
+    MeasReservedIndex37,                    // Index 37: Reserved
+    MeasMcuActiveFirmwareVersion,           // Index 38: Firmware Version (Active)
+    MeasMcuInactiveFirmwareVersion,         // Index 39: Firmware Version (Inactive)
+    MeasReservedIndex40,                    // Index 40: Reserved
+    MeasApFirmwareVersion,                  // Index 41: AP Firmware Version (Update)
+    MeasReservedIndex42,                    // Index 42: Reserved
+    MeasMcuBootStatus,                      // Index 43: MCU Boot Status
+    MeasApBootStatus,                       // Index 44: AP Boot Status
+    MeasReservedIndex45,                    // Index 45: Reserved
+    MeasReservedIndex46,                    // Index 46: Reserved
+    MeasReservedIndex47,                    // Index 47: Reserved
+    MeasReservedIndex48,                    // Index 48: Reserved
+    MeasReservedIndex49,                    // Index 49: Reserved
+    MeasDebugTokenTlvConfiguration,         // Index 50: Debug Token Configuration
+    MeasDebugTokenStatus,                   // Index 51: Debug Token Status
+    MeasDeviceIdentifiers,                  // Index 52: Device Identifiers
+    MeasMax,                                // total number of measurments + 1 (1-based index)
 } MeasNumT;
 
 // these enums are the status return codes for the verify debug token
@@ -146,64 +147,65 @@ typedef enum
 
 // this table is the array of the MeasInfoT element.
 // {meas_type, meas_size}
+
 constexpr std::array<MeasInfoT, MeasMax> MeasInfos = {
     {{.meas_type = 0, .meas_size = 0},      // MeasGetNumMeas
-     {.meas_type = 0x83, .meas_size = 4},   // MeasVersion
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex2
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex3
+     {.meas_type = 0x83, .meas_size = 4},   // MeasVersion (Index 1)
+     {.meas_type = 0x83, .meas_size = 4},   // MeasApType (Index 2: AP Type)
+     {.meas_type = 0x80, .meas_size = 16},  // MeasRomPatchCmac (Index 3: ROM patch CMAC)
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex4
-     {.meas_type = 0x1, .meas_size = 48},   // MeasMcuActiveFirmwareHash
-     {.meas_type = 0x1, .meas_size = 48},   // MeasMcuInactiveFirmwareHash
+     {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex5
+     {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex6
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex7
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex8
-     {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex9
+     {.meas_type = 0x1, .meas_size = 48},   // MeasApFirmwareHash
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex10
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex11
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex12
      {.meas_type = 0x2, .meas_size = 48},   // MeasFuses
      {.meas_type = 0x82, .meas_size = 4},   // MeasRollbackFuses
      {.meas_type = 0x82, .meas_size = 4},   // MeasKeyRevocationFuses
-     {.meas_type = 0x2, .meas_size = 48},   // MeasReservedIndex16
-     {.meas_type = 0x2, .meas_size = 48},   // MeasReservedIndex17
-     {.meas_type = 0x82, .meas_size = 1},   // MeasMcuActiveFirmwareSecurityVersion
-     {.meas_type = 0x82, .meas_size = 1},   // MeasMcuInctiveFirmwareSecurityVersion
+     {.meas_type = 0x82, .meas_size = 4},   // MeasApRollbackFuses
+     {.meas_type = 0x82, .meas_size = 4},   // MeasApKeyRevocationFuses
+     {.meas_type = 0x87, .meas_size = 8},   // MeasMcuActiveFirmwareSecurityVersion
+     {.meas_type = 0x87, .meas_size = 8},   // MeasMcuInctiveFirmwareSecurityVersion
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex20
-     {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex21
+     {.meas_type = 0x87, .meas_size = 8},   // MeasApFirmwareSecurityVersion
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex22
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex23
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex24
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex25
-     {.meas_type = 0x82, .meas_size = 16},  // MeasMcxn236Uuid
+     {.meas_type = 0x82, .meas_size = 16},  // MeasMcxnUuid
      {.meas_type = 0x3, .meas_size = 48},   // MeasMcuActiveFirmwareHeaderHash
      {.meas_type = 0x3, .meas_size = 48},   // MeasMcuInactiveFirmwareHeaderHash
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex29
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex30
-     {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex31
+     {.meas_type = 0x3, .meas_size = 48},   // MeasApMetadataHash
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex32
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex33
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex34
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex35
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex36
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex37
-     {.meas_type = 0x83, .meas_size = 7},   // MeasMcuActiveFirmwareVersion
-     {.meas_type = 0x83, .meas_size = 7},   // MeasMcuInactiveFirmwareVersion
+     {.meas_type = 0x86, .meas_size = 7},   // MeasMcuActiveFirmwareVersion
+     {.meas_type = 0x86, .meas_size = 7},   // MeasMcuInactiveFirmwareVersion
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex40
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex41
+     {.meas_type = 0x86, .meas_size = 4},   // MeasApFirmwareVersion
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex42
-     {.meas_type = 0x83, .meas_size = 1},   // MeasBootStatus
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex44
+     {.meas_type = 0x83, .meas_size = 1},   // MeasMcuBootStatus (Index 43: MCU Boot Status)
+     {.meas_type = 0x83, .meas_size = 1},   // MeasApBootStatus (Index 44: AP Boot Status)
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex45
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex46
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex47
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex48
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex49
-     {.meas_type = 0x83,
-      .meas_size = sizeof(
-          nv::debugtoken::DebugTokenTlvConfig)},  // MeasDebugTokenTlvConfiguration
-     {.meas_type = 0x83,
-      .meas_size = nv::debugtoken::DebugTokenStatsTSize},  // MeasDebugTokenStatus
-     {.meas_type = 0x81, .meas_size = 73}}  // MeasDeviceIdentifiers
+     {.meas_type = 0x83, .meas_size = 97},  // MeasDebugTokenTlvConfiguration
+     {.meas_type = 0x83, .meas_size = 1},   // MeasDebugTokenStatus
+     {.meas_type = 0x81, .meas_size = 88}}  // MeasDeviceIdentifiers
 };
+
+static_assert(sizeof(nv::debugtoken::DebugTokenTlvConfig) == 97,
+              "DebugTokenTlvConfig structure changed");
 
 void spdm_get_measurement(MeasNumT index, void* buffer);
 

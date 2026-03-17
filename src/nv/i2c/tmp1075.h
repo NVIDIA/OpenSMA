@@ -35,11 +35,11 @@ public:
      */
     enum Register : uint8_t
     {
-        Temperature   = 0x00,  // Temperature register (12-bit, read-only)
-        Configuration = 0x01,  // Configuration register
-        LowLimit      = 0x02,  // Low limit register (12-bit, R/W)
-        HighLimit     = 0x03,  // High limit register (12-bit, R/W)
-        DeviceId      = 0x0F,  // Device ID register
+        Temperature = 0x00,  // Temperature register (12-bit, read-only)
+        // Configuration = 0x01,  // Configuration register
+        LowLimit  = 0x02,  // Low limit register (12-bit, R/W)
+        HighLimit = 0x03,  // High limit register (12-bit, R/W)
+        DeviceId  = 0x0F,  // Device ID register
     };
 
     /**

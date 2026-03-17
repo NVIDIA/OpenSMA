@@ -26,6 +26,8 @@
 
 #include "nv/nv.h"
 #include "nv/logger/log.h"
+#include "nv/i2c/error_injection.h"
+#include "nv/mctp/nsm.h"
 #include "nv/usb/task.h"
 #include "sys/i2c/utils.h"
 #include "nv/iox/common.h"
@@ -96,6 +98,9 @@ Task::Task() : ipc::Task(ipc::TaskId::Iox, "Iox"), ioexp()
             case RequestType::VrGpioRequest:
                 handle_vrgpio_request(std::span<uint8_t>(request.data));
                 break;
+            case RequestType::GpioSpoofingUpdate:
+                handle_gpio_spoofing_update(std::span<uint8_t>(request.data));
+                break;
             default:
                 nv::error("Iox: Unknown request type %d\n", static_cast<int>(request.type));
                 break;
@@ -110,6 +115,27 @@ bool Task::send_i2c_request(ipchandler::Id    src_id,
                             uint16_t          read_length,
                             ipc::Queue::Item& item)
 {
+    // Check for queue full error injection
+    if constexpr (nv::ipc::EnableI2CErrorInjection) {
+        if (nv::i2c::should_inject_error(
+                i2c_ipchandler_id,
+                address,
+                0,
+                static_cast<uint8_t>(nv::i2c::ProtocolType::I2cPca9555))) {
+            // Check if this is a queue full error injection
+            const auto port  = static_cast<nv::i2c::Port>(address - nv::iox::Task::IoxBaseAddr);
+            const auto index = nv::i2c::port_to_error_injection_index(
+                port, static_cast<uint8_t>(nv::i2c::ProtocolType::I2cPca9555));
+            const auto& configs = nv::i2c::get_error_injection_configs();
+            if (index < configs.size()
+                && configs.at(index).error_type
+                       == static_cast<uint8_t>(nv::i2c::ErrorInjectionType::QueueFull)) {
+                nv::info("I2C queue full error injected for port %d (virtual)\n",
+                         static_cast<int>(port));
+                return false;  // Simulate queue full by returning false
+            }
+        }
+    }
     (void)i2c_ipchandler_id;
     // Create request
     Task::Request request{};
@@ -182,6 +208,8 @@ bool Task::send_vrgpio_request(uint8_t                  address,
 
     memcpy(&vrGpioRequest->pinVals[0], pins.data(), pins.size());
     memcpy(&vrGpioRequest->pinVals[0] + pins.size(), vals.data(), vals.size());
+
+    nv::mctp::Nsm::VirtualGpioEventTrigger(pins, vals);
 
     // Create queue item with the full request size
     auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
@@ -295,6 +323,31 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
     const uint8_t offset = ((request.address >= IoxBaseAddr) ? (request.address - IoxBaseAddr)
                                                              : 0xff);
 
+    if constexpr (nv::ipc::EnableI2CErrorInjection) {
+        if (nv::i2c::should_inject_error(
+                static_cast<nv::i2c::Port>(offset), request.address, 0, 0x05)) {
+            auto injected_status = nv::i2c::get_injected_error_status(
+                static_cast<nv::i2c::Port>(offset), 0x05);
+
+            // Send the error response back to USB if needed
+            if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
+                // Check if this is USB queue full injection (Busy status)
+                if (injected_status == nv::i2c::I2cStatus::Busy) {
+                    // Skip USB call to simulate queue full
+                    nv::info(
+                        "IOX: USB queue full simulation - skipping to_usb call for port %d\n",
+                        static_cast<uint8_t>(offset));
+                    return;
+                }
+
+                std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
+                usb::Task::to_usb(
+                    nv::ipchandler::Id::Iox, 0, item, static_cast<I2cStatus>(injected_status));
+            }
+            return;
+        }
+    }
+
     // coverity[unsigned_compare] - IoxNum is not 0 once compiled
     if ((offset >= IoxNum) || (WriteLength == 0 && ReadLength == 0)
         || (WriteLength > static_cast<size_t>(Register::Invalid))
@@ -344,6 +397,60 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
         usb::Task::to_usb(
             nv::ipchandler::Id::Iox, ReadLength, item, static_cast<I2cStatus>(status));
     }
+}
+
+void Task::handle_gpio_spoofing_update(std::span<uint8_t> buffer)
+{
+    auto* update = std::bit_cast<Task::GpioSpoofingUpdate*>(buffer.data());
+
+    // Convert Task::GpioSpoofingUpdate::Entry to SpoofingEntry array
+    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries> spoofEntries{};
+    for (uint8_t i = 0; i < update->numEntries && i < spoofEntries.size(); i++) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        spoofEntries.at(i).gpioIndex = update->entries[i].gpioIndex;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        spoofEntries.at(i).activated = update->entries[i].activated;
+    }
+
+    // Update all IOX expander instances with the three parameters
+    for (auto& iox : ioexp) {
+        iox.setSpoofingConfig(update->spoofingActive, update->numEntries, spoofEntries);
+    }
+}
+
+bool Task::send_gpio_spoofing_update(bool                           spoofingActive,
+                                     nv::mctp::GPIOSpoofingPayload& updateData)
+{
+    Task::Request request{};
+    request.type = Task::RequestType::GpioSpoofingUpdate;
+
+    // NOLINTNEXTLINE(*-reinterpret-cast)
+    auto* update           = reinterpret_cast<Task::GpioSpoofingUpdate*>(request.data);
+    update->spoofingActive = spoofingActive;
+    update->numEntries     = updateData.gpio_spoofing_header.ei_gpio_number;
+
+    // Copy entries from GPIOSpoofingPayload to Task::GpioSpoofingUpdate format
+    const uint8_t numEntries = std::min(static_cast<uint8_t>(update->numEntries),
+                                        static_cast<uint8_t>(nv::mctp::MaxGPIOSpoofingEntries));
+    for (uint8_t i = 0; i < numEntries; i++) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        update->entries[i].gpioIndex = updateData.gpio_ei_entries[i].gpioIndex;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        update->entries[i].activated = updateData.gpio_ei_entries[i].activated;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        update->entries[i].reserved = 0;
+    }
+
+    auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
+                                             sizeof(Task::Request));
+
+    nv::ipc::Queue& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::Iox);
+    auto            status = queue.send(request_item);
+    if (status != nv::ipc::Queue::Status::Ok) {
+        return false;
+    }
+
+    return true;
 }
 
 }  // namespace nv::iox

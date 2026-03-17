@@ -153,6 +153,135 @@ Status read_eeprom_bytes(nv::i2c::Port      port,
     return Status::FruSuccess;
 }
 
+namespace {
+
+void copy_bytes(std::span<const uint8_t> src, std::span<uint8_t> dst)
+{
+    if (dst.empty()) {
+        return;
+    }
+    const uint8_t n = std::min(static_cast<uint8_t>(src.size()),
+                               static_cast<uint8_t>(dst.size() - 1));
+    std::memcpy(dst.data(), src.data(), n);
+    dst[n] = '\0';
+}
+
+bool decode_6bit_ascii(const uint8_t* data, uint8_t tlv_len, std::span<uint8_t> dst)
+{
+    std::fill(dst.begin(), dst.end(), 0);
+
+    if (tlv_len == 0) {
+        return false;
+    }
+
+    uint8_t        i6      = 0;
+    const uint16_t dst_len = dst.size();
+
+    for (uint16_t i = 0; i < dst_len; i++) {
+        const uint8_t byte_pos  = i % SIXBIT_CHARS_PER_GROUP;
+        uint8_t       char_6bit = 0;
+
+        switch (byte_pos) {
+            case 0:
+                if (i6 >= tlv_len) {
+                    return false;
+                }
+                char_6bit = data[i6] & SIXBIT_ASCII_MASK;
+                break;
+            case 1:
+                if (i6 + 1 >= tlv_len) {
+                    return false;
+                }
+                char_6bit = (data[i6] >> FRU_TLV_TYPE_SHIFT)
+                          | (data[i6 + 1] << SIXBIT_CASE1_SHIFT);
+                i6++;
+                break;
+            case 2:
+                if (i6 + 1 >= tlv_len) {
+                    return false;
+                }
+                char_6bit = (data[i6] >> SIXBIT_CASE2_SHIFT)
+                          | (data[i6 + 1] << SIXBIT_CASE2_SHIFT);
+                i6++;
+                break;
+            case 3:
+                if (i6 >= tlv_len) {
+                    return false;
+                }
+                char_6bit = data[i6] >> SIXBIT_CASE3_SHIFT;
+                i6++;
+                break;
+            default: return false;
+        }
+
+        char_6bit &= SIXBIT_ASCII_MASK;
+        dst[i]     = char_6bit + SIXBIT_ASCII_SPACE_OFFSET;
+    }
+
+    return true;
+}
+
+bool process_tlv(std::span<const uint8_t> buf,
+                 uint16_t&                pos,
+                 uint16_t                 area_end,
+                 std::span<uint8_t>       dst         = {},
+                 bool                     decode_6bit = false,
+                 uint8_t                  eeprom_addr = 0)
+{
+    (void)eeprom_addr;
+    if (pos >= area_end) {
+        return false;
+    }
+
+    const uint8_t tl = buf[pos++];
+    if (tl == FRU_TLV_EOF_MARKER) {
+        return dst.empty();
+    }
+
+    const uint8_t tlv_type = static_cast<uint8_t>(tl >> FRU_TLV_TYPE_SHIFT) & FRU_TLV_TYPE_MASK;
+    const uint8_t tlv_len  = tl & FRU_TLV_LENGTH_MASK;
+
+    if (pos + tlv_len > area_end) {
+        return false;
+    }
+
+    if (!dst.empty()) {
+        const uint8_t* data = &buf[pos];
+        if (decode_6bit && tlv_type == FRU_TLV_TYPE_6BIT_ASCII) {
+            if (!decode_6bit_ascii(data, tlv_len, dst)) {
+                // nv::logger::error(nv::logger::Event::FruTlvDecodeError,
+                //                   {eeprom_addr, static_cast<uint8_t>(pos)});
+                return false;
+            }
+        }
+        else {
+            copy_bytes(std::span(data, tlv_len), dst);
+        }
+    }
+
+    pos += tlv_len;
+    return true;
+}
+
+Status read_fru_header(nv::i2c::Port port, uint8_t eeprom_addr, FruHeader& header)
+{
+    std::array<uint8_t, 8> header_buf{};
+    const auto result = read_eeprom_bytes(port, eeprom_addr, 0, std::span(header_buf));
+    if (result != Status::FruSuccess) {
+        return result;
+    }
+
+    if (!verify_checksum(std::span<const uint8_t>(header_buf))) {
+        nv::logger::error(nv::logger::Event::FruChecksumError, {eeprom_addr});
+        return Status::FruChecksumError;
+    }
+
+    std::memcpy(&header, header_buf.data(), sizeof(header));
+    return Status::FruSuccess;
+}
+
+}  // anonymous namespace
+
 /**
  * Main function: Extract chassis info (serial + custom fields) into fixed buffers
  */
@@ -161,21 +290,11 @@ Status get_chassis_info(nv::i2c::Port port, uint8_t eeprom_addr, ChassisInfo& ou
     // Initialize output
     out = {};
 
-    // Read FRU Common Header (8 bytes at offset 0)
-    std::array<uint8_t, 8> header_buf{};
-    Status result = read_eeprom_bytes(port, eeprom_addr, 0, std::span(header_buf));
+    FruHeader header{};
+    Status    result = read_fru_header(port, eeprom_addr, header);
     if (result != Status::FruSuccess) {
         return result;
     }
-
-    // Parse and validate header
-    if (!verify_checksum(std::span<const uint8_t>(header_buf))) {
-        nv::logger::error(nv::logger::Event::FruChecksumError, {eeprom_addr});
-        return Status::FruChecksumError;
-    }
-
-    FruHeader header{};
-    std::memcpy(&header, header_buf.data(), sizeof(header));
 
     // Check if Chassis Info Area exists
     if (header.chassis_offset == 0) {
@@ -243,156 +362,128 @@ Status get_chassis_info(nv::i2c::Port port, uint8_t eeprom_addr, ChassisInfo& ou
         return Status::FruParseError;
     }
 
-    auto copy_bytes = [](std::span<const uint8_t> src, std::span<uint8_t> dst) {
-        if (dst.empty()) {
-            return;
-        }
-        // FRU TLV fields are bounded by specification (max 63 bytes per field)
-        // coverity[cert_int31_c_violation]
-        const uint8_t n = std::min(static_cast<uint8_t>(src.size()),
-                                   static_cast<uint8_t>(dst.size() - 1));
-        std::memcpy(dst.data(), src.data(), n);
-        dst[n] = '\0';  // NUL terminator
-    };
-
-    // Decode 6-bit ASCII packed data using frugen algorithm
-    auto decode_6bit_ascii =
-        [](const uint8_t* data, uint8_t tlv_len, std::span<uint8_t> dst) -> bool {
-        // Clear destination buffer first
-        std::fill(dst.begin(), dst.end(), 0);
-
-        // Check minimum data requirement (need at least 1 byte)
-        if (tlv_len == 0) {
-            return false;
-        }
-
-        uint8_t i6 = 0;  // Index into 6-bit packed input data
-
-        // Decode characters using frugen's 4-to-3 algorithm
-        // FRU spec guarantees max 63 chars + null terminator = 64 bytes max
-        // coverity[cert_int31_c_violation] - FRU spec limits dst.size() to 64 max
-        const uint16_t dst_len = dst.size();  // Direct assignment from size_t to uint16_t
-        // coverity[infinite_loop] - dst_len bounded by FRU spec (≤64)
-        for (uint16_t i = 0; i < dst_len; i++) {
-            const uint8_t byte_pos = i % SIXBIT_CHARS_PER_GROUP;  // Position within 4-character
-                                                                  // group (0,1,2,3)
-            uint8_t char_6bit = 0;
-
-            switch (byte_pos) {
-                case 0:  // First character: take low 6 bits of current byte
-                    if (i6 >= tlv_len) {
-                        return false;
-                    }
-                    char_6bit = data[i6] & SIXBIT_ASCII_MASK;
-                    break;
-
-                case 1:  // Second character: high 2 bits of current + low 4 bits of next
-                    if (i6 + 1 >= tlv_len) {
-                        return false;
-                    }
-                    // 6-bit ASCII bit operations are bounded by uint8_t input values
-                    // coverity[cert_int31_c_violation]
-                    char_6bit = (data[i6] >> FRU_TLV_TYPE_SHIFT)
-                              | (data[i6 + 1] << SIXBIT_CASE1_SHIFT);
-                    i6++;
-                    break;
-
-                case 2:  // Third character: high 4 bits of current + low 2 bits of next
-                    if (i6 + 1 >= tlv_len) {
-                        return false;
-                    }
-                    // 6-bit ASCII bit operations are bounded by uint8_t input values
-                    // coverity[cert_int31_c_violation]
-                    char_6bit = (data[i6] >> SIXBIT_CASE2_SHIFT)
-                              | (data[i6 + 1] << SIXBIT_CASE2_SHIFT);
-                    i6++;
-                    break;
-
-                case 3:  // Fourth character: high 6 bits of current byte
-                    if (i6 >= tlv_len) {
-                        return false;
-                    }
-                    char_6bit = data[i6] >> SIXBIT_CASE3_SHIFT;
-                    i6++;
-                    break;
-                // Default case handles unexpected values for defensive programming
-                // coverity[dead_error_begin]
-                default: return false;
-            }
-
-            // Ensure only 6 bits and convert to ASCII
-            char_6bit                &= SIXBIT_ASCII_MASK;
-            const uint8_t ascii_char  = char_6bit + SIXBIT_ASCII_SPACE_OFFSET;  // Add space
-                                                                                // offset
-
-            dst[i] = ascii_char;
-        }
-
-        return true;  // Success
-    };
-
-    auto process_tlv =
-        [&](std::span<const uint8_t> buf, uint16_t& pos, std::span<uint8_t> dst = {}) -> bool {
-        if (pos >= area_data_end) {
-            return false;
-        }
-
-        const uint8_t tl = buf[pos++];
-        if (tl == FRU_TLV_EOF_MARKER) {
-            return (dst.empty());
-        }
-        const uint8_t tlv_type = static_cast<uint8_t>(tl >> FRU_TLV_TYPE_SHIFT)
-                               & FRU_TLV_TYPE_MASK;
-        const auto tlv_len = static_cast<uint8_t>(tl & FRU_TLV_LENGTH_MASK);
-
-        if (pos + tlv_len > area_data_end) {
-            return false;
-        }
-
-        if (!dst.empty()) {
-            const uint8_t* data = &buf[pos];
-            if (tlv_type == FRU_TLV_TYPE_6BIT_ASCII) {
-                if (!decode_6bit_ascii(data, tlv_len, dst)) {
-                    nv::logger::error(nv::logger::Event::FruTlvDecodeError,
-                                      {eeprom_addr, static_cast<uint8_t>(pos)});
-                    return false;
-                }
-            }
-            else {
-                copy_bytes(std::span(data, tlv_len), dst);
-            }
-        }
-
-        pos += tlv_len;
-        return true;
-    };
-
     // TLV1 = Part Number (skip)
-    if (!process_tlv(std::span<const uint8_t>(chassis_data), idx)) {
+    if (!process_tlv(std::span<const uint8_t>(chassis_data), idx, area_data_end)) {
         nv::logger::error(nv::logger::Event::FruPartNumberError, {eeprom_addr});
         return Status::FruPartNumberError;
     }
 
     // TLV2 = Serial Number
-    if (!process_tlv(std::span<const uint8_t>(chassis_data), idx, std::span(out.serial))) {
+    if (!process_tlv(std::span<const uint8_t>(chassis_data),
+                     idx,
+                     area_data_end,
+                     std::span(out.serial),
+                     true,
+                     eeprom_addr)) {
         nv::logger::error(nv::logger::Event::FruSerialError, {eeprom_addr});
         return Status::FruSerialError;
     }
 
-    // TLV3 = either EOF or first Custom Field
+    // TLV3 = Custom Field (optional)
     out.num_custom_fields = 0;
-    if (idx < area_data_end) {
-        auto          chassis_span = std::span(chassis_data.data(), chassis_total_bytes);
-        const uint8_t tl3          = chassis_span[idx];
-        if (tl3 != FRU_TLV_EOF_MARKER) {
-            if (!process_tlv(std::span<const uint8_t>(chassis_data),
-                             idx,
-                             std::span(out.custom_fields[0]))) {
-                nv::logger::error(nv::logger::Event::FruCustomFieldError, {eeprom_addr});
-                return Status::FruCustomFieldError;
-            }
-            out.num_custom_fields = 1;
+    auto chassis_span     = std::span<const uint8_t>(chassis_data.data(), chassis_total_bytes);
+    if (idx < area_data_end && chassis_span[idx] != FRU_TLV_EOF_MARKER) {
+        if (!process_tlv(std::span<const uint8_t>(chassis_data),
+                         idx,
+                         area_data_end,
+                         std::span(out.custom_fields[0]),
+                         true,
+                         eeprom_addr)) {
+            nv::logger::error(nv::logger::Event::FruCustomFieldError, {eeprom_addr});
+            return Status::FruCustomFieldError;
         }
+        out.num_custom_fields = 1;
+    }
+
+    return Status::FruSuccess;
+}
+
+// Board Info Area constants
+static constexpr uint8_t FRU_BOARD_TLV_START_OFFSET = 6;  // TLVs start at byte 6 in board area
+                                                          // (after format, length, language,
+                                                          // mfg_date)
+
+/**
+ * Main function: Extract board info (serial number) into fixed buffers
+ */
+Status get_board_info(nv::i2c::Port port, uint8_t eeprom_addr, BoardInfo& out)
+{
+    // Initialize output
+    out = {};
+
+    // Read and validate header
+    FruHeader header{};
+    Status    result = read_fru_header(port, eeprom_addr, header);
+    if (result != Status::FruSuccess) {
+        return result;
+    }
+
+    if (header.board_offset == 0) {
+        // nv::logger::error(nv::logger::Event::FruInvalidData, {eeprom_addr});
+        return Status::FruInvalidData;
+    }
+
+    // Read Board Info Area
+    const auto board_byte_offset = static_cast<uint16_t>(header.board_offset) * FRU_BLOCK_SIZE;
+
+    // Read first 2 bytes to get area length
+    std::array<uint8_t, 2> board_header{};
+    result = read_eeprom_bytes(port, eeprom_addr, board_byte_offset, std::span(board_header));
+    if (result != Status::FruSuccess) {
+        return result;
+    }
+
+    const uint8_t  len_blocks        = board_header[1];
+    const uint16_t board_total_bytes = static_cast<uint16_t>(len_blocks) * FRU_BLOCK_SIZE;
+
+    // Maximum board data size (similar calculation to chassis)
+    static constexpr uint16_t MAX_BOARD_DATA_SIZE = 256;
+    if (board_total_bytes > MAX_BOARD_DATA_SIZE) {
+        // nv::logger::error(nv::logger::Event::FruInvalidData, {eeprom_addr});
+        return Status::FruInvalidData;
+    }
+
+    std::array<uint8_t, MAX_BOARD_DATA_SIZE> board_data{};
+    result = read_eeprom_bytes(
+        port, eeprom_addr, board_byte_offset, std::span(board_data.data(), board_total_bytes));
+    if (result != Status::FruSuccess) {
+        return result;
+    }
+
+    // Validate board area checksum
+    if (!verify_checksum(std::span<const uint8_t>(board_data.data(), board_total_bytes))) {
+        // nv::logger::error(nv::logger::Event::FruChecksumError, {eeprom_addr});
+        return Status::FruChecksumError;
+    }
+
+    // Parse TLVs: TLVs start at Byte 6 (after format, length, language, 3-byte mfg_date)
+    const uint16_t area_data_end = board_total_bytes - 1;  // exclude checksum byte
+    uint16_t       idx           = FRU_BOARD_TLV_START_OFFSET;
+
+    if (idx >= area_data_end) {
+        // nv::logger::error(nv::logger::Event::FruInvalidData, {eeprom_addr});
+        return Status::FruParseError;
+    }
+
+    // TLV1 = Board Manufacturer (skip)
+    if (!process_tlv(std::span<const uint8_t>(board_data), idx, area_data_end)) {
+        return Status::FruParseError;
+    }
+
+    // TLV2 = Board Product Name (skip)
+    if (!process_tlv(std::span<const uint8_t>(board_data), idx, area_data_end)) {
+        return Status::FruParseError;
+    }
+
+    // TLV3 = Board Serial Number
+    if (!process_tlv(std::span<const uint8_t>(board_data),
+                     idx,
+                     area_data_end,
+                     std::span(out.serial),
+                     false,
+                     eeprom_addr)) {
+        // nv::logger::error(nv::logger::Event::FruSerialError, {eeprom_addr});
+        return Status::FruSerialError;
     }
 
     return Status::FruSuccess;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -61,9 +61,20 @@ Status Driver::read(GpioPort port, GpioPin pin, uint8_t& data)
     return Status::Ok;
 }
 
+Status Driver::read_gpio_port(GpioPort port, uint32_t& gpioBitmap)
+{
+    gpioBitmap = 0;
+    return Status::Ok;
+}
+
 Status Driver::write(GpioPort port, GpioPin pin, const uint8_t data)
 {
     return Status::Ok;
 }
 
+Status Driver::getDirection(GpioPort port, GpioPin pin, Direction& dir)
+{
+    dir = Direction::Input;
+    return Status::Ok;
+}
 // NOLINTEND

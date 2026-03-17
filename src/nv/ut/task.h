@@ -25,8 +25,12 @@ class Task : public ipc::Task
 {
 public:
     Task() noexcept;
-    static void make();
+    static void make(int argc, const char** argv);
     static void entrypoint(void* params);
+
+private:
+    static int          _argc;
+    static const char** _argv;
 };
 
 }  // namespace nv::ut

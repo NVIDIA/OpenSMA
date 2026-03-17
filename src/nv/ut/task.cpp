@@ -35,10 +35,16 @@ using namespace nv;
 using namespace nv::ut;
 using namespace std::chrono_literals;
 
+int          ut::Task::_argc = 0;
+const char** ut::Task::_argv = nullptr;
+
 ut::Task::Task() noexcept : ipc::Task(ipc::TaskId::Unittest, "UNIT") {}
 
-void ut::Task::make()
+void ut::Task::make(int argc, const char** argv)
 {
+    // save command line parameters
+    ut::Task::_argc               = argc;
+    ut::Task::_argv               = argv;
     constexpr auto      StackSize = std::max(8192, int(configMINIMAL_STACK_SIZE));
     static nv::ut::Task task;
     static sys::ipc::TaskStack<StackSize> stack;  // TODO: trim
@@ -53,7 +59,8 @@ void ut::Task::entrypoint(void* params)
     auto& task = *static_cast<nv::ipc::Task*>(params);
     nv::info("GBS Unittesting...\n");
     task.delay(1ms);  // for coverage only
-    auto ex = ut::main(0, nullptr) > 0 ? common::ExitValue::Error : common::ExitValue::Ok;
+    auto ex = ut::main(ut::Task::_argc, ut::Task::_argv) > 0 ? common::ExitValue::Error
+                                                             : common::ExitValue::Ok;
     common::System::inst().scheduler_stop(ex);
 }
 

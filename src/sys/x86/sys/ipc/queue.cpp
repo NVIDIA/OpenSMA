@@ -165,3 +165,8 @@ std::size_t Queue::available() const
 {
     return uxQueueSpacesAvailable(_queue);
 }
+
+void Queue::reset()
+{
+    xQueueReset(_queue);
+}

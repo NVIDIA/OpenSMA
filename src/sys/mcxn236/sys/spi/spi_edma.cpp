@@ -142,7 +142,8 @@ sys::spi::Status EdmaDriver::sendRecv(uint32_t                 send_len,
     masterXfer.txData      = sbuf.data();
     masterXfer.rxData      = rbuf.data();
     masterXfer.dataSize    = send_len;
-    masterXfer.configFlags = kLPSPI_MasterPcs0 | kLPSPI_MasterByteSwap;
+    masterXfer.configFlags = kLPSPI_MasterPcs0 | kLPSPI_MasterPcsContinuous
+                           | kLPSPI_MasterByteSwap;
 
     // Start master transfer using eDMA
     const status_t Status = LPSPI_MasterTransferEDMA(_base, &_edma_handle, &masterXfer);

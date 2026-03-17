@@ -25,7 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "pdk/cmn/console_cpp/pdk-cmn-console.h"
+#include "pdk/cmn/log/log.h"
 
 using gcov_type = int64_t;
 
@@ -94,7 +94,7 @@ void on_complete()
         // TODO: we currently get a version mismatch warning due to not having access
         // to x64 adacore c++ pro
         if (info->version < 0x42333220) {  // 'B32 ' allow override
-            pdk::cmn::console::fatal("compiler version not supported\n");
+            pdk::cmn::log::here().fatal("compiler version not supported\n");
         }
 
         uint32_t ver = 0x4233332a;  // B33*
@@ -140,7 +140,7 @@ const static struct AutoInstallExitHook
     {
         auto ret = std::atexit(ubs::coverage::on_complete);
         if (ret) {
-            pdk::cmn::console::error("cannot install coverage hook\n");
+            pdk::cmn::log::here().error("cannot install coverage hook\n");
         }
     }
 } ubs_coverage_on_exit;

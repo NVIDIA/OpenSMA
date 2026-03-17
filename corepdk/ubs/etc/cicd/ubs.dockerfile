@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM ubuntu:24.04
 LABEL maintainer="Eric Wu<eriwu@nvidia.com>"
-LABEL version="0.0.22"
+LABEL version="0.0.24"
 LABEL description="UBS Docker Image"
 ARG DEBIAN_FRONTEND=noninteractive
 

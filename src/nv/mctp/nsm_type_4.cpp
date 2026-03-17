@@ -20,21 +20,26 @@
 #include <cstdint>
 #include <cstring>
 
+#include "config.h"
 #include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
 
+#include "nv/bootloader.h"
 #include "nv/common/system.h"
 #include "nv/flash/flash.h"
 #include "nv/gpio/common.h"
 #include "nv/gpio/driver.h"
+#include "nv/i2c/lattice_driver.h"
 #include "nv/i2c/task.h"
+#include "nv/ipc/supervisor.h"
 #include "nv/logger/log.h"
-#include "nv/mctp/nsm.h"
-#include "nv/mctp/nsm_type_4.h"
-#include "nv/bootloader.h"
-#include "nv/watchdog/notify_interface.h"
 #include "nv/mctp/control.h"
+#include "nv/mctp/nsm.h"
+#include "nv/mctp/task.h"
+#include "nv/watchdog/notify_interface.h"
 
 namespace nv::mctp {
+
+constexpr auto TelemetryInvalid = nv::telemetry::Cache::InvalidItem;
 
 // T4CpuUtilizationEntryNum cannot be greater than nv::perf_mon::CpuUtilizationEntryNum
 constexpr auto T4CpuUtilizationEntryNum = nv::perf_mon::CpuUtilizationEntryNum;
@@ -49,6 +54,40 @@ static_assert(T4TaskExecutionTimeEntryNum <= nv::perf_mon::TaskExecutionTimeEntr
               "T4TaskExecutionTimeEntryNum cannot be greater than "
               "nv::perf_mon::TaskExecutionTimeEntryNum");
 
+using OobBusT4Tags = std::tuple<nv::perf_mon::OobBus, uint8_t>;
+constexpr std::array<OobBusT4Tags, nv::perf_mon::OobBusTypeNum> t4TagsForOobBusMap{
+
+    OobBusT4Tags{ nv::perf_mon::OobBus::UsI2c,            DIAG_I2C_UPSTREAM_ERROR},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c0, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 0},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c1, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 1},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c2, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 2},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c3, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 3},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c4, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 4},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c5, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 5},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c6, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 6},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c7, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 7},
+
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI3c0,            DIAG_I3C0_BUS_ERROR + 0},
+    OobBusT4Tags{nv::perf_mon::OobBus::DsI3c1,            DIAG_I3C0_BUS_ERROR + 1},
+
+    OobBusT4Tags{  nv::perf_mon::OobBus::Spi0, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 0},
+    OobBusT4Tags{  nv::perf_mon::OobBus::Spi1, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 1},
+    OobBusT4Tags{  nv::perf_mon::OobBus::Spi2, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 2},
+};
+
+constexpr bool verifyT4TagsForOobBusMap()
+{
+    // in case  OobBusTypeNum increases the T4 tag will be zero
+    const auto& last_item = t4TagsForOobBusMap.at(t4TagsForOobBusMap.size() - 1);
+    const auto  last_tag  = std::get<1>(last_item);
+    return last_tag != 0;
+}
+
+static_assert(verifyT4TagsForOobBusMap(),
+              "nv::perf_mon::OobBusTypeNum does not match with 't4TagsForOobBusMap' elements,"
+              " perhaps nv::perf_mon::OobBusTypeNum has been increased and then"
+              " 't4TagsForOobBusMap' requires adjustment");
+
 Ccode appendRecord_firmware_version(TelemetryRecordArray& devDiagTelemetryArray)
 {
     std::array<char, NvMctpVersionLength> fw_version{};
@@ -60,7 +99,7 @@ Ccode appendRecord_firmware_version(TelemetryRecordArray& devDiagTelemetryArray)
     pldm::pldm_get_active_version(major, minor, patch, build);
     Nsm::generate_fw_version(fw_version, major, minor, patch, build);
 
-    if (!devDiagTelemetryArray.addRecorVariableArray(
+    if (!devDiagTelemetryArray.addRecordVariableArray(
             DIAG_FIRMWARE_VERSION, sizeof(fw_version), fw_version)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -81,13 +120,9 @@ Ccode appendRecord_temperature_telemetry(uint8_t               telemetry_tagid,
                                          uint8_t               sensor_tagid,
                                          TelemetryRecordArray& devDiagTelemetryArray)
 {
-    int32_t temperature = 0;
-    Ccode   rcCode      = Ccode::Success;
-    rcCode              = nsm_type3::getTemperatureTelemetry(sensor_tagid, temperature);
-    if (rcCode != Ccode::Success) {
-        return rcCode;
-    }
-    if (false == devDiagTelemetryArray.addRecordNvU32(telemetry_tagid, temperature)) {
+    const int32_t temperature = nsm_type3::getTemperatureTelemetry(sensor_tagid);
+    const bool    valid       = (temperature != nsm_type3::TemperatureInvalid) ? true : false;
+    if (false == devDiagTelemetryArray.addRecordNvU32(telemetry_tagid, temperature, valid)) {
         return Ccode::ErrorInvalidLength;
     }
     return Ccode::Success;
@@ -97,13 +132,21 @@ Ccode appendRecord_power_raw_telemetry(uint8_t               telemetry_tagid,
                                        uint8_t               sensor_tagid,
                                        TelemetryRecordArray& devDiagTelemetryArray)
 {
-    uint32_t power  = 0;
-    Ccode    rcCode = Ccode::Success;
-    rcCode          = nsm_type3::getPowerDrawTelemetry(sensor_tagid, power);
-    if (rcCode != Ccode::Success) {
-        return rcCode;
+    const uint32_t power = nsm_type3::getPowerTelemetry(sensor_tagid);
+    const bool     valid = (power != TelemetryInvalid) ? true : false;
+    if (false == devDiagTelemetryArray.addRecordNvU32(telemetry_tagid, power, valid)) {
+        return Ccode::ErrorInvalidLength;
     }
-    if (false == devDiagTelemetryArray.addRecordNvU32(telemetry_tagid, power)) {
+    return Ccode::Success;
+}
+
+Ccode appendRecord_voltage_telemetry(uint8_t               telemetry_tagid,
+                                     uint8_t               sensor_tagid,
+                                     TelemetryRecordArray& devDiagTelemetryArray)
+{
+    const uint32_t voltage = nsm_type3::getVoltageTelemetry(sensor_tagid);
+    const bool     valid   = (voltage != TelemetryInvalid) ? true : false;
+    if (false == devDiagTelemetryArray.addRecordNvU32(telemetry_tagid, voltage, valid)) {
         return Ccode::ErrorInvalidLength;
     }
     return Ccode::Success;
@@ -111,7 +154,8 @@ Ccode appendRecord_power_raw_telemetry(uint8_t               telemetry_tagid,
 
 Ccode appendRecord_error_counter_telemetry(uint8_t               telemetry_tagid,
                                            nv::perf_mon::OobBus  oobBus,
-                                           TelemetryRecordArray& devDiagTelemetryArray)
+                                           TelemetryRecordArray& devDiagTelemetryArray,
+                                           bool                  valid = true)
 
 {
     T4ErrorCounterResponse response{};
@@ -122,19 +166,28 @@ Ccode appendRecord_error_counter_telemetry(uint8_t               telemetry_tagid
             oobBus, error_type);
     }
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
-            telemetry_tagid, sizeof(response), response)) {
+        == devDiagTelemetryArray.addRecordVariableArray(
+            telemetry_tagid, sizeof(response), response, valid)) {
         return Ccode::ErrorInvalidLength;
     }
 
     return Ccode::Success;
 }
 
+uint8_t find_t4_tag_id(nv::perf_mon::OobBus oobBusIdReq)
+{
+    for (const auto& [oobBusId, t4_tag_id] : nv::mctp::t4TagsForOobBusMap) {
+        if (oobBusIdReq == oobBusId) {
+            return static_cast<uint8_t>(t4_tag_id);
+        }
+    }
+    return static_cast<uint8_t>(perf_mon::OobBus::End);
+}
+
 Ccode appendRecord_all_error_counter_telemetries(TelemetryRecordArray& devDiagTelemetryArray)
 {
-    Ccode   rcCode               = Ccode::Success;
-    uint8_t telemetry_tag_id     = 0;
-    uint8_t next_boundary_tag_id = 0;
+    Ccode   rcCode           = Ccode::Success;
+    uint8_t telemetry_tag_id = 0;
 
     for (auto oobBusId = static_cast<uint8_t>(nv::perf_mon::OobBus::Begin);
          oobBusId < static_cast<uint8_t>(perf_mon::OobBus::End);
@@ -143,43 +196,20 @@ Ccode appendRecord_all_error_counter_telemetries(TelemetryRecordArray& devDiagTe
         if (false == nv::perf_mon::Driver::is_oob_bus_valid(oobBus)) {
             continue;
         }
-        /** Associate oobBus with T4 Get Device Diagnostics enum Tag
-         *
-            All the Error Counters main groups from the enum Type4McuDiagnosticEntries
-            must be present in this switch case
-        */
-        switch (oobBus) {
-            case perf_mon::OobBus::Spi0:
-                telemetry_tag_id     = DIAG_SPI0_DOWNSTREAM_BUS_ERROR;
-                next_boundary_tag_id = DIAG_ERROR_COUNTER_BOUNDARY;
-                break;
-            case perf_mon::OobBus::DsI2c0:
-                telemetry_tag_id     = DIAG_I2C0_DOWNSTREAM_BUS_ERROR;
-                next_boundary_tag_id = DIAG_SPI0_DOWNSTREAM_BUS_ERROR;
-                break;
-            case perf_mon::OobBus::UsI2c:
-                telemetry_tag_id     = DIAG_I2C_UPSTREAM_ERROR;
-                next_boundary_tag_id = DIAG_I2C0_DOWNSTREAM_BUS_ERROR;
-                break;
-            case perf_mon::OobBus::DsI3c0:
-                telemetry_tag_id     = DIAG_I3C0_BUS_ERROR;
-                next_boundary_tag_id = DIAG_I2C_UPSTREAM_ERROR;
-                break;
-            default: telemetry_tag_id++; break;
-        }
-        // In case nv::perf_mon::OobBus has been enlarged and T4 tags did not follow it
-        if (telemetry_tag_id >= next_boundary_tag_id) {
-            nv::error("The Error Counter tag id '%d' is beyond its boundary '%d'\n",
-                      telemetry_tag_id,
-                      next_boundary_tag_id);
-            return Ccode::ErrorGeneral;
+        telemetry_tag_id = find_t4_tag_id(oobBus);
+        bool valid       = true;
+        if (telemetry_tag_id == static_cast<uint8_t>(perf_mon::OobBus::End)) {
+            nv::error("The Error Counter id '%d' is not defined in the T4 Tags table\n",
+                      oobBusId);
+            valid = false;
         }
         if ((rcCode = appendRecord_error_counter_telemetry(
-                 telemetry_tag_id, oobBus, devDiagTelemetryArray))
+                 telemetry_tag_id, oobBus, devDiagTelemetryArray, valid))
             != Ccode::Success) {
             return rcCode;
         }
     }
+
     return Ccode::Success;
 }
 
@@ -220,7 +250,7 @@ Ccode appendRecord_gpio_telemetry(uint8_t               telemetry_tagid,
     }
 
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
+        == devDiagTelemetryArray.addRecordVariableArray(
             telemetry_tagid, sizeof(Type4GpioResp), t4_resp)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -239,7 +269,7 @@ Ccode appendRecord_cpu_utilization(TelemetryRecordArray& devDiagTelemetryArray)
     const uint16_t element_size    = sizeof(utilization) / nv::perf_mon::CpuUtilizationEntryNum;
     const uint16_t t4_entries_size = element_size * T4CpuUtilizationEntryNum;
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
+        == devDiagTelemetryArray.addRecordVariableArray(
             DIAG_CPU_UTILIZATION, t4_entries_size, utilization)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -269,7 +299,7 @@ Ccode appendRecord_task_priority(TelemetryRecordArray& devDiagTelemetryArray)
         response.at(counter)  = std::make_pair(task, priority);
     }
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
+        == devDiagTelemetryArray.addRecordVariableArray(
             DIAG_TASK_PRIORITY, size_to_copy, response)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -307,7 +337,7 @@ Ccode appendRecord_task_execution_time(TelemetryRecordArray& devDiagTelemetryArr
         resp.task_id        = static_cast<uint8_t>(itask);
         resp.execution_time = execution_time;
         if (false
-            == devDiagTelemetryArray.addRecorVariableArray(
+            == devDiagTelemetryArray.addRecordVariableArray(
                 DIAG_TASK0_EXECUTION_TIME + task_counter, t4_resp_size, resp)) {
             return Ccode::ErrorInvalidLength;
         }
@@ -322,7 +352,7 @@ Ccode appendRecord_flash_usage(TelemetryRecordArray& devDiagTelemetryArray)
     flash_resp.usage       = nv::perf_mon::Driver::get_fw_size_used();
 
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
+        == devDiagTelemetryArray.addRecordVariableArray(
             DIAG_FLASH_USAGE_AND_SIZE, sizeof(T4FlashUsageResp), flash_resp)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -334,10 +364,8 @@ Ccode appendRecord_boot_time(TelemetryRecordArray& devDiagTelemetryArray)
     nv::flash::Data boot_time{};
     auto rcCode = nv::flash::Flash::get_data(nv::flash::Key::NpdsBootTimeFromFmcEndToMctpReady,
                                              boot_time);
-    if (rcCode != nv::flash::Status::Ok) {
-        return Ccode::ErrorGeneral;
-    }
-    if (false == devDiagTelemetryArray.addRecordNvU32(DIAG_BOOT_TIME, boot_time)) {
+    const bool valid = (rcCode == nv::flash::Status::Ok) ? true : false;
+    if (false == devDiagTelemetryArray.addRecordNvU32(DIAG_BOOT_TIME, boot_time, valid)) {
         return Ccode::ErrorInvalidLength;
     }
     return Ccode::Success;
@@ -350,7 +378,7 @@ Ccode appendRecord_ram_usage(TelemetryRecordArray& devDiagTelemetryArray)
     ram_resp.total = nv::perf_mon::Driver::get_ram_size_total();
 
     if (false
-        == devDiagTelemetryArray.addRecorVariableArray(
+        == devDiagTelemetryArray.addRecordVariableArray(
             DIAG_RAM_USAGE_AND_SIZE, sizeof(T4RamSizeResp), ram_resp)) {
         return Ccode::ErrorInvalidLength;
     }
@@ -420,11 +448,15 @@ Ccode getDeviceDiagnostics(TelemetryRecordArray& devDiagTelemetryArray)
     for (const auto& [telemetry_tagid, telemetry_type, sensor_tagid] :
          mcuDiagnosticTelemetries) {
         switch (telemetry_type) {
-            case CacheTemperatureTelemetry:
+            case VoltageTelemetry:
+                rcCode = appendRecord_voltage_telemetry(
+                    telemetry_tagid, sensor_tagid, devDiagTelemetryArray);
+                break;
+            case TemperatureTelemetry:
                 rcCode = appendRecord_temperature_telemetry(
                     telemetry_tagid, sensor_tagid, devDiagTelemetryArray);
                 break;
-            case CachePowerTelemetry:
+            case PowerTelemetry:
                 rcCode = appendRecord_power_raw_telemetry(
                     telemetry_tagid, sensor_tagid, devDiagTelemetryArray);
                 break;
@@ -457,11 +489,64 @@ bool Nsm::process_diagnostics(const Packet& rx, Packet& tx)
     ntx.nv_msg_type = nrx.nv_msg_type;
     ntx.set_dev_diag_code(nrx.get_dev_diag_code());
 
+    // Helper to handle unsupported commands
+    [[maybe_unused]] auto unsupported_command = [&]() {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return false;
+    };
+
     switch (nrx.get_dev_diag_code()) {
-        case cmd::GetDeviceResetStatistics: on_dev_diag_get_reset_statistics(rx, tx); break;
-        case cmd::GetDeviceDiagnostics    : on_dev_diag_get_diagnostics(rx, tx); break;
-        case cmd::BridgePortRecovery      : on_dev_diag_bridge_port_recovery(rx, tx); break;
-        default                           : fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx); return false;
+        case cmd::GetDeviceResetStatistics:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::GetDeviceResetStatistics)) {
+                on_dev_diag_get_reset_statistics(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::GetDeviceDiagnostics:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::GetDeviceDiagnostics)) {
+                on_dev_diag_get_diagnostics(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::BridgePortRecovery:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::BridgePortRecovery)) {
+                on_dev_diag_bridge_port_recovery(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::EnableDisableWriteProtection:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics,
+                                     cmd::EnableDisableWriteProtection)) {
+                on_dev_diag_enable_disable_write_protection(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::GetDeviceHscAlert:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::GetDeviceHscAlert)) {
+                on_dev_diag_get_device_hsc_alert(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::ClearHscFaults:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::ClearHscFaults)) {
+                on_dev_diag_clear_hsc_faults(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::GetCpldRegisterTable:
+            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::GetCpldRegisterTable)) {
+                on_dev_diag_get_cpld_register_table(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        default: return unsupported_command();
     }
     return true;
 }
@@ -622,7 +707,7 @@ void Nsm::on_dev_diag_get_reset_statistics(const Packet& rx, Packet& tx)
            &aggregate_task_event,
            sizeof(aggregate_task_event));
 
-    auto success = reset_cause_aggregate.addRecorVariableArray(
+    auto success = reset_cause_aggregate.addRecordVariableArray(
         DevDiagGetResetStatisticsResetCauseId,
         reset_reason_and_wdt_info.size(),
         reset_reason_and_wdt_info);
@@ -761,6 +846,251 @@ void Nsm::on_dev_diag_bridge_port_recovery(const Packet& rx, Packet& tx)
     ntx.data_size         = sizeof(BridgePortRecoveryResp);
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize
                           + sizeof(BridgePortRecoveryResp);
+}
+
+// Ensure WriteProtectionSize is not 0 when EnableDisableWriteProtection is supported
+static_assert(
+    !(nv::mctp::WriteProtectionSize == 0
+      && Nsm::is_cmd_set(NsmMsgType::Diagnostics,
+                         NsmDevDiagCmdCode::EnableDisableWriteProtection)),
+    "WriteProtectionSize cannot be 0 when EnableDisableWriteProtection command is enabled");
+
+void Nsm::on_dev_diag_enable_disable_write_protection(const Packet& rx, Packet& tx)
+{
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+
+    if (!is_input_length_valid(rx, sizeof(T4WriteProtectionRequest))) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    auto& nrx = NsmPktReq::from(rx);
+    if (nrx.ocp_version != 1) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    T4WriteProtectionRequest request{};
+
+    // Check request data
+    std::memcpy(&request.function, &nrx.data[0], sizeof(T4WriteProtectionRequest));
+
+    // Validate mode
+    if (request.mode != T4WriteProtectionMode::Clear
+        && request.mode != T4WriteProtectionMode::Set) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    // Find and toggle the corresponding GPIO
+    bool found = false;
+    for (const auto& config : WriteProtectionList) {
+        if (config.function == request.function) {
+            const uint8_t gpio_value = (request.mode == T4WriteProtectionMode::Set) ? 1U : 0U;
+            nv::gpio::Driver::write(config.port, config.pin, gpio_value);
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        // Function not found in WriteProtectionList
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+    auto& ntx             = NsmPktResp::from(tx);
+    ntx.data_size         = 0;
+    ntx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
+}
+
+void Nsm::on_dev_diag_get_device_hsc_alert(const Packet& rx, Packet& tx)
+{
+    constexpr uint8_t RequestSize = 1;
+    if (!is_input_length_valid(rx, RequestSize)) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+    auto&         nrx    = NsmPktReq::from(rx);
+    auto&         ntx    = NsmPktResp::from(tx);
+    const uint8_t device = nrx.data[0];
+    uint16_t      faults = 0;
+    // coverity[assigned_value]
+    nv::i2c::I2cStatus status = nv::i2c::I2cStatus::Error;
+    switch (device) {
+        case static_cast<uint8_t>(PowerSensorFaults::HSC):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_2):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_3):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_4):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_Sby): {
+            const int8_t device_index = get_power_sensor_mgr().find_hsc_index_by_alert_sensor(
+                static_cast<PowerSensorFaults>(device));
+            if (device_index >= 0) {
+                status = get_power_sensor_mgr().hsc_read_faults(device_index, faults);
+                if (status != nv::i2c::I2cStatus::Ok) {
+                    fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+                    return;
+                }
+            }
+            else {
+                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                return;
+            }
+            break;
+        }
+        case static_cast<uint8_t>(PowerSensorFaults::HSCC):
+        case static_cast<uint8_t>(PowerSensorFaults::HSCC_2): {
+            const int8_t device_index = get_power_sensor_mgr().find_hscc_index_by_alert_sensor(
+                static_cast<PowerSensorFaults>(device));
+            if (device_index >= 0) {
+                status = get_power_sensor_mgr().hscc_read_faults(device_index, faults);
+                if (status != nv::i2c::I2cStatus::Ok) {
+                    fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+                    return;
+                }
+            }
+            else {
+                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                return;
+            }
+            break;
+        }
+        default: fill_error_packet(Ccode::ErrorInvalidData, rx, tx); return;
+    }
+
+    memcpy(&ntx.data[0], &faults, sizeof(faults));
+    ntx.data_size         = sizeof(faults);
+    ntx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + sizeof(faults);
+}
+
+void Nsm::on_dev_diag_clear_hsc_faults(const Packet& rx, Packet& tx)
+{
+    constexpr uint8_t RequestSize = 1;
+    if (!is_input_length_valid(rx, RequestSize)) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+    auto&         nrx    = NsmPktReq::from(rx);
+    auto&         ntx    = NsmPktResp::from(tx);
+    const uint8_t device = nrx.data[0];
+    // coverity[assigned_value]
+    nv::i2c::I2cStatus status = nv::i2c::I2cStatus::Error;
+    switch (device) {
+        case static_cast<uint8_t>(PowerSensorFaults::HSC):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_2):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_3):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_4):
+        case static_cast<uint8_t>(PowerSensorFaults::HSC_Sby): {
+            const int8_t device_index = get_power_sensor_mgr().find_hsc_index_by_alert_sensor(
+                static_cast<PowerSensorFaults>(device));
+            if (device_index >= 0) {
+                status = get_power_sensor_mgr().hsc_clear_faults(device_index);
+                if (status != nv::i2c::I2cStatus::Ok) {
+                    fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+                    return;
+                }
+            }
+            else {
+                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                return;
+            }
+            break;
+        }
+        case static_cast<uint8_t>(PowerSensorFaults::HSCC):
+        case static_cast<uint8_t>(PowerSensorFaults::HSCC_2): {
+            const int8_t device_index = get_power_sensor_mgr().find_hscc_index_by_alert_sensor(
+                static_cast<PowerSensorFaults>(device));
+            if (device_index >= 0) {
+                status = get_power_sensor_mgr().hscc_clear_faults(device_index);
+                if (status != nv::i2c::I2cStatus::Ok) {
+                    fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+                    return;
+                }
+            }
+            else {
+                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                return;
+            }
+            break;
+        }
+        default: fill_error_packet(Ccode::ErrorInvalidData, rx, tx); return;
+    }
+    ntx.data_size         = 0;
+    ntx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
+}
+
+void Nsm::on_dev_diag_get_cpld_register_table(const Packet& rx, Packet& tx)
+{
+    constexpr uint8_t RequestSize = sizeof(CpldRegisterTableReq);
+    if (!is_input_length_valid(rx, RequestSize)) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return;
+    }
+
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+
+    auto& nrx = NsmPktReq::from(rx);
+    auto& ntx = NsmPktResp::from(tx);
+
+    // Parse request data
+    CpldRegisterTableReq req{};
+    memcpy(&req, static_cast<const void*>(nrx.data), sizeof(CpldRegisterTableReq));
+
+    // Validate segment index, MCU only supports one segment 0
+    if (req.segment_index != CpldRegisterTableFirstSegment) {
+        // Client should not send 0xFF in request
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    std::array<uint8_t, Cpld_User_Reg::CPLD_USER_REG_SIZE> cpld_reg_buf = {};
+
+    auto& cpld   = nv::i2c::LatticeCpld::inst();
+    auto  status = cpld.dump_cpld_registers(cpld_reg_buf);
+
+    if (status != nv::i2c::I2cStatus::Ok) {
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+        return;
+    }
+
+    // Prepare response
+    CpldRegisterTableResp resp{};
+    resp.next_segment = CpldRegisterTableNoMoreSegments;  // Default: no more segments
+    std::memcpy(&resp.segment_data[0], cpld_reg_buf.data(), sizeof(resp.segment_data));
+
+    if (sizeof(CpldRegisterTableResp) > CpldRegTablePayloadMaxSize) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    memcpy(static_cast<void*>(ntx.data), &resp, sizeof(CpldRegisterTableResp));
+
+    const uint16_t total_data_size = sizeof(CpldRegisterTableResp);
+
+    ntx.completion_code = Ccode::Success;
+    ntx.data_size       = total_data_size;
+
+    const auto packet_length = sizeof(Header) + HeaderResponseSize + total_data_size;
+    if (packet_length <= std::numeric_limits<uint16_t>::max()) {
+        tx.priv.packet_length = packet_length;
+    }
+    else {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
 }
 
 }  // namespace nv::mctp

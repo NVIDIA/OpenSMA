@@ -21,7 +21,11 @@
 #include <array>
 #include <fsl_lpi2c.h>
 
+#include "nv/common/debug.h"
+#include "nv/common/utils.h"
 #include "nv/i2c/port.h"
+#include "nv/logger/log.h"
+#include "nv/nv.h"
 
 #include NV_IPC_CONFIG_H
 
@@ -30,6 +34,14 @@
 #endif
 
 namespace sys::i2c {
+
+// Number of I2C target addresses
+constexpr static size_t NumI2cTargetAddresses = static_cast<size_t>(NUM_I2C_TARGET_ADDRESSES);
+
+// Size of the I2C data buffers (RX/TX). Increase this if transactions involve more data
+constexpr static size_t I2cSlaveBufferSize = 35;
+
+using I2cSlaveBuffer = std::array<uint8_t, I2cSlaveBufferSize>;
 
 // Driver Class:
 /*
@@ -44,58 +56,91 @@ the data is serviced
 */
 // -----------------------------------------------------------------------------------------
 
+template<typename T>
 class I2CSlaveDriver
 {
 public:
-    // Constants
-    // ---------------------------------------------
-
-    // Number of I2C target addresses
-    constexpr static size_t NumI2cTargetAddresses = static_cast<size_t>(
-        NUM_I2C_TARGET_ADDRESSES);
-
-    // Size of the I2C data buffers (RX/TX). Increase this if transactions involve more data
-    constexpr static size_t BufferSize = 34;
-
-    // Callback Types
-    // --------------------
-
-    // Will call this function on its master task when there is an I2C write request
-    // Parent task must service the buffer data during this function call since it will be
-    // overwritten by next I2C transaction Cannot block this driver or will be stuck forever
-    typedef void (*process_data_callback_t)(
-        uint8_t&                         address,    // Address of the I2C transaction
-        bool                             is_read,    // R/W Bit
-        std::array<uint8_t, BufferSize>& buffer,     // Buffer for sending/receiving
-        size_t&                          data_size,  // Size of the send/receive data
-        void*                            task,  // Context for parent task managing this driver
-        bool new_transaction  // Indicates a new transaction started (not repeated read ack)
-    );
-
-    // Configuration for driver initialization
-    struct Config
-    {
-        nv::i2c::Port           i2c_bus;                // I2C hardware peripheral
-        process_data_callback_t process_data_callback;  // Invoked on read requests for transmit
-                                                        // data
-        std::array<uint8_t, NumI2cTargetAddresses> target_addresses;  // Target addresses to
-                                                                      // ACK/NACK
-        void* parent_task_class;  // Parent task class for running callbacks
-    };
-
     // Public Functions
     // ---------------------------------------------
-
-    // Constructor: Initializes the I2C driver with the given configuration
-    I2CSlaveDriver(Config& driver_config);
-    I2CSlaveDriver();
+    I2CSlaveDriver() = default;
 
     // Starts the I2C slave driver. Must be called after initialization
-    void start();
+    void start()
+    {
+        if (_task_state == Idle) {
+            // Already started
+            return;
+        }
+
+        nv::info("Starting I2C Bus %d Slave Driver\n", _i2c_bus);
+        LPI2C_SlaveEnable(_base_addr, true);
+        const status_t Status = LPI2C_SlaveTransferNonBlocking(_base_addr, &_handle, EventMask);
+        if (Status != kStatus_Success) {
+            nv::error("fail to start i2c bus: %d", _i2c_bus);
+            return;
+        }
+        _task_state = Idle;
+    }
+
+    // Binds the driver, for cases where driver config is not used
+    void bind(nv::i2c::Port                              port,
+              std::array<uint8_t, NumI2cTargetAddresses> target_addresses,
+              T*                                         parent)
+    {
+        _i2c_bus          = port;
+        _target_addresses = target_addresses;
+        _parent           = parent;
+        _base_addr        = get_base(port);
+
+        LPI2C_SlaveTransferCreateHandle(_base_addr, &_handle, callback, this);
+    }
 
     // Callback from HW interrups to service data
-    // Do Not Use: Reserved for NXP HW API callback and testing.
-    static void callback(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
+    static void callback([[maybe_unused]] LPI2C_Type* base,
+                         lpi2c_slave_transfer_t*      transfer,
+                         void*                        user_data)
+    {
+        // NOLINTNEXTLINE: nxp api name
+        auto* this_driver_instance = static_cast<I2CSlaveDriver*>(user_data);
+        switch (transfer->event) {
+            case kLPI2C_SlaveTransmitEvent:
+                this_driver_instance->service_tx_request(transfer);
+                break;
+            case kLPI2C_SlaveReceiveEvent:
+                this_driver_instance->service_rx_buffer_request(transfer);
+                break;
+            case kLPI2C_SlaveTransmitAckEvent:
+                //
+                this_driver_instance->send_ack_or_nack(transfer);
+                break;
+            case kLPI2C_SlaveRepeatedStartEvent:
+            case kLPI2C_SlaveCompletionEvent:
+                if (transfer->completionStatus != kStatus_Success) {
+                    nv::logger::Logger::add_from_isr(
+                        nv::logger::Event::I2CSlaveDriverError.unique_id,
+                        nv::logger::Level::Error,
+                        {static_cast<uint8_t>(transfer->completionStatus),
+                         static_cast<uint8_t>(this_driver_instance->_i2c_bus),
+                         static_cast<uint8_t>(this_driver_instance->_task_state)});
+                }
+                else if (this_driver_instance->_task_state == Receiving) {
+                    this_driver_instance->service_rx_data(transfer);
+                }
+                this_driver_instance->_task_state = Idle;
+                transfer->data                    = nullptr;
+                transfer->dataSize                = 0;
+                break;
+            default:
+                nv::logger::Logger::add_from_isr(
+                    nv::logger::Event::I2CSlaveUnexpectedEvent.unique_id,
+                    nv::logger::Level::Error,
+                    {static_cast<uint8_t>(transfer->event),
+                     static_cast<uint8_t>(this_driver_instance->_i2c_bus)});
+                LPI2C_SlaveTransmitAck(base, false);
+                this_driver_instance->_task_state = Idle;
+                break;
+        }
+    }
 
 private:
     // Internal Constants
@@ -113,31 +158,151 @@ private:
 
     constexpr static uint32_t EventMask =  // Event mask for interrupt service routines
         kLPI2C_SlaveTransmitEvent | kLPI2C_SlaveReceiveEvent | kLPI2C_SlaveCompletionEvent
-        | kLPI2C_SlaveTransmitAckEvent;
+        | kLPI2C_SlaveTransmitAckEvent | kLPI2C_SlaveRepeatedStartEvent;
 
     // Helper Functions
     // ---------------------------------------------
 
     // Returns the hardware base address for the specified I2C port
-    static LPI2C_Type* get_base(nv::i2c::Port port);
+    static LPI2C_Type* get_base(nv::i2c::Port port)
+    {
+        constexpr uint8_t Size = nv::common::to_underlying(nv::i2c::Port::End);
+        // NOLINTNEXTLINE: SDK definition
+        std::array<LPI2C_Type*, Size> bases LPI2C_BASE_PTRS;
+        return bases.at(nv::common::to_underlying(port));
+    }
 
-    // Handles HW Interrupts
-    static void irq_handler(uint32_t instance, void* handle);
+    void service_tx_request(lpi2c_slave_transfer_t* transfer)
+    {
+        if (_task_state == Nacking) {
+            LPI2C_SlaveTransmitAck(_base_addr, false);
+        }
+        else {
+            // Store current state before changing it for the callback
+            const bool was_idle = (_task_state == Idle);
 
-    // Services read request data from the I2C master
-    void service_tx_request(lpi2c_slave_transfer_t* transfer);
+            _task_state = Transmitting;
+
+            // NOLINTNEXTLINE: nxp api name
+            uint8_t address          = transfer->receivedAddress >> 1U;  // remove r/w bit
+            _tx_buffer_transfer_size = 0;
+
+            _parent->i2c_callback(
+                address, true, _tx_buffer, _tx_buffer_transfer_size, _parent, was_idle);
+        }
+
+        transfer->data     = _tx_buffer.data();
+        transfer->dataSize = _tx_buffer_transfer_size;
+    }
 
     // Provides the buffer for incoming I2C transactions
-    void service_rx_buffer_request(lpi2c_slave_transfer_t* transfer);
+    void service_rx_buffer_request(lpi2c_slave_transfer_t* transfer)
+    {
+        // NOLINTNEXTLINE: nxp api name
+        const uint8_t Address = transfer->receivedAddress >> 1U;  //  remove r/w bit
+        // save address for later since it gets removed when the receive is done for some
+        // reason...
+        _rx_addr = Address;
+
+        _task_state = Receiving;
+
+        transfer->data     = _rx_buffer.data();
+        transfer->dataSize = _rx_buffer.size();
+    }
 
     // Services write request data from the I2C master
-    void service_rx_data(lpi2c_slave_transfer_t* transfer);
+    void service_rx_data(lpi2c_slave_transfer_t* transfer)
+    {
+        _parent->i2c_callback(
+            _rx_addr, false, _rx_buffer, transfer->transferredCount, _parent, true);
+    }
 
     // decides whether to send an ACK or not
-    void send_ack_or_nack(lpi2c_slave_transfer_t* transfer);
+    void send_ack_or_nack(lpi2c_slave_transfer_t* transfer)
+    {
+        switch (_task_state) {
+            case Init: {
+                // should not be here
+                nv::logger::Logger::add_from_isr(
+                    nv::logger::Event::I2CSlaveAckDuringInit.unique_id,
+                    nv::logger::Level::Error,
+                    {});
+                LPI2C_SlaveTransmitAck(_base_addr, false);
+                _task_state = Nacking;
+                break;
+            }
+            case Idle: {
+                // must be receiving address
+                // NOLINTNEXTLINE: nxp api name
+                uint8_t    address  = transfer->receivedAddress >> 1U;  // remove r/w bit
+                const bool is_read  = transfer->receivedAddress & 1U;
+                bool       ack_nack = is_target_address(address);
+
+                if constexpr (requires(T* p, uint8_t addr, bool read) {
+                                  p->i2c_ack_callback(addr, read, p);
+                              }) {
+                    // Only used for SSIF where address ACK/NACK is part of higher layer
+                    // protocol
+                    if (ack_nack && !_parent->i2c_ack_callback(address, is_read, _parent)) {
+                        ack_nack = false;
+                    }
+                }
+
+                LPI2C_SlaveTransmitAck(_base_addr, ack_nack);
+                if (!ack_nack) {
+                    // Clear TX data in case NACK is not transmitted and/or master attempts read
+                    // despite NACK
+                    _tx_buffer.fill(0);
+                    _task_state = Nacking;
+                }
+                break;
+            }
+            case Nacking: {
+                nv::logger::Logger::add_from_isr(
+                    nv::logger::Event::I2CSlaveDoubleNack.unique_id,
+                    nv::logger::Level::Error,
+                    {});
+                LPI2C_SlaveTransmitAck(_base_addr, false);
+                _task_state = Nacking;
+                break;
+            }
+            case Receiving: {
+                // always send ACK
+                _parent->i2c_callback(
+                    _rx_addr, false, _rx_buffer, transfer->transferredCount, _parent, true);
+                LPI2C_SlaveTransmitAck(_base_addr, true);
+                if (transfer->receivedAddress & 0x01U) {
+                    service_tx_request(transfer);
+                }
+                break;
+            }
+            case Transmitting: {
+                // always send ACK
+                LPI2C_SlaveTransmitAck(_base_addr, true);
+                break;
+            }
+            default: {
+                nv::logger::Logger::add_from_isr(
+                    nv::logger::Event::I2CSlaveInvalidState.unique_id,
+                    nv::logger::Level::Error,
+                    {static_cast<uint8_t>(_i2c_bus)});
+                LPI2C_SlaveTransmitAck(_base_addr, false);
+                _task_state = Nacking;
+                break;
+            }
+        }
+    }
 
     // Checks if the address is a target address to ACK/NACK
-    bool is_target_address(const uint8_t address);
+    bool is_target_address(const uint8_t address)
+    {
+        for (const auto& target_address : _target_addresses) {
+            if (target_address == address) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // Member Variables
     // ---------------------------------------------
@@ -151,17 +316,18 @@ private:
     LPI2C_Type*          _base_addr;  // Base address for the I2C hardware
 
     // Internal buffers for data transfer
-    uint8_t                         received_address;
-    std::array<uint8_t, BufferSize> _rx_buffer;  // Receive buffer for incoming data
-    std::array<uint8_t, BufferSize> _tx_buffer;  // Transmit buffer for outgoing data
-    size_t                          _rx_buffer_transfer_size;  // Size of the last received data
-    size_t                          _tx_buffer_transfer_size;  // Size of the transmit data
+    uint8_t        received_address;
+    I2cSlaveBuffer _rx_buffer;                // Receive buffer for incoming data
+    I2cSlaveBuffer _tx_buffer;                // Transmit buffer for outgoing data
+    size_t         _rx_buffer_transfer_size;  // Size of the last received data
+    size_t         _tx_buffer_transfer_size;  // Size of the transmit data
 
     uint8_t _rx_addr;  // Address from the last received transaction
 
-    // Parent task callbacks
-    void*                   _parent_task_class;      // Parent task class for callback execution
-    process_data_callback_t _process_data_callback;  // Callback to master task to service data
+    // Parent is the higher layer protocol driver, expected to implement
+    // - i2c_callback - for TX/RX data processing
+    // - i2c_ack_callback  - for ACK/NACK processing
+    T* _parent;
 
     DriverState _task_state;  // Current state of the I2C driver
 };

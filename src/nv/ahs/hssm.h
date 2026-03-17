@@ -47,16 +47,12 @@ public:
      * @param pin_config Pin configuration for the drive
      * @param pgood Initial power good status
      * @param prsntL Initial presence detection status
-     * @param amberLed Initial amber LED status
-     * @param blueLed Initial blue LED status
      * @param hotSwapEvent Pointer to hot swap event for notifications
      * @param driveNum Drive number identifier
      */
     E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
                bool                   pgood,
                bool                   prsntL,
-               bool                   amberLed,
-               bool                   blueLed,
                nv::ipc::Event*        hotSwapEvent,
                uint8_t                driveNum);
 
@@ -87,12 +83,9 @@ public:
      *
      * @param pgood Current power good status
      * @param prsntL Current presence detection status
-     * @param amberLed Current amber LED status
-     * @param blueLed Current blue LED status
      * @param timerDone true if a timer has expired, false otherwise
      */
-    void updateStateMachine(
-        bool pgood, bool prsntL, bool amberLed, bool blueLed, bool timerDone = false);
+    void updateStateMachine(bool pgood, bool prsntL, bool perstL, bool timerDone = false);
 
 private:
     // Member Constants
@@ -128,6 +121,16 @@ private:
     // ---------------------------------------------
 
     /**
+     * @brief Updates all pins according to the current hot swap state
+     *
+     * Sets the power, clock, reset, and LED pins based on the current
+     * state of the hot swap state machine.
+     *
+     * @param perstL Current PCIE PERST# status
+     */
+    void update_pins(bool perstL);
+
+    /**
      * @brief Sets the tristate LED pin based on amber and blue LED target states
      *
      * Controls the LED pin state based on the desired amber and blue LED states.
@@ -137,17 +140,6 @@ private:
      * @param blueLed Target blue LED state
      */
     void set_leds(bool amberLed, bool blueLed);
-
-    /**
-     * @brief Updates all pins according to the current hot swap state
-     *
-     * Sets the power, clock, reset, and LED pins based on the current
-     * state of the hot swap state machine.
-     *
-     * @param amberLed Current amber LED state
-     * @param blueLed Current blue LED state
-     */
-    void update_pins(bool amberLed, bool blueLed);
 
     /**
      * @brief Initializes all pins to their default state
@@ -166,8 +158,13 @@ private:
      * @param port GPIO port to control
      * @param pin GPIO pin to control
      * @param pin_state Desired pin state (High, Low, or HiZ)
+     * @param reverse_polarity If true, the pin state will be reversed (Low -> High, High ->
+     * Low, HiZ -> HiZ)
      */
-    void set_pin(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, PinState pin_state);
+    void set_pin(nv::gpio::GpioPort port,
+                 nv::gpio::GpioPin  pin,
+                 PinState           pin_state,
+                 bool               reverse_polarity = false);
 
     /**
      * @brief Starts the hot swap timer for state transitions

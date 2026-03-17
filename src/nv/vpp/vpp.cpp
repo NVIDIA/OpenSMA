@@ -25,7 +25,6 @@ namespace nv::vpp {
 
 VPP::VPP(const VppConfig& config, nv::ipc::Event* hotSwapEvent)
 : i2c_bus(config.i2c_bus)
-, i2c_driver_config({config.i2c_bus, i2c_callback, {}, this})
 , i2c_driver()
 , interrupt_l_port(config.interrupt_port)
 , interrupt_l_pin(config.interrupt_pin)
@@ -39,15 +38,16 @@ VPP::VPP(const VppConfig& config, nv::ipc::Event* hotSwapEvent)
 , blueLED_vals{}
 {
     // Initialize the I2C driver configuration
-    static_assert(NumGpioExpanders <= sys::i2c::I2CSlaveDriver::NumI2cTargetAddresses,
+    static_assert(NumGpioExpanders <= sys::i2c::NumI2cTargetAddresses,
                   "NumGpioExpanders is greater than NumI2cTargetAddresses");
-    i2c_driver_config.target_addresses.fill(0);
+    std::array<uint8_t, sys::i2c::NumI2cTargetAddresses> target_addresses{};
+    target_addresses.fill(0);
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
-        i2c_driver_config.target_addresses.at(gpioIndex) = E1sGpioExpanderAddress + gpioIndex;
+        target_addresses.at(gpioIndex) = E1sGpioExpanderAddress + gpioIndex;
     }
 
     // Initialize the I2C driver
-    i2c_driver = sys::i2c::I2CSlaveDriver(i2c_driver_config);
+    i2c_driver.bind(i2c_bus, target_addresses, this);
 
     pgood_vals.fill(false);
     prsntL_vals.fill(true);
@@ -105,7 +105,6 @@ VPP::VPP(const VppConfig& config, nv::ipc::Event* hotSwapEvent)
 
 VPP::VPP()
 : i2c_bus()
-, i2c_driver_config()
 , i2c_driver()
 , interrupt_l_port()
 , interrupt_l_pin()
@@ -164,12 +163,12 @@ void VPP::adc_interrupt([[maybe_unused]] sys::adc::AdcPeripheral peripheral,
     }
 }
 
-void VPP::i2c_callback(uint8_t&                                                   address,
-                       bool                                                       is_read,
-                       std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& buffer,
-                       size_t&                                                    data_size,
-                       void* this_task_instance,
-                       bool  new_transaction)
+void VPP::i2c_callback(uint8_t&                                           address,
+                       bool                                               is_read,
+                       std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& buffer,
+                       size_t&                                            data_size,
+                       void*                                              this_task_instance,
+                       bool                                               new_transaction)
 {
     // nv::info("i2c callback r/w:%d addr:%x\n", is_read, address);
     if (is_read) {
@@ -182,10 +181,10 @@ void VPP::i2c_callback(uint8_t&                                                 
         static_cast<VPP*>(this_task_instance)->i2c_write(address, buffer, data_size);
     }
 }
-void VPP::i2c_read(uint8_t&                                                   address,
-                   std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& tx_buffer,
-                   size_t&                                                    tx_data_size,
-                   bool                                                       new_transaction)
+void VPP::i2c_read(uint8_t&                                           address,
+                   std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& tx_buffer,
+                   size_t&                                            tx_data_size,
+                   bool                                               new_transaction)
 {
     uint8_t reg_output = 0;
     uint8_t gpioIndex  = 0;
@@ -202,9 +201,9 @@ void VPP::i2c_read(uint8_t&                                                   ad
         tx_data_size    = 1;
     }
 }
-void VPP::i2c_write(uint8_t&                                                   address,
-                    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& rx_buffer,
-                    size_t&                                                    rx_data_size)
+void VPP::i2c_write(uint8_t&                                           address,
+                    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& rx_buffer,
+                    size_t&                                            rx_data_size)
 {
     uint8_t gpioIndex = 0;
     if (i2c_address_to_gpio_index(address, gpioIndex)) {

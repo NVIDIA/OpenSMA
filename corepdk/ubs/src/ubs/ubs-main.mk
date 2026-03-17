@@ -51,6 +51,7 @@ config:
 	$(ubs-info) '    C Flags : $(UBS_CC_FLAGS)\n'
 	$(ubs-info) '  C++ Flags : $(UBS_CXX_FLAGS)\n'
 	$(ubs-info) '  Ada Flags : $(UBS_ADA_FLAGS)\n'
+	$(ubs-info) ' Link Flags : $(UBS_LINK_FLAGS)\n'
 	$(ubs_line_str '_')
 
 

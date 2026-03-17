@@ -17,15 +17,33 @@
  */
 
 #pragma once
+#include <array>
 #include <span>
 #include <stdint.h>
 
 #include "nv/i2c/common.h"
 #include "nv/i2c/port.h"
 
-namespace nv::i2c {
+#if __has_include("product_cpld_registers.h")
+#include "product_cpld_registers.h"
+#else
+#include "nv/i2c/dummy_cpld_registers.h"
+#endif
 
-constexpr uint8_t CPLD_I2C_ADDR = 0x40;
+#include NV_IPC_CONFIG_H
+
+#if ENABLE_CPLD_PLDM != 1
+constexpr nv::i2c::Port CPLD_I2C_PORT_PRGM        = nv::i2c::Port::End;
+constexpr uint8_t       CPLD_I2C_ADDR_PRGM        = 0xFF;
+constexpr nv::i2c::Port CPLD_I2C_PORT_USR         = nv::i2c::Port::End;
+constexpr uint8_t       CPLD_I2C_ADDR_USR         = 0xFF;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG         = 0xFF;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG_INSTALL = 0xFF;
+
+constexpr bool CPLD_ProgramN_Pin_Enabled = false;
+#endif  // ENABLE_CPLD_PLDM
+
+namespace nv::i2c {
 
 constexpr size_t LATTICE_CPLD_PAGE_SIZE = 16;
 
@@ -90,7 +108,7 @@ constexpr uint8_t PAGE_OP2 = 0x00;
 constexpr uint8_t PAGE_OP3 = 0x01;
 
 // Read UFM page operands
-constexpr uint8_t READ_UFM_OP1 = 0x10;
+constexpr uint8_t READ_UFM_OP1 = 0x00;
 constexpr uint8_t READ_UFM_OP2 = 0x00;
 constexpr uint8_t READ_UFM_OP3 = 0x01;
 
@@ -145,18 +163,26 @@ constexpr size_t COMMAND_SIZE       = 4;
 class LatticeCpld
 {
 public:
-    static bool is_enabled();
-    LatticeCpld(Port port, uint8_t address) noexcept;
+    static constexpr bool is_enabled()
+    {
+        return (CPLD_I2C_PORT_PRGM != Port::End && CPLD_I2C_PORT_USR != Port::End);
+    }
+    LatticeCpld(Port    port_prgm,
+                uint8_t address_prgm,
+                Port    port_usr,
+                uint8_t address_usr,
+                uint8_t address_dbg,
+                uint8_t address_dbg_install) noexcept;
     I2cStatus read_id();
     I2cStatus enter_transparent_mode();
     I2cStatus exit_transparent_mode();
     I2cStatus erase();
     I2cStatus refresh();
-    I2cStatus send_chunk(uint8_t (&img_chunk)[LATTICE_CPLD_PAGE_SIZE], size_t chunk_len);
+    I2cStatus send_chunk(std::span<uint8_t> img_chunk, size_t chunk_len);
     I2cStatus end_flash();
     I2cStatus read_usercode();
     I2cStatus begin_read(uint32_t addr);
-    I2cStatus read_chunk(uint8_t (&buf)[LATTICE_CPLD_PAGE_SIZE]);
+    I2cStatus read_chunk(std::span<uint8_t> buf);
 
     I2cStatus write_offset(const uint8_t* buf, uint32_t addr, uint32_t len);
     I2cStatus read_offset(uint8_t* buf, uint32_t addr, uint32_t len);
@@ -165,20 +191,33 @@ public:
     // UFM (User Flash Memory) operations
     I2cStatus erase_ufm();
     I2cStatus init_ufm_address();
-    I2cStatus write_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE]);
+    I2cStatus write_ufm_page(std::span<uint8_t> page_data);
     I2cStatus
     write_ufm(const uint8_t* buffer, uint32_t size, uint32_t offset, bool is_erase = true);
-    I2cStatus read_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE], uint32_t page_offset);
-    I2cStatus read_ufm(uint8_t* buffer, uint32_t size, uint32_t offset);
+    I2cStatus           read_ufm_page(std::span<uint8_t> page_data, uint32_t page_offset);
+    I2cStatus           read_ufm(uint8_t* buffer, uint32_t size, uint32_t offset);
     static LatticeCpld& inst();
     I2cStatus           set_address(uint32_t addr, bool is_UFM);
 
-private:
-    Port    _port;
-    uint8_t _address;
+    // CPLD Register Table Access
+    I2cStatus write_debug_bit(uint8_t value);
+    I2cStatus write_register_table(uint8_t reg_addr, uint8_t value);
+    I2cStatus read_register_table(uint8_t reg_addr, uint8_t& value);
+    I2cStatus dump_cpld_registers(std::span<uint8_t> buf);
 
-    I2cStatus cpld_write(std::span<uint8_t> buffer);
-    I2cStatus cpld_write_read(std::span<uint8_t> write_buffer, std::span<uint8_t> read_buffer);
+private:
+    Port    _port_prgm;
+    uint8_t _address_prgm;
+    Port    _port_usr;
+    uint8_t _address_usr;
+    uint8_t _address_dbg;
+    uint8_t _address_dbg_install;
+
+    I2cStatus
+    cpld_write(std::span<uint8_t> buffer, bool use_user = false, bool token_notify = false);
+    I2cStatus cpld_write_read(std::span<uint8_t> write_buffer,
+                              std::span<uint8_t> read_buffer,
+                              bool               use_user = false);
     I2cStatus cpld_write_retry(std::span<uint8_t> buffer);
     I2cStatus cpld_write_wait(std::span<uint8_t> buffer, bool high_speed);
     I2cStatus cpld_write_wait_ufm(std::span<uint8_t> buffer, bool high_speed);

@@ -159,4 +159,7 @@ is
 
    procedure Pldm_Hook_Get_Limited_Rate_Info (Info : out Limited_Rate_Info);
 
+   function Pldm_Hook_Get_Write_Fail_Retry
+     (Comp_Id : NvU16) return NvU8;
+
 end Pdk.Pldm.Hook.Plat;

@@ -20,6 +20,8 @@
 
 #include "nv/bootloader.h"
 #include "nv/nv.h"
+#include NV_IPC_CONFIG_H
+#include "nv/lstp/lstp_common.h"
 #include "sys/ipc/supervisor.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/mctp/driver.h"
@@ -34,11 +36,7 @@ using namespace nv::spi;
 
 namespace {
 // SPI configuration response values
-constexpr uint8_t CONFIG_RESPONSE_LEN  = 0x0c;
-constexpr uint8_t SPI_FREQ_18_75MHZ_B0 = 0x30;
-constexpr uint8_t SPI_FREQ_18_75MHZ_B1 = 0x1A;
-constexpr uint8_t SPI_FREQ_18_75MHZ_B2 = 0x1E;
-constexpr uint8_t SPI_FREQ_18_75MHZ_B3 = 0x01;
+constexpr uint8_t CONFIG_RESPONSE_LEN = 0x0c;
 
 // Bit manipulation constants
 constexpr uint32_t BYTE1_SHIFT = 8;
@@ -67,15 +65,23 @@ void Flashrom::bind(nv::spi::Flexcomm flexcomm,
 void Flashrom::init()
 {
     _driver.init();
+
+    if constexpr (nv::lstp::EnableSpi) {
+        constexpr auto spi_ch  = nv::lstp::GetFirstChannelId(nv::lstp::LstpChannels,
+                                                            nv::lstp::LstpChannelType::Spi);
+        const auto&    spi_cfg = std::get<nv::lstp::LstpSpiChannelConfig>(
+            std::get<1>(nv::lstp::LstpChannels.at(spi_ch)));
+        _spi_speed = spi_cfg.freq_hz;
+    }
 }
 
-void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& msg)
+void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& msg)
 {
     auto           msgHdr  = FlashromMsgHdr_from(msg);
     auto           msgData = FlashromMsgData_from(msg);
     const uint16_t msg_len = msgHdr->len_lsb | msgHdr->len_msb << 8;
 
-    std::array<uint8_t, nv::ipc::UsbSpiMsgSize> rx_data{};
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> rx_data{};
     const std::span<uint8_t> sbuf(msg.data() + SPI_HEADER_LEN, SPI_MAX_DATA_LEN);
     const std::span<uint8_t> rbuf(rx_data.data() + SPI_HEADER_LEN, SPI_MAX_DATA_LEN);
 
@@ -87,16 +93,16 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& msg)
 
         auto rxHdr       = FlashromMsgHdr_from(rx_data);
         rxHdr->channelId = 0x01;
-        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_CONFIG;
+        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_SUCCESS_RSP;
         rxHdr->len_lsb   = CONFIG_RESPONSE_LEN;
         rxHdr->len_msb   = 0x00;
-        rbuf[0]          = SPI_FREQ_18_75MHZ_B0; /* SPI freq 18.75MHz */
-        rbuf[1]          = SPI_FREQ_18_75MHZ_B1;
-        rbuf[2]          = SPI_FREQ_18_75MHZ_B2;
-        rbuf[3]          = SPI_FREQ_18_75MHZ_B3;
+        rbuf[0]          = static_cast<uint8_t>(_spi_speed);
+        rbuf[1]          = static_cast<uint8_t>(_spi_speed >> BYTE1_SHIFT);
+        rbuf[2]          = static_cast<uint8_t>(_spi_speed >> BYTE2_SHIFT);
+        rbuf[3]          = static_cast<uint8_t>(_spi_speed >> BYTE3_SHIFT);
 
         std::span<uint8_t> item(rx_data.data(), rx_data.size());
-        nv::usb::Task::to_usbSpi(item);
+        nv::usb::Task::to_usbLstp(item);
         return;
     }
 
@@ -119,13 +125,13 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& msg)
 
         // send back response
         rxHdr->channelId = 0x01;
-        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_WRITE;
+        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_SUCCESS_RSP;
         rxHdr->len_lsb   = 1;
         rxHdr->len_msb   = 0;
         rbuf[0]          = 0;
 
         std::span<uint8_t> item(rx_data.data(), rx_data.size());
-        nv::usb::Task::to_usbSpi(item);
+        nv::usb::Task::to_usbLstp(item);
     }
 
     if ((msgHdr->cmdCode & CMD_CODE_MASK) == FlashromCmdCode::SPI_CMD_READ) {
@@ -153,12 +159,12 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& msg)
             ptr              += recv_len;
             auto rxHdr        = FlashromMsgHdr_from(rx_data);
             rxHdr->channelId  = 0x01;
-            rxHdr->cmdCode    = FlashromCmdCode::SPI_CMD_READ;
+            rxHdr->cmdCode    = FlashromCmdCode::SPI_CMD_SUCCESS_RSP;
             rxHdr->len_lsb    = recv_len & LSB_MASK;
             rxHdr->len_msb    = (recv_len & MSB_MASK) >> 8;
             std::span<uint8_t> item(rx_data.data(), rx_data.size());
 
-            auto res = nv::usb::Task::to_usbSpi(item);
+            auto res = nv::usb::Task::to_usbLstp(item);
             if (res != usb::Status::Ok) {
                 nv::gpio::Driver::write(_cs0_port_id, _cs0_pin_id, 1);
                 nv::gpio::Driver::write(_cs1_port_id, _cs1_pin_id, 1);
@@ -173,12 +179,12 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& msg)
         // send back response
         auto rxHdr       = FlashromMsgHdr_from(rx_data);
         rxHdr->channelId = 0x01;
-        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_WRITE_READ;
+        rxHdr->cmdCode   = FlashromCmdCode::SPI_CMD_SUCCESS_RSP;
         rxHdr->len_lsb   = msgHdr->len_lsb;
         rxHdr->len_msb   = msgHdr->len_msb;
         std::span<uint8_t> item(rx_data.data(), rx_data.size());
 
-        nv::usb::Task::to_usbSpi(item);
+        nv::usb::Task::to_usbLstp(item);
     }
 
     if ((msgHdr->cmdCode & CMD_CODE_MASK) == FlashromCmdCode::SPI_CMD_POSTED_WRITE) {

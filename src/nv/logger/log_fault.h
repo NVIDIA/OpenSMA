@@ -43,6 +43,7 @@ enum class Fault : uint8_t
     StackChkFail,
     CpuTime,
     SecVio,
+    OverSwtichSlotLimit,
 };
 
 enum class ExcReturn : uint32_t

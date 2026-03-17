@@ -831,4 +831,12 @@ is
       null;
    end Pldm_Hook_Get_Limited_Rate_Info;
 
+   function Pldm_Hook_Get_Write_Fail_Retry
+     (Comp_Id : NvU16) return NvU8
+   is
+   begin
+      --  return Get_Write_Fail_Retry (Comp_Id => Comp_Id);
+      return 0;
+   end Pldm_Hook_Get_Write_Fail_Retry;
+
 end Pdk.Pldm.Hook.Plat;

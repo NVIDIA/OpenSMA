@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,30 +19,52 @@
 // USB configuration for C and C++ definitions
 #define USB_CONFIG_MCTP (1U)
 
+// Debug console configuration (NV_UART_INSTANCE, etc.)
+#include "DebugConsoleConfig.h"
+
 #ifdef __cplusplus
 #pragma once
 #include <array>
 #include <cstdint>
-#include <tuple>
 #include <functional>
 #include <optional>
+#include <tuple>
 
-#include "nv/spi/common.h"
+#include "powersensor.h"
+
+#include "nv/lstp/lstp_common.h"
 #include "nv/gpio/common.h"
-#include "nv/i2c/sensor.h"
-#include "nv/mctp/router.h"
-#include "nv/watchdog/notify_interface.h"
 #include "nv/i2c/port.h"
+#include "nv/i2c/sensor.h"
+#include "nv/i2c/smb_direct.h"
+#include "nv/iox/common.h"
+#include "nv/i2c/slave_function.h"
 #include "nv/ipchandler/enums.h"
 #include "nv/mctp/enums.h"
-#include "nv/telemetry/utils.h"
-#include "sys/common/common.h"
-#include "nv/iox/common.h"
+#include "nv/mctp/nsm_common.h"
+#include "nv/mctp/nsm_event.h"
+#include "nv/mctp/nsm_msg_bitmask.h"
+#include "nv/mctp/router.h"
 #include "nv/pldm/common.h"
-#include "nv/leak_det/common.h"
+#include "nv/spi/common.h"
+#include "nv/telemetry/utils.h"
+#include "nv/volt_mon/common.h"
+#include "nv/vruart/common.h"
+#include "nv/watchdog/notify_interface.h"
+#include "sys/common/common.h"
 
 // CPLD configuration (for test/mock purposes)
-constexpr nv::i2c::Port CPLD_I2C_PORT = nv::i2c::Port::Zero;
+#define ENABLE_CPLD_PLDM 1
+#ifdef ENABLE_CPLD_PLDM
+constexpr nv::i2c::Port CPLD_I2C_PORT_PRGM        = nv::i2c::Port::Zero;
+constexpr uint8_t       CPLD_I2C_ADDR_PRGM        = 0x40;
+constexpr nv::i2c::Port CPLD_I2C_PORT_USR         = nv::i2c::Port::Zero;
+constexpr uint8_t       CPLD_I2C_ADDR_USR         = 0x0B;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG         = 0x0F;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG_INSTALL = 0x11;
+
+constexpr bool CPLD_ProgramN_Pin_Enabled = false;
+#endif  // ENABLE_CPLD_PLDM
 
 namespace nv::telemetry {
 
@@ -67,6 +89,32 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 }  // namespace nv::telemetry
 
 namespace nv::ipc {
+constexpr bool EnableLstp = false;
+}  // namespace nv::ipc
+
+namespace nv::lstp {
+
+constexpr uint16_t                                       LstpGpioNum = 0;
+constexpr inline std::array<LstpGpioConfig, LstpGpioNum> PinConfigs{};
+constexpr inline std::array<uint8_t, LstpGpioNum>        LstpGpioMap = {};
+
+constexpr uint8_t LstpNumChannels = 0;
+
+// clang-format off
+constexpr std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{};
+// clang-format on
+
+static_assert(ValidateLstpChannelConfigs(LstpChannels));
+static_assert(nv::ipc::EnableLstp == (LstpNumChannels > 0));
+
+constexpr bool EnableSpi  = IsChannelEnabled(LstpChannels, LstpChannelType::Spi);
+constexpr bool EnableGpio = IsChannelEnabled(LstpChannels, LstpChannelType::Gpio);
+constexpr bool EnableI2c  = IsChannelEnabled(LstpChannels, LstpChannelType::I2c);
+constexpr bool EnableIpmi = IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi);
+
+}  // namespace nv::lstp
+
+namespace nv::ipc {
 // Indicate if it is dual core project
 constexpr bool EnableDualCore = false;
 
@@ -78,6 +126,7 @@ enum class TaskId
     NHP,
     Mctp,
     I2c0,
+    Lstp,
     Pldm,
     Iox,
 #ifdef NV_UNITTEST
@@ -85,12 +134,14 @@ enum class TaskId
 #endif
     Logger,
     Spdm,
+    SocPwrSmoothing,
     GpuPwrController,
     Core0,
     Core1,
     Privileged = Core1 + 1,
     Usb        = Privileged + 0,
-    Flash      = Privileged + 1,
+    Ubridge    = Privileged + 1,
+    Flash      = Privileged + 2,
     EndPrivileged,
     End   = EndPrivileged,
     Timer = End,
@@ -122,6 +173,10 @@ enum class QueueId
     I2c3,
     I2c4,
     I2c5,
+    I2c6,
+    I2c7,
+    I2c8,
+    I2c9,
     I3c0,
     I3c1,
     Spi0,
@@ -142,9 +197,30 @@ enum class QueueId
     SpdmRx,
     SpdmCryptoHelper,
     UsbHid,
+    LstpToSpi,
+    LstpTx,
+    LstpGpioIrq,
+    LstpToGpio,
     Iox,
-    UsbToSpi,
-    SpiToUsb,
+    UbridgeTx,
+    Ssif,
+    End
+};
+
+/// All Mutexes must be part of this enum.
+enum class MutexId
+{
+    Begin,
+    I2cPort0 = Begin,
+    I2cPort1,
+    I2cPort2,
+    I2cPort3,
+    I2cPort4,
+    I2cPort5,
+    I2cPort6,
+    I2cPort7,
+    I2cPort8,
+    I2cPort9,
     End
 };
 
@@ -159,6 +235,9 @@ constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos
 
 };
 
+constexpr uint32_t ApEcdsa384PublicKeySize = 96;
+constexpr std::array<std::array<uint8_t, ApEcdsa384PublicKeySize>, 2> ApFwPublicKeys{};
+
 constexpr uint32_t SpdmRequestQueueSize      = 2048;
 constexpr uint32_t SpdmRxQueueSize           = 72;
 constexpr uint32_t SpdmCryptoHelperQueueSize = 12;
@@ -166,9 +245,14 @@ constexpr bool     SpdmI2cResponder          = false;
 constexpr bool     SpdmDummyCertificates     = false;
 constexpr uint32_t SpdmCryptoHelperMaxItems  = EnableDualCore ? 2 : 1;
 using QueueInfo                              = std::tuple<QueueId, uint8_t, uint16_t>;
-// USB to SPI bridge (enable to support flashrom -p NV_SMA_SPI)
-constexpr bool     EnableFlashrom = false;
-constexpr uint32_t UsbSpiMsgSize  = EnableFlashrom ? 512 : 1;
+
+// USB Low-Speed Transport Protocol (LSTP) for I2C/SSIF/SPI/GPIO tunneling
+constexpr uint32_t UsbLstpMsgSize        = EnableLstp ? 512 : 1;
+constexpr uint32_t LstpToGpioSize        = nv::lstp::EnableGpio ? UsbLstpMsgSize : 1;
+constexpr uint32_t LstpGpioIrqQueueSize  = nv::lstp::EnableGpio
+                                             ? sizeof(nv::lstp::LstpGpioIrqEventRequest)
+                                             : 1;
+constexpr uint32_t LstpGpioIrqQueueDepth = nv::lstp::EnableGpio ? nv::lstp::LstpGpioNum : 1;
 
 /// define all queue lengths and item_sizes here
 constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
@@ -184,7 +268,7 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {    QueueId::MctpDataRequest,                      130,                                                 72},
     {    QueueId::MctpPldmRequest,                        1,                                                256},
     {    QueueId::MctpSpdmRequest,                        1,                               SpdmRequestQueueSize},
-    {            QueueId::MctpCmd,                      130,                                                  4},
+    {            QueueId::MctpCmd,                      130,                                                 12},
     {              QueueId::Core0,                        1,                                                 72},
     {              QueueId::Core1,                        1,                                                 72},
     {               QueueId::I2c0,                       64,                                                 80},
@@ -193,8 +277,12 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {               QueueId::I2c3,                       64,                                                 80},
     {               QueueId::I2c4,                       64,                                                 80},
     {               QueueId::I2c5,                        1,                                                  1},
-    {               QueueId::I3c0,                       64,                                                 72},
-    {               QueueId::I3c1,                       64,                                                 72},
+    {               QueueId::I2c6,                        1,                                                  1},
+    {               QueueId::I2c7,                        1,                                                  1},
+    {               QueueId::I2c8,                        1,                                                  1},
+    {               QueueId::I2c9,                        1,                                                  1},
+    {               QueueId::I3c0,                       80,                                                 76},
+    {               QueueId::I3c1,                       80,                                                 76},
     {               QueueId::Spi0,                        1,                                                  1},
     {               QueueId::Spi1,                        1,                                                  1},
     {               QueueId::Spi2,                        1,                                                  1},
@@ -214,9 +302,13 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {             QueueId::SpdmRx,                        1,                                    SpdmRxQueueSize},
     {   QueueId::SpdmCryptoHelper, SpdmCryptoHelperMaxItems,                          SpdmCryptoHelperQueueSize},
     {             QueueId::UsbHid,                        1,                                                 68},
-    {           QueueId::UsbToSpi,                        1,                                      UsbSpiMsgSize},
-    {           QueueId::SpiToUsb,                        1,                                      UsbSpiMsgSize},
-    {                QueueId::Iox,                        8,                                                 80}
+    {          QueueId::LstpToSpi,                        1,                                                  1},
+    {             QueueId::LstpTx,                        1,                                     UsbLstpMsgSize},
+    {        QueueId::LstpGpioIrq,    LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize},
+    {         QueueId::LstpToGpio,                        1,                                     LstpToGpioSize},
+    {                QueueId::Iox,                        8,                                                 80},
+    {          QueueId::UbridgeTx,                        4,                                                514},
+    {               QueueId::Ssif,                        1,                                                  1}
 };
 /// All Events must be part of this enum.
 enum class EventId
@@ -242,8 +334,13 @@ enum class EventId
     TaskAliveStatus,
     GpuPwrCtrlEvent,
     Spi0EdmaDriverEvent,
+    Lstp,
+    UartBridgeEvent,
+    Ssif,
     End
 };
+
+constexpr uint32_t I3cQueueMaxTxSize = 64;
 
 /// All Timers must be part of this enum
 enum class TimerId
@@ -260,60 +357,103 @@ enum class TimerId
     Gpu1Seneor,
     Gpu2Seneor,
     SmbSensor,
+    SmbusCacheRefresh,
     Ap1Status,
     Ap2Status,
     Ap3Status,
+    EepromUpdate,
     End
 };
+
+using I2cTimerInfo = std::tuple<TimerId, QueueId>;
+
+constexpr inline std::array<I2cTimerInfo, 0> I2cTimerInfos{};
 
 // Limits
 [[maybe_unused]] constexpr auto MaxQueuesPerTask = 4;
 [[maybe_unused]] constexpr auto MaxEventsPerTask = 4;
 
-constexpr uint8_t GpioNum = 1;
+constexpr uint8_t GpioNum = 3;
 enum Port : gpio::GpioPort
 {
     ApGoodPort   = nv::gpio::InvalidGpioPort,
     GlobalWpPort = nv::gpio::InvalidGpioPort,
 
+    // Port 1
+    MCU_PWR_BRAKE_L_PORT = 1,
+
     // Port 4
-    THERM_OVERT_N_PORT = 4
+    THERM_OVERT_N_PORT = 4,
+
+    // Port 5
+    MCU_THERM_WARN_L_PORT = 5,
 };
 
 enum Pin : gpio::GpioPin
 {
     ApGoodPin   = nv::gpio::InvalidGpioPin,
     GlobalWpPin = nv::gpio::InvalidGpioPin,
+    // Port 1
+    MCU_PWR_BRAKE_L_PIN = 16,
 
     // Port 4 pins
-    THERM_OVERT_N_PIN = 15
+    THERM_OVERT_N_PIN = 15,
+
+    // Port 5
+    MCU_THERM_WARN_L_PIN = 7,
 };
 
 using Gpios = std::tuple<gpio::GpioPort, gpio::GpioPin>;
 
 constexpr inline std::array<Gpios, GpioNum> GpioSetup{
+    // Port 1
+    Gpios{ MCU_PWR_BRAKE_L_PORT,  MCU_PWR_BRAKE_L_PIN}, // OUT
     // Port 4
-    Gpios{THERM_OVERT_N_PORT, THERM_OVERT_N_PIN}, // IN
+    Gpios{   THERM_OVERT_N_PORT,    THERM_OVERT_N_PIN}, // IN
+    // Port 5
+    Gpios{MCU_THERM_WARN_L_PORT, MCU_THERM_WARN_L_PIN}  // IN
 };
 
+// Product-specific NSM Event GPIO configuration
+constexpr uint8_t                                            NsmEventGpioNum   = 0;
+constexpr std::array<nv::ipc::NsmEventGpio, NsmEventGpioNum> GpioNsmEventSetup = {};
+
+// GPIO NSM Event mask arrays - automatically generated from GpioNsmEventSetup
+constexpr inline std::array<uint32_t, sys::gpio::PortsNumber + 1>
+    GpioNsmEventMask = nv::ipc::PopulateGpioNsmEventMaskArray(GpioNsmEventSetup);
+
+constexpr inline std::array<uint32_t, sys::gpio::PortsNumber + 1>
+    GpioNsmEventAssertMask = nv::ipc::PopulateGpioNsmEventAssertMaskArray(GpioNsmEventSetup);
+
+using GpioInterruptConfig = std::tuple<nv::gpio::GpioPort,
+                                       nv::gpio::GpioPin,
+                                       nv::gpio::InterruptDetection,
+                                       nv::gpio::InterruptSelect>;
+constexpr int                                                      GpioInterruptNum = 0;
+constexpr inline std::array<GpioInterruptConfig, GpioInterruptNum> GpioInterruptSetup{};
+
 constexpr uint32_t CtimerFrequency = 48000000;
-constexpr auto     UartInstance    = 2;
+constexpr auto     UartInstance    = NV_UART_INSTANCE;
 
 enum BootedEventBits : uint32_t
 {
-    Mctp  = nv::common::bit(0),
-    I2c0  = nv::common::bit(1),
-    Pldm  = nv::common::bit(2),
-    Iox   = nv::common::bit(3),
-    Usb   = nv::common::bit(4),
-    Flash = nv::common::bit(5),
+    Mctp    = nv::common::bit(0),
+    I2c0    = nv::common::bit(1),
+    Pldm    = nv::common::bit(2),
+    Iox     = nv::common::bit(3),
+    Usb     = nv::common::bit(4),
+    Flash   = nv::common::bit(5),
+    Ubridge = nv::common::bit(6),
 #ifdef NV_UNITTEST
     Unittest,
 #endif
-    Logger         = nv::common::bit(6),
-    Spdm           = nv::common::bit(7),
-    GpuPwrCtrl     = nv::common::bit(8),
-    BootStatusMask = (nv::common::bit(9) - 1),
+    Logger          = nv::common::bit(7),
+    Spdm            = nv::common::bit(8),
+    GpuPwrCtrl      = nv::common::bit(9),
+    SocPwrSmoothing = nv::common::bit(10),
+    Ssif            = nv::common::bit(11),
+    Nhp             = nv::common::bit(12),
+    BootStatusMask  = (nv::common::bit(13) - 1),
 };
 
 constexpr uint32_t WatchdogResetMs       = 2000;
@@ -333,7 +473,8 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 2> TaskMonitorList{
 
 constexpr bool EnableRuntimeWdt = false;
 
-constexpr bool EnableCP2112NativeGpio = false;
+constexpr bool EnableCP2112NativeGpio  = false;
+constexpr bool EnableI2CErrorInjection = false;
 
 // Debugtoken config
 constexpr bool DebugTokenEnabled = false;
@@ -472,12 +613,6 @@ constexpr nv::gpio::GpioPin  I3CPullUpPin   = 0;
 constexpr bool Spi_Available = false;
 // I2C transparent
 constexpr bool I2cTransparent = false;
-// NSM type 5 messages
-constexpr bool Enable_Nsm_type5 = true;
-// NSM type 3 messages
-constexpr bool Enable_Nsm_type3 = true;
-// NSM type 4 messages
-constexpr bool Enable_Nsm_type4 = true;
 
 /******** ******** Iox Emulation Config Starts ******** ********/
 constexpr bool                                          EnableIoxEmulation = false;
@@ -486,40 +621,65 @@ constexpr inline uint8_t                                IoxI2cBaseAddr     = 0x5
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
-/******** ******** Leak Detect Config Starts ******** ********/
-namespace leak_detect_config {
+/******** ******** Voltage Monitor Config Starts ******** ********/
+// clang-format off
+namespace voltage_monitor_config {
+using namespace nv::volt_mon;
+// VOLTAGE_MONITOR_DISABLED  (expanded inline per code review)
+constexpr bool EnableDbgInfo = false;
+constexpr bool SensorOnAdc0  = false;
+constexpr bool SensorOnAdc1  = false;
 
-using namespace nv::leak_detect;
-using namespace nv::mctp;
-
-constexpr bool EnableDbgInfo = true;
-
-constexpr bool SensorOnAdc0 = true;
-constexpr bool SensorOnAdc1 = false;
-
-constexpr size_t   LeakDetectSensorNum                     = 0;
-constexpr SensorId LeakDetectSensorId[LeakDetectSensorNum] = {};
-
+constexpr size_t         LeakDetectSensorNum                     = 0;
+constexpr SensorId       LeakDetectSensorId[LeakDetectSensorNum] = {};
 constexpr gpio::GpioPort AlertGpioPort = nv::gpio::InvalidGpioPort;
 constexpr gpio::GpioPin  AlertGpioPin  = nv::gpio::InvalidGpioPin;
-
 template<size_t Index>
-constexpr LeakDetectSensor get_sensor_config()
+constexpr nv::volt_mon::LeakDetectSensor leak_detect_get_sensor_config()
 {
     static_assert(Index < LeakDetectSensorNum, "Sensor index out of range");
-    // TODO: add sensor config here...
     return {};
 }
 
-/** do not change this function */
-template<size_t... Indices>
-inline void init_sensors_impl(LeakDetectSensor* sensors, std::index_sequence<Indices...>)
+constexpr size_t   BusBarTempSensorNum                     = 0;
+constexpr SensorId BusBarTempSensorDefault                 = 0;
+constexpr SensorId BusBarTempSensorId[BusBarTempSensorNum] = {};
+template<size_t Index>
+constexpr nv::volt_mon::BusBarTempSensor bus_bar_temp_get_sensor_config()
 {
-    ((sensors[Indices] = get_sensor_config<Indices>()), ...);
+    static_assert(Index < BusBarTempSensorNum, "Sensor index out of range");
+    return {};
 }
 
-}  // namespace leak_detect_config
-/******** ******** Leak Detect Config Ends ******** ********/
+constexpr size_t PgoodVoltSensorNum = 0;
+template<size_t Index>
+constexpr nv::volt_mon::PgoodVoltSensor pgood_volt_get_sensor_config()
+{
+    static_assert(Index < PgoodVoltSensorNum, "Sensor index out of range");
+    return {};
+}
+
+
+constexpr nv::volt_mon::McuInternalTempSensor mcu_internal_temp_get_sensor_config()
+{
+    return {
+        {
+            nv::volt_mon::AdcInstance::Invalid,
+            nv::volt_mon::AdcChannel::Invalid,
+            nv::volt_mon::AdcScanMode::Invalid,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcTriggerSrc::Invalid,
+            0,
+        },
+        nv::volt_mon::Sensor::Invalid,
+        0.0f
+    };
+}
+}  // namespace voltage_monitor_config
+// clang-format on
+/******** ******** Voltage Monitor Config Ends ******** ********/
 
 // SMA_READY pin configuration
 constexpr bool               EnableMcuReadyPin = false;
@@ -527,47 +687,275 @@ constexpr nv::gpio::GpioPort McuReadyPinPort   = 0;
 constexpr nv::gpio::GpioPin  McuReadyPinPin    = 0;
 
 constexpr bool EnableForwardNvlInfo = false;
+
+// UART Bridge configuration (stub values for testrunner)
+constexpr nv::vruart::Signal   pintx{.port = 0, .pin = 0};
+constexpr nv::vruart::Signal   pinrx{.port = 0, .pin = 0};
+constexpr nv::vruart::Baudrate UartOverUsbBaudrate     = 115200U;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaTxChn    = nv::vruart::EdmaChn::_0;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaRxChn    = nv::vruart::EdmaChn::_1;
+constexpr nv::vruart::EdmaInst UartOverUsbEdmaInstance = nv::vruart::EdmaInst::_0;
+constexpr nv::vruart::Instance UartOverUsbUartInstance = nv::vruart::Instance::_0;
+
+// EEPROM bridge configuration (disabled)
+constexpr bool            EnableEepromBridge = false;
+constexpr uint8_t         EepromDstAddress   = 0x50;
+constexpr nv::ipc::TaskId EepromTaskId       = nv::ipc::TaskId::End;
+constexpr nv::i2c::Port   EepromDstPort      = nv::i2c::Port::Two;
+
+// Slave function lookup table: maps (port, address) -> SlaveFunction
+// Format: {port, address, function, enabled}
+constexpr uint8_t SlaveFunctionTableSize = 0;
+constexpr std::array<nv::i2c::SlaveFunctionEntry, SlaveFunctionTableSize> SlaveFunctionTable = {
+    {}};
+
+// EEPROM configuration (disabled)
+constexpr uint16_t EepromSize          = 0;
+constexpr QueueId  EepromI2cQueueId    = QueueId::End;
+constexpr uint32_t EepromUpdateTimerUs = 0;
+
 }  // namespace nv::ipc
+
+namespace nv::i2c {
+
+// Error Injection configuration: explicit count for I2C and IOX
+constexpr size_t NV_I2C_ERROR_INJECTION_PORTS = 0;  // Number of I2C handlers configured for
+                                                    // error injection
+constexpr size_t NV_IOX_ERROR_INJECTION_PORTS = 0;  // Number of IOX devices configured for
+                                                    // error injection
+constexpr size_t NV_I2C_MAX_ERROR_INJECTION_PORTS = NV_I2C_ERROR_INJECTION_PORTS
+                                                  + NV_IOX_ERROR_INJECTION_PORTS;
+
+// Error Injection ipchandler-to-Port mapping - Simple table
+struct ErrorInjectionPortMapping
+{
+    nv::ipchandler::Id ipchandler_id;
+    Port               port;
+};
+
+// Empty mapping table since error injection is disabled (NV_I2C_MAX_ERROR_INJECTION_PORTS = 0)
+// If you want to enable error injection, set NV_I2C_ERROR_INJECTION_PORTS and
+// NV_IOX_ERROR_INJECTION_PORTS > 0 and populate this table
+constexpr inline std::array<ErrorInjectionPortMapping, NV_I2C_MAX_ERROR_INJECTION_PORTS>
+    ErrorInjectionPortMappingTable{};
+
+/******** ******** SMBus Direct Configuration ******** ********/
+// SMBus Direct not configured for this project (disabled)
+constexpr nv::i2c::Port SmbusDirectPort     = nv::i2c::Port::End;  // Disabled (Port::End)
+constexpr uint32_t      SmbusCacheRefreshMs = 0;  // Cache refresh period in microseconds (0 to
+                                                  // disable)
+
+static_assert(!(SmbusCacheRefreshMs > 0 && nv::ipc::SensorUpdateMs > 0),
+              "Only One Timer for SMbus Direct can be enabled for I2c0 task!!!");
+
+}  // namespace nv::i2c
 
 namespace nv::mctp {
 
-constexpr auto mcuTemperatureSensorsSize = 6;
+/** function to add/remove NSM Message Types
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_types([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T0 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type0_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T2 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type2_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T3 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type3_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T4 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type4_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T5 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type5_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetSmaBaseboardSettings));
+}
+
+/** function to add/remove NSM T6 Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void
+config_nsm_type6_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM TFF Command Codes
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+**/
+constexpr void config_nsm_typeff_cmd(
+    [[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
+{
+    // Default does nothing
+}
+
+/** function to add/remove NSM T0 Events
+    Use nsm_msg::set_bit() and nsm_msg::unset_bit() defined in nsm_msg_bitmask.h
+*/
+constexpr std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> gen_type0_event_bitmask()
+{
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> bitmask = {0};
+
+    return bitmask;
+}
+
+constexpr auto mcuTemperatureSensorsSize = 8;
 /** List of active MCU sensors for NSM type 3 Temperature Reading */
 constexpr inline std::array<Type3TemperatureSensors, mcuTemperatureSensorsSize>
-    mcuTemperatureSensors{
-        TempGpu1, TempGpu2, TempTMP451_1, TempTMP451_2, TempMaxModule, TempSMAInternal};
+    mcuTemperatureSensors{TempGpu1,
+                          TempGpu2,
+                          TempTMP451_1,
+                          TempTMP451_2,
+                          TempMaxModule,
+                          TempSMAInternal,
+                          BusBar_Temp,
+                          SMA_Internal};
 
 constexpr auto mcuPowerSensorsSize = 3;
 /** List of active MCU sensors for NSM type 3 Power Draw */
 constexpr inline std::array<Type3PowerSensors, mcuPowerSensorsSize> mcuPowerSensors{
     PowerGpu1, PowerGpu2, PowerModule};
 
+constexpr auto mcuVoltageSensorsSize = 0;
+/** List of active MCU sensors for NSM type 3 Voltage */
+constexpr inline std::array<T3Voltage, mcuVoltageSensorsSize> mcuVoltageSensors{};
+
 // Type 4 Diagnostics Telemetries
-constexpr auto T4TelemetriesSize = 10;
+constexpr auto T4TelemetriesSize = 12;
 using T3TagId                    = uint8_t;
 constexpr T3TagId NoT3Tag        = 0xff;
 using McuDiagnosticTelemetry     = std::
     tuple<Type4McuDiagnosticEntries, Type4TelemetryTypes, T3TagId>;
 constexpr inline std::array<McuDiagnosticTelemetry, T4TelemetriesSize> mcuDiagnosticTelemetries{
-    McuDiagnosticTelemetry{DIAG_GPIO_VALUE_BITMAP,             GpioTelemetry,         NoT3Tag},
-    McuDiagnosticTelemetry{        DIAG_GPU1_TEMP, CacheTemperatureTelemetry,        TempGpu1},
-    McuDiagnosticTelemetry{        DIAG_GPU2_TEMP, CacheTemperatureTelemetry,        TempGpu2},
-    McuDiagnosticTelemetry{     DIAG_MODULE_TEMP1, CacheTemperatureTelemetry,    TempTMP451_1},
-    McuDiagnosticTelemetry{     DIAG_MODULE_TEMP2, CacheTemperatureTelemetry,    TempTMP451_2},
-    McuDiagnosticTelemetry{    DIAG_INTERNAL_TEMP, CacheTemperatureTelemetry, TempSMAInternal},
-    McuDiagnosticTelemetry{  DIAG_MAX_MODULE_TEMP, CacheTemperatureTelemetry,   TempMaxModule},
-    McuDiagnosticTelemetry{       DIAG_GPU1_POWER,       CachePowerTelemetry,       PowerGpu1},
-    McuDiagnosticTelemetry{       DIAG_GPU2_POWER,       CachePowerTelemetry,       PowerGpu2},
-    McuDiagnosticTelemetry{     DIAG_MODULE_POWER,       CachePowerTelemetry,     PowerModule}
+    McuDiagnosticTelemetry{DIAG_GPIO_VALUE_BITMAP,        GpioTelemetry,         NoT3Tag},
+    McuDiagnosticTelemetry{        DIAG_GPU1_TEMP, TemperatureTelemetry,        TempGpu1},
+    McuDiagnosticTelemetry{        DIAG_GPU2_TEMP, TemperatureTelemetry,        TempGpu2},
+    McuDiagnosticTelemetry{     DIAG_MODULE_TEMP1, TemperatureTelemetry,    TempTMP451_1},
+    McuDiagnosticTelemetry{     DIAG_MODULE_TEMP2, TemperatureTelemetry,    TempTMP451_2},
+    McuDiagnosticTelemetry{    DIAG_INTERNAL_TEMP, TemperatureTelemetry, TempSMAInternal},
+    McuDiagnosticTelemetry{  DIAG_VR_SMA_Internal, TemperatureTelemetry,    SMA_Internal},
+    McuDiagnosticTelemetry{  DIAG_MAX_MODULE_TEMP, TemperatureTelemetry,   TempMaxModule},
+    McuDiagnosticTelemetry{       DIAG_GPU1_POWER,       PowerTelemetry,       PowerGpu1},
+    McuDiagnosticTelemetry{       DIAG_GPU2_POWER,       PowerTelemetry,       PowerGpu2},
+    McuDiagnosticTelemetry{     DIAG_MODULE_POWER,       PowerTelemetry,     PowerModule},
+    McuDiagnosticTelemetry{   DIAG_VR_BUSBAR_TEMP, TemperatureTelemetry,     BusBar_Temp},
 };
 
 // Temperature Sensors Config for VR products
-constexpr uint8_t I2cTempSensorSize = 0;
+constexpr uint8_t I2cTempSensorSize = 8;
 
 // This data is only shared between main.cpp and mctp task. Should not impact when migrating to
 // dual core.
-NV_SHARED_DATA inline std::array<nv::i2c::I2cTempSensorConfig, I2cTempSensorSize>
-    I2cTempSensorList{};
+NV_SHARED_DATA inline std::array<nv::i2c::I2cTempSensorThresholdsConfig, I2cTempSensorSize>
+    I2cTempSensorList{
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x70, 0x73,
+                                               0x66, 0x69,
+                                               nv::mctp::Type3TemperatureSensors::CPU1_Die,
+                                               {0x48, 0x1c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x70, 0x73,
+                                               0x66, 0x69,
+                                               nv::mctp::Type3TemperatureSensors::CPU1_SoC,
+                                               {0x4d, 0x3c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x70, 0x73,
+                                               0x66, 0x69,
+                                               nv::mctp::Type3TemperatureSensors::SMA_External,
+                                               {0x50, 0x49}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x7f, 0x7f,
+                                               0x7f, 0x7f,
+                                               nv::mctp::Type3TemperatureSensors::GPU1_Die_A,
+                                               {0x4c, 0x4c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x7f, 0x7f,
+                                               0x7f, 0x7f,
+                                               nv::mctp::Type3TemperatureSensors::GPU1_Die_B,
+                                               {0x4a, 0x7c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x7f, 0x7f,
+                                               0x7f, 0x7f,
+                                               nv::mctp::Type3TemperatureSensors::GPU2_Die_A,
+                                               {0x4b, 0x5c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x7f, 0x7f,
+                                               0x7f, 0x7f,
+                                               nv::mctp::Type3TemperatureSensors::GPU2_Die_B,
+                                               {0x49, 0x6c}},
+        nv::i2c::I2cTempSensorThresholdsConfig{nv::i2c::Port::Four,
+                                               0, 0,
+                                               0x7f, 0x7f,
+                                               0x7f, 0x7f,
+                                               nv::mctp::Type3TemperatureSensors::NvLink_Temp,
+                                               {0x46, 0x4e}}
+};
+// Compile-time check to ensure the array is properly sized
+static_assert(sizeof(I2cTempSensorList)
+                  == nv::mctp::I2cTempSensorSize
+                         * sizeof(nv::i2c::I2cTempSensorThresholdsConfig),
+              "Array elements should be tightly packed without padding");
+
+//********************* Write Protection Configuration *********************/
+constexpr uint8_t WP_VALID_PORT       = 0;
+constexpr uint8_t WP_VALID_PIN        = 0;
+constexpr auto    WriteProtectionSize = 4;
+constexpr inline std::array<nv::mctp::WriteProtectionGpioConfig, WriteProtectionSize>
+    WriteProtectionList{
+        nv::mctp::WriteProtectionGpioConfig{
+                                            Type4WriteProtectionFunction::WP_BASEBOARD_FRU_EEPROM, WP_VALID_PORT, WP_VALID_PIN},
+        nv::mctp::WriteProtectionGpioConfig{
+                                            Type4WriteProtectionFunction::WP_NVSW_QM4_SPI, WP_VALID_PORT, WP_VALID_PIN        },
+        nv::mctp::WriteProtectionGpioConfig{
+                                            Type4WriteProtectionFunction::WP_GPU_SPI, WP_VALID_PORT, WP_VALID_PIN             },
+        nv::mctp::WriteProtectionGpioConfig{
+                                            Type4WriteProtectionFunction::WP_CX9_SPI, WP_VALID_PORT, WP_VALID_PIN             }
+};
+
+static_assert(WriteProtectionList.size() == WriteProtectionSize,
+              "WriteProtectionList size mismatch");
 
 }  // namespace nv::mctp
 
@@ -616,6 +1004,33 @@ constexpr inline std::array<FwInfo, ApNum> FwInfoList{{}};
 static_assert(ApNum < NV_PLDM_MAX_COMPONENT_SIZE, "ApNum should be less than 3");
 }  // namespace nv::pldm
 
-constexpr bool CPLD_ProgramN_Pin_Enabled = false;
+namespace nv::soc_pwr_smoothing {
+
+#define NV_SOC_PWR_SMOOTHING_ADC_IRQ_HANDLER ADC0_IRQHandler
+constexpr bool     SocAdcHiResMode             = true;
+constexpr uint32_t SocAdcPeripheral            = 0;  // Index for array-based accesse
+constexpr uint32_t SocAdcFifoNum               = 0;
+constexpr uint32_t SocAdcInitialTriggerCommand = 1;
+constexpr uint32_t EdppDacPeripheral           = 0;
+constexpr uint32_t IsinkDacPeripheral          = 1;
+constexpr uint32_t PwrBrakeGpioPort            = nv::ipc::MCU_PWR_BRAKE_L_PORT;
+constexpr uint32_t PwrBrakeGpioPin             = nv::ipc::MCU_PWR_BRAKE_L_PIN;
+constexpr uint32_t McuThermWarnPort            = nv::ipc::MCU_THERM_WARN_L_PORT;
+constexpr uint32_t McuThermWarnPin             = nv::ipc::MCU_THERM_WARN_L_PIN;
+constexpr float    OvrmMaxDacOutputV           = 2.2;
+
+// SoC voltage measurement configuration
+constexpr float SocAdcRefVoltageV = 3.3;  // ADC reference voltage (V)
+// Voltage divider resistors: V_rack --[R1]-- V_adc --[R2]-- GND
+constexpr uint32_t SocVoltageDividerR1 = 10000;  // Upper resistor (Ω)
+constexpr uint32_t SocVoltageDividerR2 = 3320;   // Lower resistor (Ω)
+constexpr float    SocVoltageMin       = 1.0;    // Min rack voltage for 0% SoC (V)
+constexpr float    SocVoltageMax       = 7.0;    // Max rack voltage for 100% SoC (V)
+
+// ADC Calibration Test Mode - External DAC I2C Configuration
+constexpr nv::i2c::Port AdcCalibDacI2cPort = nv::i2c::Port::Three;
+constexpr uint8_t       AdcCalibDacI2cAddr = 0x4C;  // AD5693 7-bit address
+
+}  // namespace nv::soc_pwr_smoothing
 
 #endif

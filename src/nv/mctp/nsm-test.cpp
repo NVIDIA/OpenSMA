@@ -19,9 +19,9 @@
 
 #include "nv/mctp/control.h"
 #include "nv/mctp/driver.h"
+#include "nv/mctp/enums.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/nsm.h"
-#include "nv/mctp/enums.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/ut/unittest.h"
 
@@ -349,9 +349,6 @@ public:
 
     struct AggregateInfo
     {
-        using TelemetryRecordPointer     = TelemetryRecord<1>*;
-        using TelemetryMultiBytesPointer = TelemetryMultiBytes*;
-
         void*    _aggregate;
         uint8_t* _data;
         uint16_t _size;
@@ -378,13 +375,13 @@ public:
             if (static_cast<int>(ptAggregate->b) == 0) {
                 _size_data = power_of_two(static_cast<size_t>(ptAggregate->length));
                 _data      = &ptAggregate->data[0];
-                _size      = sizeof(TelemetryRecord<1>) - 1 + _size_data;
+                _size      = ptAggregate->size();
                 _valid     = static_cast<uint8_t>(ptAggregate->v);
             }
             else {
                 _size_data = ptAggreateMultiBytes->multi_bytes_length;
                 _data      = ptTemp + sizeof(TelemetryMultiBytes);
-                _size      = sizeof(TelemetryMultiBytes) + _size_data;
+                _size      = ptAggreateMultiBytes->size();
                 _valid     = static_cast<uint8_t>(ptAggreateMultiBytes->v);
             }
         }
@@ -429,28 +426,28 @@ TEST_F(nsmtest, get_supported_nvidia_message_types)
     //          nvmsg| cmd | size
     arr8_req req{0x00, 0x01, 0x00};
     //          nvmsg| cmd | code| reserved  | data size | supported nv msg bitmask
-    arr8_res res{0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00,
+    arr8_res res{0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-    if constexpr (nv::ipc::Enable_Nsm_type3) {
-        unsigned int bitmask  = (1u << static_cast<unsigned int>(
-                                    NsmMsgType::PlatformEnviromentals));
-        res[7]               |= static_cast<uint8_t>(bitmask);
-    }
+    fixture.sendRecv_nsm(req, res, 3, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
 
-    if constexpr (nv::ipc::Enable_Nsm_type4) {
-        unsigned int bitmask  = (1u << static_cast<unsigned int>(NsmMsgType::Diagnostics));
-        res[7]               |= static_cast<uint8_t>(bitmask);
-    }
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> msgs_resp{};
+    std::memcpy(&msgs_resp[0], &ntx.data[0], nsm_msg::NvMctpSupportedNum);
 
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        unsigned int bitmask  = (1u
-                                << static_cast<unsigned int>(NsmMsgType::DeviceConfiguration));
-        res[7]               |= static_cast<uint8_t>(bitmask);
-    }
-
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
+    ensure::is_true(nsm_msg::is_bit_set(
+        msgs_resp, static_cast<unsigned int>(NsmMsgType::DeviceCapabilityDiscovery)));
+    ensure::is_true(nsm_msg::is_bit_set(
+        msgs_resp, static_cast<unsigned int>(NsmMsgType::PlatformEnviromentals)));
+    ensure::is_true(
+        nsm_msg::is_bit_set(msgs_resp, static_cast<unsigned int>(NsmMsgType::Diagnostics)));
+    ensure::is_true(nsm_msg::is_bit_set(
+        msgs_resp, static_cast<unsigned int>(NsmMsgType::DeviceConfiguration)));
+    ensure::is_true(
+        nsm_msg::is_bit_set(msgs_resp, static_cast<unsigned int>(NsmMsgType::Firmware)));
 };
 
 // ------- 0x02 : Get Supported Command Codes --------
@@ -470,7 +467,7 @@ TEST_F(nsmtest, get_supported_command_codes_type6)
     //          nvmsg| cmd | size| nvmsg
     arr8_req req{0x00, 0x02, 0x01, 0x06};
     //          nvmsg| cmd | code| reserved  | data size | supported cmd bitmask type6
-    arr8_res res{0x00, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x00,
+    arr8_res res{0x00, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0xFE, 0x03, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
@@ -478,13 +475,11 @@ TEST_F(nsmtest, get_supported_command_codes_type6)
 
 TEST_F(nsmtest, get_supported_command_codes_unsupported_nv_msg)
 {
-    if constexpr (false == nv::ipc::Enable_Nsm_type5) {
-        //          nvmsg| cmd | size| nvmsg
-        arr8_req req{0x00, 0x02, 0x01, 0x05};
-        //          nvmsg| cmd | code| reserved  | data size
-        arr8_res res{0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00};
-        ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
-    }
+    //          nvmsg| cmd | size| nvmsg
+    arr8_req req{0x00, 0x02, 0x01, 0x07};
+    //          nvmsg| cmd | code| reserved  | data size
+    arr8_res res{0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
 };
 
 TEST_F(nsmtest, get_supported_command_codes_invalid_data_len)
@@ -842,8 +837,14 @@ TEST_F(nsmtest, unsupported_dcd_cmd_0x08)
     //          nvmsg| cmd | size
     arr8_req req{0x00, 0x08, 0x00};
     //          nvmsg| cmd | code| reserved  | data size
-    arr8_res res{0x00, 0x08, 0x05, 0x00, 0x00, 0x00, 0x00};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
+    arr8_res res{
+        0x00, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedCmd), 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req, res, 3);
+    auto& tx  = fixture.from(fixture.result);
+    auto& ntx = NsmPktResp::from(tx);
+    // comparing only the return code because Nsm::process() now returns false
+    // then fixture.sendRecv_nsm() does not compare 'response' with 'expected respone'
+    ensure::is_eq(ntx.completion_code, Ccode::ErrorUnsupportedCmd);
 };
 
 // ------------------     type6     ------------------
@@ -1281,61 +1282,224 @@ TEST_F(nsmtest, query_fw_comp_id)
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
 };
 
-// ---------- Unsupported Type6 Command ---------- 0x08
-TEST_F(nsmtest, unsupported_fw_cmd_0x08)
+// ---------- 0x08 : NSM_SET_ROT_PROPERTY ----------
+TEST_F(nsmtest, set_rot_property_invalid_length)
 {
-    //          nvmsg| cmd | size
-    arr8_req req{0x06, 0x08, 0x00};
-    //          nvmsg| cmd | code| reserved  | data size
-    arr8_res res{0x06, 0x08, 0x05, 0x00, 0x00, 0x00, 0x00};
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx
+    arr8_req req{0x06, 0x08, 0x05, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // 5 bytes instead of 6
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 8), true);
+};
+
+TEST_F(nsmtest, set_rot_property_redundancy_policy_not_supported)
+{
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
+    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x00};  // SetRedundancyPolicy
+    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+};
+
+TEST_F(nsmtest, set_rot_property_inband_update_policy_not_supported)
+{
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
+    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x01};  // SetInbandUpdatePolicy
+    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+};
+
+TEST_F(nsmtest, set_rot_property_ap_sku_id_not_supported)
+{
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
+    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x02};  // SetApSkuId
+    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+};
+
+TEST_F(nsmtest, set_rot_property_global_failover_policy_not_supported)
+{
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
+    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x03};  // SetGlobalFailoverPolicy
+    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+};
+
+TEST_F(nsmtest, set_rot_property_invalid_property)
+{
+    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
+    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0xFF};  // Invalid property
+    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+};
+
+// ---------- 0x09 : NSM_IMAGE_COPY_CONTROL ----------
+TEST_F(nsmtest, image_copy_control_invalid_length)
+{
+    //          nvmsg| cmd | size| (missing data)
+    arr8_req req{0x06, 0x09, 0x00};
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
 };
 
-//  ---------- Type 5 -  Get Supported Command codes
-TEST_F(nsmtest, get_supported_command_codes_type5)
+TEST_F(nsmtest, image_copy_control_invalid_request_type)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        //          nvmsg| cmd | size| nvmsg
-        arr8_req req{0x00, 0x02, 0x01, 0x05};
-        //          nvmsg| cmd | code| reserved  | data size
-        arr8_res res{0x00,        // nvmsg
-                     0X02,        // cmd
-                     0X00,        // code
-                     0X00, 0X00,  // reserved
-                     0X20, 0X00,  // data size
-                     0XF8, 0X1C,  // bitmask data
-                     0X00,        // 30 bytes from bitmask
-                     0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00,
-                     0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00,
-                     0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00};
-        ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
-    }
+    //          nvmsg| cmd | size| request
+    arr8_req req{0x06, 0x09, 0x01, 0xFF};  // Invalid request type
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
+};
+
+TEST_F(nsmtest, query_image_copy_progress_success)
+{
+    //          nvmsg| cmd | size| request
+    arr8_req req{0x06, 0x09, 0x01, 0x00};  // QueryImageCopyProgress
+    arr8_res res{0x06,  // nvmsg
+                 0x09,  // cmd
+                 0x00,  // code (Success)
+                 0x00,  // reserved
+                 0x00,
+                 0x02,  // data size
+                 0x00,
+                 0x02,  // status (Completed)
+                 0x64}; // progress
+    fixture.sendRecv_nsm(req, res, 4);
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_invalid_data)
+{
+    //          nvmsg| cmd | size| request| comp_cnt
+    arr8_req req{0x06, 0x09, 0x02, 0x01, 0x00};  // InitiateImageCopy, component_count = 0
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 5), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_invalid_length_min)
+{
+    //          nvmsg| cmd | size| request
+    arr8_req req{0x06, 0x09, 0x01, 0x01};  // InitiateImageCopy, missing component_count
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_invalid_component_count)
+{
+    //          nvmsg| cmd | size| request| comp_cnt
+    arr8_req req{0x06, 0x09, 0x02, 0x01, 0x02};  // InitiateImageCopy, component_count > 1
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 5), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_invalid_length_full)
+{
+    //          nvmsg| cmd | size| request| comp_cnt| comp_class| (incomplete)
+    arr8_req req{0x06, 0x09, 0x04, 0x01, 0x01, 0x0A, 0x00};  // Missing comp_id and class_idx
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 7), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_invalid_component_id)
+{
+    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                | comp_class_idx
+    arr8_req req{0x06, 0x09, 0x07, 0x01, 0x01, 0x0A, 0x00, 0xFF, 0x01, 0x00};  // Invalid comp_id
+    //          nvmsg| cmd | comp_code                               | reason_code (2 bytes)
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 10), true);
+};
+
+TEST_F(nsmtest, initiate_image_copy_success)
+{
+    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                | comp_class_idx
+    arr8_req req{0x06, 0x09, 0x07, 0x01, 0x01, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // Valid MCU component
+    //          nvmsg| cmd | comp_code                                      | reason_code (2 bytes)
+    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidStateForCommand),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::ImageCopyCompleted) >> 0),
+                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::ImageCopyCompleted) >> 8)};
+    ensure::is_eq(fixture.sendRecv_nsm(req, res, 10), true);
+};
+
+// ---------- Unsupported Type6 Command ---------- 0x08
+TEST_F(nsmtest, unsupported_fw_cmd_0x0a)
+{
+    //          nvmsg| cmd | size
+    arr8_req req{0x06, 0x0a, 0x00};
+    //          nvmsg| cmd | code| reserved  | data size
+    arr8_res res{
+        0x06, 0x0a, static_cast<uint8_t>(Ccode::ErrorUnsupportedCmd), 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req, res, 3);
+    auto& tx  = fixture.from(fixture.result);
+    auto& ntx = NsmPktResp::from(tx);
+    // comparing only the return code because Nsm::process() now returns false
+    // then fixture.sendRecv_nsm() does not compare 'response' with 'expected respone'
+    ensure::is_eq(ntx.completion_code, Ccode::ErrorUnsupportedCmd);
+};
+
+//  ---------- Type 5 -  Get Supported Command codes
+TEST_F(nsmtest, type5_get_supported_command_codes)
+{
+    using namespace nv::mctp::nsm_msg;
+
+    // check only command codes that should be present on the first response byte
+    std::array<uint8_t, NsmT5SuppErrorTyesNum> mask{};
+    set_bit(mask, static_cast<uint8_t>(NsmDevCfgCmdCode::SetErrorInjectionMode));
+    set_bit(mask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetErrorInjectionMode));
+    set_bit(mask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetSupportedErrorInjectionTypes));
+    set_bit(mask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetCurrentErrorInjectionTypes));
+    set_bit(mask, static_cast<uint8_t>(NsmDevCfgCmdCode::SetCurrentErrorInjectionTypes));
+
+    //          nvmsg| cmd | size| nvmsg
+    arr8_req req{0x00, 0x02, 0x01, 0x05};
+    //          nvmsg| cmd | code| reserved  | data size
+    arr8_res res{0x00,        // nvmsg
+                 0X02,        // cmd
+                 0X00,        // code
+                 0X00, 0X00,  // reserved
+                 0X20, 0X00,  // data size
+                 0XF8, 0X1C,  // bitmask data
+                 0X00,        // 30 bytes from bitmask
+                 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00,
+                 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00,
+                 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00, 0X00};
+    fixture.sendRecv_nsm(req, res, 4);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+    // the response is NOT equal 'res' because there are other supported
+    // command types, checking only basic command codes
+    ensure::is_true((ntx.data[0] & mask[0]) == mask[0]);
 };
 
 //  ---------- Type 5 - Fatal Fault Injection Payload
 TEST_F(nsmtest, type5_fatal_fault_injection_payload_watchdog)
 {
     // clang-format off
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        ensure::is_eq(fixture.type5_enable_error_mode(), true);
-        ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
-        std::array<uint8_t, 4> payload_watchdog = {0x02, 0x00, 0x00, 0x00};
-        ensure::is_eq(fixture.type5_set_fatal_fault_injection_payload(payload_watchdog), true);
-        ensure::is_eq(fixture.type5_get_fatal_fault_injection_payload(payload_watchdog), true);
-    }
+    ensure::is_eq(fixture.type5_enable_error_mode(), true);
+    ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
+    std::array<uint8_t, 4> payload_watchdog = {0x02, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.type5_set_fatal_fault_injection_payload(payload_watchdog), true);
+    ensure::is_eq(fixture.type5_get_fatal_fault_injection_payload(payload_watchdog), true);
     // clang-format on
 };
 
 TEST_F(nsmtest, type5_fatal_fault_injection_payload_mcu_exception)
 {
     // clang-format off
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        ensure::is_eq(fixture.type5_enable_error_mode(), true);
-        ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
-        std::array<uint8_t, 4> mcu_exception{0x01, 0x00, 0x00, 0x00};
-        ensure::is_eq(fixture.type5_set_fatal_fault_injection_payload(mcu_exception), true);
-        ensure::is_eq(fixture.type5_get_fatal_fault_injection_payload(mcu_exception), true);
-    }
+    ensure::is_eq(fixture.type5_enable_error_mode(), true);
+    ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
+    std::array<uint8_t, 4> mcu_exception{0x01, 0x00, 0x00, 0x00};
+    ensure::is_eq(fixture.type5_set_fatal_fault_injection_payload(mcu_exception), true);
+    ensure::is_eq(fixture.type5_get_fatal_fault_injection_payload(mcu_exception), true);
     // clang-format on
 };
 
@@ -1355,44 +1519,77 @@ TEST_F(nsmtest, type5_fatal_fault_injection_invalid_bitmask)
 //  ---------- Type 5 - Set/Get Error Injection Mode
 TEST_F(nsmtest, type5_get_set_error_injection_mode)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        ensure::is_eq(fixture.type5_enable_error_mode(), true);
+    ensure::is_eq(fixture.type5_enable_error_mode(), true);
 
-        //               nvmsg| cmd | size
-        arr8_req get_req{0x05, 0x04, 0x00};
-        //               nvmsg| cmd | code| reserved  |data size |
-        arr8_res get_res{0x05,  // nvmsg
-                         0x04,  // cmd
-                         0x00,  // code
-                         0x00,
-                         0x00,  // reserved
-                         0x05,
-                         0x00,  // data size
-                         // data
-                         0x01,  // data mode
-                         0x00,
-                         0x00,
-                         0x00,
-                         0x00};  // data bitfield32
-        ensure::is_eq(fixture.sendRecv_nsm(get_req, get_res, 3), true);
-    }
+    //               nvmsg| cmd | size
+    arr8_req get_req{0x05, 0x04, 0x00};
+    //               nvmsg| cmd | code| reserved  |data size |
+    arr8_res get_res{0x05,  // nvmsg
+                     0x04,  // cmd
+                     0x00,  // code
+                     0x00,
+                     0x00,  // reserved
+                     0x05,
+                     0x00,  // data size
+                     // data
+                     0x01,  // data mode
+                     0x00,
+                     0x00,
+                     0x00,
+                     0x00};  // data bitfield32
+    ensure::is_eq(fixture.sendRecv_nsm(get_req, get_res, 3), true);
 };
 
 //  ---------- Type 5 - Get Supported Error Types
 TEST_F(nsmtest, type5_get_supp_error_types)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        //          nvmsg| cmd | size
-        arr8_req req{0x05, 0x05, 0x00};
-        arr8_res res{0x05,  // nvmsg
-                     0x05,  // cmd
+    const auto DeviceErrorBitmask = static_cast<uint8_t>(1U << ErrorInjectionID::DeviceError);
+
+    //          nvmsg| cmd | size
+    arr8_req req{0x05, 0x05, 0x00};
+    arr8_res res{0x05,  // nvmsg
+                 0x05,  // cmd
+                 0x00,  // code
+                 0x00,
+                 0x00,  // reserved
+                 0x08,
+                 0x00,  // data size
+                 // data
+                 DeviceErrorBitmask,  // error types bitmask
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00};
+    fixture.sendRecv_nsm(req, res, 3);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+    // the response is NOT equal 'res' because there are other supported
+    // error types than 'DeviceError', but 'DeviceError' is present
+    ensure::is_true((ntx.data[0] & DeviceErrorBitmask) == DeviceErrorBitmask);
+};
+
+//  ---------- Type 5 - Get/Set Current Error Types
+TEST_F(nsmtest, type5_get_set_current_error_types)
+{
+    ensure::is_eq(fixture.type5_enable_error_mode(), true);
+    ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
+
+    //               nvmsg| cmd | size
+    arr8_req get_req{0x05, 0x07, 0x00};
+    //               nvmsg| cmd | code| reserved  |data size |
+    arr8_res get_res{0x05,  // nvmsg
+                     0x07,  // cmd
                      0x00,  // code
                      0x00,
                      0x00,  // reserved
                      0x08,
                      0x00,  // data size
                      // data
-                     0x10,  // error types bitmask
+                     0x10,  // data bitmask
                      0x00,
                      0x00,
                      0x00,
@@ -1400,38 +1597,40 @@ TEST_F(nsmtest, type5_get_supp_error_types)
                      0x00,
                      0x00,
                      0x00};
-        ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
-    }
+    ensure::is_eq(fixture.sendRecv_nsm(get_req, get_res, 3), true);
 };
 
-//  ---------- Type 5 - Get/Set Current Error Types
-TEST_F(nsmtest, type5_get_set_current_error_types)
+TEST_F(nsmtest, type5_get_sma_baseboard_WP_settings)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        ensure::is_eq(fixture.type5_enable_error_mode(), true);
-        ensure::is_eq(fixture.type5_set_fatal_fault_error_type(), true);
+    constexpr auto Success   = static_cast<uint8_t>(Ccode::Success);
+    constexpr auto GetSmaBsb = static_cast<uint8_t>(NsmDevCfgCmdCode::GetSmaBaseboardSettings);
 
-        //               nvmsg| cmd | size
-        arr8_req get_req{0x05, 0x07, 0x00};
-        //               nvmsg| cmd | code| reserved  |data size |
-        arr8_res get_res{0x05,  // nvmsg
-                         0x07,  // cmd
-                         0x00,  // code
-                         0x00,
-                         0x00,  // reserved
-                         0x08,
-                         0x00,  // data size
-                         // data
-                         0x10,  // data bitmask
-                         0x00,
-                         0x00,
-                         0x00,
-                         0x00,
-                         0x00,
-                         0x00,
-                         0x00};
-        ensure::is_eq(fixture.sendRecv_nsm(get_req, get_res, 3), true);
-    }
+    arr8_req req{0x05,       // nvmsg
+                 GetSmaBsb,  // cmd
+                 0x01,       // size
+                 SmaBaseboardSets::WPSettings};
+
+    //          nvmsg| cmd | code |  reserved   | data size
+    arr8_res res{0x03,
+                 0x05,
+                 Success,
+                 0x00,
+                 0x00,
+                 T5SmaBaseboardSetsResponseSize,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00};
+
+    fixture.sendRecv_nsm(req, res, 4, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
 };
 
 // ---------- Type 3 generic test TelemetryRecord ----------
@@ -1556,13 +1755,13 @@ TEST_F(nsmtest, telemetryRecordArray_aggregate)
     ensure::is_eq(expected_value, value2);
 };
 
-TEST_F(nsmtest, telemetryRecordArray_addRecorVariableArray)
+TEST_F(nsmtest, telemetryRecordArray_addRecordVariableArray)
 {
     using SixteenBytesArray = std::array<uint8_t, 16>;
     SixteenBytesArray sixteen;
     sixteen.fill(0xA);
     TelemetryRecordArrayBuffer array;
-    array.addRecorVariableArray(0x10, sixteen.size(), sixteen);
+    array.addRecordVariableArray(0x10, sixteen.size(), sixteen);
     ensure::is_eq(array.arraySize(), sixteen.size() + 2);
 
     TelemetryRecord<16> telemetry;
@@ -1579,99 +1778,177 @@ TEST_F(nsmtest, telemetryRecordArray_addRecorVariableArray)
     }
 };
 
+// ---------- Type 3 tests with BusBar Sensor ----------
+TEST_F(nsmtest, t3_busbar_sensor_temperature)
+{
+    constexpr auto Success = static_cast<uint8_t>(Ccode::Success);
+    //                       nvmsg|cmd | size
+    arr8_req req_temperature{0x03, 0x00, 0x01, nv::mctp::Type3TemperatureSensors::BusBar_Temp};
+
+    //                       nvmsg| cmd| code |   reserved   | data size
+    arr8_res res_temperature{0x03, 0x00, Success, 0x00, 0x00, 0x04, 0x00};
+
+    fixture.sendRecv_nsm(req_temperature, res_temperature, 4);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+};
+
+TEST_F(nsmtest, t3_busbar_sensor_get_thermal_parameter)
+{
+    constexpr auto Success = static_cast<uint8_t>(Ccode::Success);
+    //           nvmsg| cmd | size
+    arr8_req req{0x03, 0x02, 0x01, nv::mctp::Type3TemperatureSensors::BusBar_Temp};
+
+    //          nvmsg| cmd | code |  reserved   | data size
+    arr8_res res{0x03, 0x02, Success, 0x00, 0x00, 0x04, 0x00};
+
+    fixture.sendRecv_nsm(req, res, 4, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+};
+
+TEST_F(nsmtest, t3_CPU1_Die_sensor_get_thermal_parameter)
+{
+    constexpr auto Success = static_cast<uint8_t>(Ccode::Success);
+    //           nvmsg| cmd | size
+    arr8_req req{0x03, 0x02, 0x01, nv::mctp::Type3TemperatureSensors::CPU1_Die};
+
+    //          nvmsg| cmd | code |  reserved   | data size
+    arr8_res res{0x03, 0x02, Success, 0x00, 0x00, 0x04, 0x00};
+
+    fixture.sendRecv_nsm(req, res, 4, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+};
+
+TEST_F(nsmtest, t3_busbar_sensor_set_thermal_parameter)
+{
+    constexpr auto Success = static_cast<uint8_t>(Ccode::Success);
+
+    arr8_req req{0x03,  // nvmsg
+                 0x01,  // cmd
+                 0x02,  // size
+                 nv::mctp::Type3TemperatureSensors::BusBar_Temp,
+                 nv::mctp::Type3TemperatureSensors::BusBar_Temp};
+
+    //          nvmsg| cmd | code |  reserved   | data size
+    arr8_res res{0x03, 0x01, Success, 0x00, 0x00, 0x04, 0x00};
+
+    fixture.sendRecv_nsm(req, res, 5, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+};
+
 // ---------- Type 3 tests with invalid Sensors ----------
 TEST_F(nsmtest, invalid_type3_sensors)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type3) {
-        constexpr uint8_t invalid_tag_sensor = 0xFE;
-        constexpr auto    errorInvalidData   = static_cast<uint8_t>(Ccode::ErrorInvalidData);
+    constexpr uint8_t invalid_tag_sensor = 0xFE;
+    constexpr auto    errorInvalidData   = static_cast<uint8_t>(Ccode::ErrorInvalidData);
 
-        //                       nvmsg|cmd | size
-        arr8_req req_temperature{0x03, 0x00, 0x01, invalid_tag_sensor};
-        //                      nvmsg| cmd| size
-        arr8_req req_power_draw{0x03, 0x03, 0x01, invalid_tag_sensor};
+    //                       nvmsg|cmd | size
+    arr8_req req_temperature{0x03, 0x00, 0x01, invalid_tag_sensor};
+    //                      nvmsg| cmd| size
+    arr8_req req_power_draw{0x03, 0x03, 0x01, invalid_tag_sensor};
 
-        //                       nvmsg| cmd| code|             reserved   | data size
-        arr8_res res_temperature{0x03, 0x00, errorInvalidData, 0x00, 0x00, 0x00, 0x00};
+    //                       nvmsg| cmd| code|             reserved   | data size
+    arr8_res res_temperature{0x03, 0x00, errorInvalidData, 0x00, 0x00, 0x00, 0x00};
 
-        //                      nvmsg| cmd | code           | reserved   | data size
-        arr8_res res_power_draw{0x03, 0x03, errorInvalidData, 0x00, 0x00, 0x00, 0x00};
+    //                      nvmsg| cmd | code           | reserved   | data size
+    arr8_res res_power_draw{0x03, 0x03, errorInvalidData, 0x00, 0x00, 0x00, 0x00};
 
-        ensure::is_eq(fixture.sendRecv_nsm(req_temperature, res_temperature, 4), true);
-        ensure::is_eq(fixture.sendRecv_nsm(req_power_draw, res_power_draw, 4), true);
-    }
+    ensure::is_eq(fixture.sendRecv_nsm(req_temperature, res_temperature, 4), true);
+    ensure::is_eq(fixture.sendRecv_nsm(req_power_draw, res_power_draw, 4), true);
+};
+
+TEST_F(nsmtest, internal_temp)
+{
+    constexpr uint8_t internal_temp_sensor = static_cast<uint8_t>(
+        Type3TemperatureSensors::TempSMAInternal);
+    constexpr uint8_t sma_internal_sensor = static_cast<uint8_t>(
+        Type3TemperatureSensors::SMA_Internal);
+
+    arr8_req req_internal_temp_sensor{0x03, 0x00, 0x01, internal_temp_sensor};
+    arr8_req req_sma_internal_sensor{0x03, 0x00, 0x01, sma_internal_sensor};
+
+    //                       nvmsg| cmd| code| reserved   | data size | INVALID TEMP
+    arr8_res res_temperature{0x03, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0xFF, 0xFF, 0xFF, 0xFF};
+
+    ensure::is_eq(fixture.sendRecv_nsm(req_sma_internal_sensor, res_temperature, 4), true);
+    ensure::is_eq(fixture.sendRecv_nsm(req_internal_temp_sensor, res_temperature, 4), true);
 };
 
 //  ---------- Type 4 - Bridge and Port Recovery
 TEST_F(nsmtest, type4_bridge_port_recovery)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type4) {
-        // Test Protocol Reset (1)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_protocol{0x04, 0x70, 0x02, 0x01, 0x05};  // Protocol Reset, EID=5
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_protocol{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_protocol, res_protocol, 4);
-        auto& tx_protocol  = fixture.from(fixture.result);
-        auto& ntx_protocol = NsmPktResp::from(tx_protocol);
-        ensure::is_eq(ntx_protocol.completion_code, Ccode::Success);
-        uint16_t data_size_protocol = ntx_protocol.data_size;
-        ensure::is_eq(data_size_protocol, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
+    // Test Protocol Reset (1)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_protocol{0x04, 0x70, 0x02, 0x01, 0x05};  // Protocol Reset, EID=5
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_protocol{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_protocol, res_protocol, 4);
+    auto& tx_protocol  = fixture.from(fixture.result);
+    auto& ntx_protocol = NsmPktResp::from(tx_protocol);
+    ensure::is_eq(ntx_protocol.completion_code, Ccode::Success);
+    uint16_t data_size_protocol = ntx_protocol.data_size;
+    ensure::is_eq(data_size_protocol, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
 
-        // Test Port Reset (2)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_port{0x04, 0x70, 0x02, 0x02, 0x03};  // Port Reset, Port=3
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_port{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_port, res_port, 4);
-        auto& tx_port  = fixture.from(fixture.result);
-        auto& ntx_port = NsmPktResp::from(tx_port);
-        ensure::is_eq(ntx_port.completion_code, Ccode::Success);
-        uint16_t data_size_port = ntx_port.data_size;
-        ensure::is_eq(data_size_port, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
+    // Test Port Reset (2)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_port{0x04, 0x70, 0x02, 0x02, 0x03};  // Port Reset, Port=3
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_port{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_port, res_port, 4);
+    auto& tx_port  = fixture.from(fixture.result);
+    auto& ntx_port = NsmPktResp::from(tx_port);
+    ensure::is_eq(ntx_port.completion_code, Ccode::Success);
+    uint16_t data_size_port = ntx_port.data_size;
+    ensure::is_eq(data_size_port, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
 
-        // Test Query Next Target (255)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_query{0x04, 0x70, 0x02, 0xFF, 0x00};  // Query Next Target
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_query{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_query, res_query, 4);
-        auto& tx_query  = fixture.from(fixture.result);
-        auto& ntx_query = NsmPktResp::from(tx_query);
-        ensure::is_eq(ntx_query.completion_code, Ccode::Success);
-        uint16_t data_size_query = ntx_query.data_size;
-        ensure::is_eq(data_size_query, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
+    // Test Query Next Target (255)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_query{0x04, 0x70, 0x02, 0xFF, 0x00};  // Query Next Target
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_query{0x04, 0x70, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_query, res_query, 4);
+    auto& tx_query  = fixture.from(fixture.result);
+    auto& ntx_query = NsmPktResp::from(tx_query);
+    ensure::is_eq(ntx_query.completion_code, Ccode::Success);
+    uint16_t data_size_query = ntx_query.data_size;
+    ensure::is_eq(data_size_query, 4);  // sizeof(BridgePortRecoveryResp) = 4 bytes
 
-        // Test unsupported Application Reset (0)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_app{0x04, 0x70, 0x02, 0x00, 0x00};  // Application Reset (not supported)
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_app{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_app, res_app, 4);
-        auto& tx_app  = fixture.from(fixture.result);
-        auto& ntx_app = NsmPktResp::from(tx_app);
-        ensure::is_eq(ntx_app.completion_code, Ccode::ErrorUnsupportedCmd);
+    // Test unsupported Application Reset (0)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_app{0x04, 0x70, 0x02, 0x00, 0x00};  // Application Reset (not supported)
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_app{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_app, res_app, 4);
+    auto& tx_app  = fixture.from(fixture.result);
+    auto& ntx_app = NsmPktResp::from(tx_app);
+    ensure::is_eq(ntx_app.completion_code, Ccode::ErrorUnsupportedCmd);
 
-        // Test unsupported OOB Hardware Reset (3)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_oob{0x04, 0x70, 0x02, 0x03, 0x05};  // OOB Hardware Reset (not supported)
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_oob{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_oob, res_oob, 4);
-        auto& tx_oob  = fixture.from(fixture.result);
-        auto& ntx_oob = NsmPktResp::from(tx_oob);
-        ensure::is_eq(ntx_oob.completion_code, Ccode::ErrorUnsupportedCmd);
+    // Test unsupported OOB Hardware Reset (3)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_oob{0x04, 0x70, 0x02, 0x03, 0x05};  // OOB Hardware Reset (not supported)
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_oob{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_oob, res_oob, 4);
+    auto& tx_oob  = fixture.from(fixture.result);
+    auto& ntx_oob = NsmPktResp::from(tx_oob);
+    ensure::is_eq(ntx_oob.completion_code, Ccode::ErrorUnsupportedCmd);
 
-        // Test reserved value (4)
-        //           nvmsg|cmd | size | recovery_level | reset_target
-        arr8_req req_reserved{0x04, 0x70, 0x02, 0x04, 0x00};  // Reserved value
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res_reserved{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req_reserved, res_reserved, 4);
-        auto& tx_reserved  = fixture.from(fixture.result);
-        auto& ntx_reserved = NsmPktResp::from(tx_reserved);
-        ensure::is_eq(ntx_reserved.completion_code, Ccode::ErrorUnsupportedCmd);
-    }
+    // Test reserved value (4)
+    //           nvmsg|cmd | size | recovery_level | reset_target
+    arr8_req req_reserved{0x04, 0x70, 0x02, 0x04, 0x00};  // Reserved value
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res_reserved{0x04, 0x70, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req_reserved, res_reserved, 4);
+    auto& tx_reserved  = fixture.from(fixture.result);
+    auto& ntx_reserved = NsmPktResp::from(tx_reserved);
+    ensure::is_eq(ntx_reserved.completion_code, Ccode::ErrorUnsupportedCmd);
 };
 
 /* commented these two UTs due to it crashes on
@@ -1682,46 +1959,44 @@ TEST_F(nsmtest, type4_bridge_port_recovery)
 //  ---------- Type 4 - Get Device Diagnostics
 TEST_F(nsmtest, type4_get_device_diagnostics)
 {
-    if constexpr (nv::ipc::Enable_Nsm_type4) {
-        //           nvmsg|cmd | size | segment
-        arr8_req req{0x04, 0x40, 0x01, 0x00};
-        //          nvmsg| cmd | code| reserved | data size
-        arr8_res res{0x04, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00};
-        fixture.sendRecv_nsm(req, res, 4);
-        auto& tx  = fixture.from(fixture.result);
-        auto& ntx = NsmPktResp::from(tx);
-        ensure::is_eq(ntx.completion_code, Ccode::Success);
-        ensure::is_ne(static_cast<int>(ntx.data_size), 0);
-        ensure::is_eq(ntx.data[0], 0xFF);
+    //           nvmsg|cmd | size | segment
+    arr8_req req{0x04, 0x40, 0x01, 0x00};
+    //          nvmsg| cmd | code| reserved | data size
+    arr8_res res{0x04, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req, res, 4);
+    auto& tx  = fixture.from(fixture.result);
+    auto& ntx = NsmPktResp::from(tx);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+    ensure::is_ne(static_cast<int>(ntx.data_size), 0);
+    ensure::is_eq(ntx.data[0], 0xFF);
 
-        int                           offset = 1;
-        struct nsmtest::AggregateInfo aggregate(&ntx.data[offset]);
-        constexpr uint8_t             DIAG_START_MCU_TAG = 200;
+    int                           offset = 1;
+    struct nsmtest::AggregateInfo aggregate(&ntx.data[offset]);
+    constexpr uint8_t             DIAG_START_MCU_TAG = 200;
 
-        // ignore any tagId that belongs to Type4CommonDiagnosticEntries
-        while (aggregate.tag() <= DIAG_START_MCU_TAG) {
-            nv::debug("[1] tag=%d offset=%d\n",
-                      aggregate.tag(),
-                      aggregate.address() - &ntx.data[offset]);
-            ensure::is_eq(aggregate.valid(), 1);
-            aggregate.next();
-        }
-
-        // check if all telemetries tagId are present
-        for (const auto& [telemetry_tagid, telemetry_type, sensor_tagid] :
-             mcuDiagnosticTelemetries) {
-            (void)telemetry_type;
-            (void)sensor_tagid;
-            nv::debug("[2] tag=%d offset=%d\n",
-                      aggregate.tag(),
-                      aggregate.address() - &ntx.data[offset]);
-            ensure::is_eq(aggregate.valid(), 1);
-            ensure::is_eq(telemetry_tagid, aggregate.tag());
-            aggregate.next();
-        }
-        ensure::is_eq(aggregate.tag(), DIAG_CurrentTimestamp);
-        ensure::is_eq(1, aggregate.valid());
+    // ignore any tagId that belongs to Type4CommonDiagnosticEntries
+    while (aggregate.tag() <= DIAG_START_MCU_TAG) {
+        nv::debug("[1] tag=%d offset=%d\n",
+                    aggregate.tag(),
+                    aggregate.address() - &ntx.data[offset]);
+        ensure::is_eq(aggregate.valid(), 1);
+        aggregate.next();
     }
+
+    // check if all telemetries tagId are present
+    for (const auto& [telemetry_tagid, telemetry_type, sensor_tagid] :
+            mcuDiagnosticTelemetries) {
+        (void)telemetry_type;
+        (void)sensor_tagid;
+        nv::debug("[2] tag=%d offset=%d\n",
+                    aggregate.tag(),
+                    aggregate.address() - &ntx.data[offset]);
+        ensure::is_eq(aggregate.valid(), 1);
+        ensure::is_eq(telemetry_tagid, aggregate.tag());
+        aggregate.next();
+    }
+    ensure::is_eq(aggregate.tag(), DIAG_CurrentTimestamp);
+    ensure::is_eq(1, aggregate.valid());
 };
 
 TEST_F(nsmtest, type4_get_appendRecord_task_priority)
@@ -1778,15 +2053,225 @@ TEST_F(nsmtest, type4_get_appendRecord_cpu_utilization)
 #endif
 };
 
-TEST_F(nsmtest, type4_append_error_counter_telemetries)
+TEST_F(nsmtest, type4_append_all_error_counter_telemetries)
 {
     std::array<uint8_t, TelemetryRecordArray::MaxNsmBulkResponseSize> buffer;
     TelemetryRecordArray array(buffer.data(), buffer.size());
-    auto                 rcCode = nv::mctp::appendRecord_all_error_counter_telemetries(array);
+
+    auto&                                         driver = nv::perf_mon::Driver::inst();
+    std::array<bool, nv::perf_mon::OobBusTypeNum> saved_oob_bus_valid{};
+    size_t                                        expected_items = driver.oob_bus_valid.size();
+    for (size_t counter = 0; counter < expected_items; ++counter) {
+        // save original value
+        saved_oob_bus_valid[counter] = driver.oob_bus_valid[counter];
+        // set as valid
+        driver.oob_bus_valid[counter] = true;
+    }
+
+    auto rcCode = nv::mctp::appendRecord_all_error_counter_telemetries(array);
+    // restore oob bus data
+    std::memcpy(
+        driver.oob_bus_valid.data(), saved_oob_bus_valid.data(), saved_oob_bus_valid.size());
+
     ensure::is_eq(rcCode, Ccode::Success);
 
-    struct nsmtest::AggregateInfo aggregate(buffer.data());
-    uint16_t                      size_data = aggregate.sizeData();
-    nv::debug("error_counter_telemetries size_data=%d\n", size_data);
+    uint16_t size_data = array.arraySize();
+    uint16_t items     = array.elements();
+    nv::debug("expected number of items %d, size_data=%d,  number of items %d\n",
+              expected_items,
+              size_data,
+              items);
+    ensure::is_true(items == expected_items);
     ensure::is_true(size_data > 0);
+    struct nsmtest::AggregateInfo aggregate(buffer.data());
+    for (uint16_t counter = 0; counter < items; counter++) {
+        nv::info("item[%d], tag=%02d 0x%02X size=%d\n",
+                 counter,
+                 aggregate.tag(),
+                 aggregate.tag(),
+                 aggregate.sizeData());
+        aggregate.next();
+    }
+};
+
+TEST_F(nsmtest, unsupported_message_types)
+{
+    ensure::is_false(fixture._nsm.is_msg_set(NsmMsgType::Reserved));
+
+    constexpr uint8_t SupposedUnsupportedMsg = 0xF0;
+
+    //          nvmsg|                   cmd | size
+    arr8_req req{SupposedUnsupportedMsg, 0x00, 0x00};
+    //          nvmsg| cmd | code| reserved  | data size
+    arr8_res res{SupposedUnsupportedMsg,
+                 0x00,
+                 static_cast<uint8_t>(Ccode::ErrorUnsupportedMsgType),
+                 0x00,
+                 0x00,
+                 0x00,
+                 0x00};
+    fixture.sendRecv_nsm(req, res, 3, false);
+    auto& tx  = fixture.from(fixture.result);
+    auto& ntx = NsmPktResp::from(tx);
+    ensure::is_eq(ntx.completion_code, Ccode::ErrorUnsupportedMsgType);
+};
+
+TEST_F(nsmtest, supported_message_types)
+{
+    ensure::is_true(fixture._nsm.is_msg_set(NsmMsgType::DeviceCapabilityDiscovery));
+    ensure::is_true(fixture._nsm.is_msg_set(NsmMsgType::DeviceConfiguration));
+    ensure::is_true(fixture._nsm.is_msg_set(NsmMsgType::Diagnostics));
+    ensure::is_true(fixture._nsm.is_msg_set(NsmMsgType::Firmware));
+    ensure::is_true(fixture._nsm.is_msg_set(NsmMsgType::PlatformEnviromentals));
+};
+
+TEST_F(nsmtest, supported_cmd_codes)
+{
+    /**
+     *  unsupported command codes already covered by:
+     *    -  unsupported_dcd_cmd_0x08()
+     *    -  unsupported_fw_cmd_0x0a
+     */
+
+    ensure::is_true(
+        fixture._nsm.is_cmd_set(NsmMsgType::DeviceCapabilityDiscovery, NsmDcdCmdCode::DcdPing));
+    ensure::is_true(fixture._nsm.is_cmd_set(NsmMsgType::PlatformEnviromentals,
+                                            NsmPlatEnvCmdCode::GetTemperatureReading));
+    ensure::is_true(fixture._nsm.is_cmd_set(NsmMsgType::Diagnostics,
+                                            NsmDevDiagCmdCode::GetDeviceDiagnostics));
+    ensure::is_true(fixture._nsm.is_cmd_set(NsmMsgType::DeviceConfiguration,
+                                            NsmDevCfgCmdCode::SetErrorInjectionMode));
+};
+
+/**
+ * @brief Creates different Telemetries types in an array
+ *        Some of them are valid (v=1) others are invalid (v=0)
+ *        Tests:
+ *         - Confirm the 'valid' field after creation of the properties
+ *         - Invert the 'valid' flag for each different type
+ *         - Leave all  'valid' flags as invalid for a final check
+ */
+TEST_F(nsmtest, TelemetryRecord_invalidate_telemetry)
+{
+    constexpr uint8_t tagU8           = 1;
+    constexpr uint8_t tagU16          = 2;
+    constexpr uint8_t tagArrayValid   = 4;
+    constexpr uint8_t tagArrayInvalid = 5;
+    constexpr uint8_t tag32Valid      = 6;
+    constexpr uint8_t tag32Invalid    = 7;
+    constexpr uint8_t InvalidTag      = 0xFF;
+    constexpr size_t  SzArray         = 10;
+
+    std::array<uint8_t, SzArray> array_10{1, 2, 3, 4, 5, 6, 7, 8, 9, 0};
+
+    TelemetryRecordArrayBuffer array{};
+    auto                       pt_telemetry = array.findTag(InvalidTag);
+    ensure::is_true(pt_telemetry == nullptr);
+
+    // inserting valid = 1, (true)
+    uint8_t data_u8 = sizeof(uint8_t);
+    ensure::is_eq(array.addRecordNvU8(tagU8, data_u8), true);
+    pt_telemetry = array.findTag(tagU8);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        array.invalidateTelemetry(tagU8);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+    }
+
+    // inserting valid = 0, (false)
+    uint16_t data_u16 = sizeof(uint16_t);
+    ensure::is_eq(array.addRecordNvU16(tagU16, data_u16, false), true);
+    pt_telemetry = array.findTag(tagU16);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+        pt_telemetry->setValid(true);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        pt_telemetry->setValid(false);
+    }
+
+    // array inserting valid = 1, (true)
+    ensure::is_eq(array.addRecordVariableArray(tagArrayValid, SzArray, array_10), true);
+    pt_telemetry = array.findTag(tagArrayValid);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        array.invalidateTelemetry(tagArrayValid);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+    }
+
+    // array inserting valid = 0, (false)
+    ensure::is_eq(array.addRecordVariableArray(tagArrayInvalid, SzArray, array_10, false),
+                  true);
+    pt_telemetry = array.findTag(tagArrayInvalid);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+        pt_telemetry->setValid(true);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        pt_telemetry->setValid(false);
+    }
+
+    std::array<uint8_t, sizeof(uint32_t)> array32bits{};
+
+    // array inserting valid = 1, (true)
+    ensure::is_eq(array.addRecordVariableArray(tag32Valid, sizeof(uint32_t), array32bits),
+                  true);
+    pt_telemetry = array.findTag(tag32Valid);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        array.invalidateTelemetry(tag32Valid);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+    }
+
+    // array inserting valid = 0, (false)
+    ensure::is_eq(
+        array.addRecordVariableArray(tag32Invalid, sizeof(uint32_t), array32bits, false), true);
+    pt_telemetry = array.findTag(tag32Invalid);
+    ensure::is_false(pt_telemetry == nullptr);
+    if (pt_telemetry != nullptr) {
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 0);
+        pt_telemetry->setValid(true);
+        ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), 1);
+        pt_telemetry->setValid(false);
+    }
+
+    // test all items again, all telemetries must be invalidated
+    struct nsmtest::AggregateInfo aggregate(array.data());
+    auto                          elements = array.elements();
+    while (elements-- > 0) {
+        ensure::is_eq(aggregate.valid(), 0);
+        aggregate.next();
+    }
+};
+
+namespace nv::mctp::nsm_type3 {
+template<typename Value32Bits>
+bool appendTelemetryRecord(const uint8_t         tagId,
+                           const Value32Bits&    telemetry,
+                           TelemetryRecordArray& array,
+                           const bool            valid = true);
+
+}  // namespace nv::mctp::nsm_type3
+
+TEST_F(nsmtest, TelemetryRecord_invalidate_telemetry_type3)
+{
+    constexpr uint8_t          Counter = 4;
+    TelemetryRecordArrayBuffer array{};
+    bool                       valid_flag = false;
+    uint32_t                   value      = 0;
+    for (uint8_t tag = 0; tag < Counter; ++tag) {
+        auto inserted = nv::mctp::nsm_type3::appendTelemetryRecord(
+            tag, value, array, valid_flag);
+        ensure::is_true(inserted);
+        auto pt_telemetry = array.findTag(tag);
+        ensure::is_false(pt_telemetry == nullptr);
+        if (pt_telemetry != nullptr) {
+            ensure::is_eq(static_cast<uint8_t>(pt_telemetry->v), tag & 1);
+        }
+        valid_flag = !valid_flag;
+        value++;
+    }
 };

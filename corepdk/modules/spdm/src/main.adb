@@ -15,12 +15,12 @@
 --  See the License for the specific language governing permissions and
 --  limitations under the License.
 --
-with Pdk.Cmn.Console.Sys;     use Pdk.Cmn.Console.Sys;
+with Pdk.Cmn.Log.Plat;        use Pdk.Cmn.Log.Plat;
 with Pdk.Cmn.Flowcontrol.Sys; use Pdk.Cmn.Flowcontrol.Sys;
 procedure Main with
   spark_mode => On
 is
 begin
-   Print("spdm-ada main()");
+   Print(Info, "spdm-ada main()");
    Exitprogram(0);
 end main;

@@ -16,6 +16,6 @@
 
 
 include $(UBS_PATH_ROOT)/ubs-cmn.mk
+SOURCES := $(UBS_CMN_LOG)
 
-SOURCES := $(UBS_CMN_CONSOLE) $(UBS_CMN_CONSOLE_CPP)
 MAIN := src/main.cpp

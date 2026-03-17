@@ -17,20 +17,21 @@
  */
 #include "pdk-mctp-app-validator.h"
 
-#include "pdk-cmn-console.h"
 #include "pdk-mctp-app-control.h"
 #include "pdk-mctp-app-router-plat.h"
 #include "pdk-mctp-app-vendor.h"
 #include "pdk-mctp-platforms-nsm.h"
+#include "pdk/cmn/log/log.h"
 
 using namespace pdk::mctp::app;
 using namespace pdk::cmn;
+using enum pdk::cmn::log::Destination;  // or spell out Destination::Console
 
 bool Validator::validate(const Packet& pkt, platforms::Interface interface)
 {
     auto& ctl = Control::PktReq::from(pkt);
     if (ctl.hdr_ver != 0x01) {
-        console::warning("invalid rsvd / hdr version\n");
+        pdk::cmn::log::hide().warn<Console>("invalid rsvd / hdr version\n");
         return false;
     }
 
@@ -51,12 +52,12 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
     // Single packet Control message
     if ((ctl.msg_type == MsgType::Control) && ctl.som && ctl.eom) {
         if (!eid_ok) {
-            console::warning("invalid dst eid for control message\n");
+            pdk::cmn::log::hide().warn<Console>("invalid dst eid for control message\n");
             return false;
         }
         auto type = Control::get_packet_type(pkt);
         if (type != PacketType::Request && type != PacketType::Response) {
-            console::warning("packet is neither request nor response\n");
+            pdk::cmn::log::hide().warn<Console>("packet is neither request nor response\n");
             return false;
         }
         _msg_type = MsgType::Control;
@@ -72,7 +73,8 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
             return true;
         }
         else {
-            console::warning("SOM=1,EOM=0/1 with invalid dst eid for pldm message\n");
+            pdk::cmn::log::hide().warn<Console>(
+                "SOM=1,EOM=0/1 with invalid dst eid for pldm message\n");
             return false;
         }
     }
@@ -87,16 +89,22 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
             return true;
         }
         else {
-            console::warning("SOM=1,EOM=0/1 with invalid dst eid for spdm message\n");
+            pdk::cmn::log::hide().warn<Console>(
+                "SOM=1,EOM=0/1 with invalid dst eid for spdm message\n");
             return false;
         }
     }
 
     if ((ctl.msg_type == MsgType::VendorPci) && ctl.som) {
+        if (!eid_ok) {
+            pdk::cmn::log::hide().warn<Console>("invalid dst eid for vendor pci message\n");
+            return false;
+        }
+
         auto& nrx       = platforms::NsmPktReq::from(pkt);
         auto  vendor_id = nrx.pci_vendor_id;
         if (vendor_id != platforms::NvMctpPciVendorId) {
-            console::warning("NvMctpPciVendorId invalid");
+            pdk::cmn::log::hide().warn<Console>("NvMctpPciVendorId invalid");
             return false;
         }
         return true;
@@ -108,12 +116,13 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
         if (vdr.iana == dmtf_iana_be || vdr.iana == dmtf_iana_le) {
             if (eid_ok) {
                 if (vdr.pkt_seq != 0) {
-                    console::warning("packet sequence invalid\n");
+                    pdk::cmn::log::hide().warn<Console>("packet sequence invalid\n");
                     return false;
                 }
                 auto type = Vendor::get_vendor_packet_type(pkt);
                 if (type != PacketType::Request && type != PacketType::Response) {
-                    console::warning("packet is neither request nor response\n");
+                    pdk::cmn::log::hide().warn<Console>(
+                        "packet is neither request nor response\n");
                     return false;
                 }
                 _msg_type = MsgType::VendorIani;
@@ -126,7 +135,8 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
                 return true;
             }
             else {
-                console::warning("SOM=1,EOM=0/1 with invalid dst eid for vendor message\n");
+                pdk::cmn::log::hide().warn<Console>(
+                    "SOM=1,EOM=0/1 with invalid dst eid for vendor message\n");
                 return false;
             }
         }
@@ -138,7 +148,7 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
             _pkt_seq = ctl.pkt_seq;
         }
         else {
-            console::warning("invalid dst eid for multi packet message\n");
+            pdk::cmn::log::hide().warn<Console>("invalid dst eid for multi packet message\n");
             return false;
         }
         return true;
@@ -146,24 +156,24 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
     else if (!ctl.som || ctl.eom) {
         if (eid_ok && (_eid == ctl.dst_eid)) {
             if (ctl.msg_tag != _msg_tag) {
-                console::warning("message tag mismatch");
+                pdk::cmn::log::hide().warn<Console>("message tag mismatch");
                 return false;
             }
             // coverity[cert_int31_c_violation] -- safe: result is masked to 2 bits
             _pkt_seq = static_cast<uint8_t>(_pkt_seq + 1) & static_cast<uint8_t>(0b11);
             if (ctl.pkt_seq != _pkt_seq) {
-                console::warning("packet sequence mismatch");
+                pdk::cmn::log::hide().warn<Console>("packet sequence mismatch");
                 return false;
             }
         }
         else {
-            console::warning("invalid dst eid for multi packet message\n");
+            pdk::cmn::log::hide().warn<Console>("invalid dst eid for multi packet message\n");
             return false;
         }
         return true;
     }
 
-    console::warning("invalid packet\n");
+    pdk::cmn::log::hide().warn<Console>("invalid packet\n");
     return false;
 }
 

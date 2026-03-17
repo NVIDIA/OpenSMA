@@ -52,6 +52,10 @@ enum EventBit : uint32_t
     Spi0Receive   = common::bit(Client::Spi0),
     Spi1Receive   = common::bit(Client::Spi1),
     Spi2Receive   = common::bit(Client::Spi2),
+    DwI2c4Receive = common::bit(Client::DsI2c4),
+    DwI2c5Receive = common::bit(Client::DsI2c5),
+    DwI2c6Receive = common::bit(Client::DsI2c6),
+    DwI2c7Receive = common::bit(Client::DsI2c7),
 };
 
 struct [[gnu::packed]] NsmPacket

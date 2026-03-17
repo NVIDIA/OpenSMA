@@ -95,4 +95,52 @@ void DevIkHelper::construct_cert(std::span<uint8_t>& input_buffer)
     it = std::copy(
         _signature.s_value.begin(), _signature.s_value.begin() + _signature.s_length_token, it);
 }
+TemplateComparisonError check_two_template_is_same(const DevIkTemplate& template_1,
+                                                   const DevIkTemplate& template_2)
+{
+    // Check each field individually and return specific error code
+    if (template_1.template_to_serial_number != template_2.template_to_serial_number
+        || template_1.serial_number != template_2.serial_number) {
+        return TemplateComparisonError::SerialNumberMismatch;
+    }
+
+    if (template_1.template_to_dda_ordinal_number != template_2.template_to_dda_ordinal_number
+        || template_1.dda_ordinal_number != template_2.dda_ordinal_number) {
+        return TemplateComparisonError::DdaOrdinalNumberMismatch;
+    }
+
+    if (template_1.template_to_fmc_ordinal_number != template_2.template_to_fmc_ordinal_number
+        || template_1.fmc_ordinal_number != template_2.fmc_ordinal_number) {
+        return TemplateComparisonError::FmcOrdinalNumberMismatch;
+    }
+
+    if (template_1.template_to_subject_serial_number
+            != template_2.template_to_subject_serial_number
+        || template_1.subject_serial_number != template_2.subject_serial_number) {
+        return TemplateComparisonError::SubjectSerialNumberMismatch;
+    }
+
+    if (template_1.template_to_public_key != template_2.template_to_public_key
+        || template_1.public_key != template_2.public_key) {
+        return TemplateComparisonError::PublicKeyMismatch;
+    }
+
+    if (template_1.template_to_subject_key_identifier
+            != template_2.template_to_subject_key_identifier
+        || template_1.subject_key_identifier != template_2.subject_key_identifier) {
+        return TemplateComparisonError::SubjectKeyIdentifierMismatch;
+    }
+
+    if (template_1.template_to_authority_key_identifier
+        != template_2.template_to_authority_key_identifier) {
+        // Note: authority_key_identifier itself is not checked as per original comment
+        return TemplateComparisonError::AuthorityKeyIdentifierMismatch;
+    }
+
+    if (template_1.template_to_signature != template_2.template_to_signature) {
+        return TemplateComparisonError::SignatureMismatch;
+    }
+
+    return TemplateComparisonError::Success;
+}
 }  // namespace nv::spdm::ik

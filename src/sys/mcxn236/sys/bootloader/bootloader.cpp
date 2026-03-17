@@ -31,6 +31,7 @@
 #include "sys/common/utils.h"
 #include "nv/watchdog/runtime.h"
 #include "sys/common/stack_protect.h"
+#include "nv/usb/task.h"
 #include "nv/gpio/driver.h"
 using namespace nv;
 using namespace nv::bootloader;
@@ -152,6 +153,28 @@ bool Driver::check_cust_mk_sk()
     else {
         logger::info(logger::Event::BootCustMkSkCheck, {0});
         return true;
+    }
+}
+
+void __attribute__((no_stack_protector)) Driver::set_stack_cookie()
+{
+    // Set stack cookie to random value
+    if constexpr (SSP_ENABLED) {
+        uintptr_t                stack_cookie = 0;
+        mbedtls_ctr_drbg_context ctr_drbg;
+        mbedtls_ctr_drbg_init(&ctr_drbg);
+        const int Ret = mbedtls_ctr_drbg_random(&ctr_drbg,
+                                                // NOLINTNEXTLINE(*-reinterpret-cast)
+                                                reinterpret_cast<uint8_t*>(&stack_cookie),
+                                                sizeof(stack_cookie));
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        if (Ret != 0) {
+            logger::info(logger::Event::BootStackGuardInitFail, {});
+        }
+        // NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
+        __stack_chk_guard = stack_cookie;
+        // Clean up secrets
+        stack_cookie = 0;
     }
 }
 
@@ -299,27 +322,6 @@ void __attribute__((no_stack_protector)) Driver::boot_init()
         }
     }
 
-    // Set stack cookie to random value
-    {
-        if constexpr (SSP_ENABLED) {
-            uintptr_t                stack_cookie = 0;
-            mbedtls_ctr_drbg_context ctr_drbg;
-            mbedtls_ctr_drbg_init(&ctr_drbg);
-            const int Ret = mbedtls_ctr_drbg_random(&ctr_drbg,
-                                                    // NOLINTNEXTLINE(*-reinterpret-cast)
-                                                    reinterpret_cast<uint8_t*>(&stack_cookie),
-                                                    sizeof(stack_cookie));
-            mbedtls_ctr_drbg_free(&ctr_drbg);
-            if (Ret != 0) {
-                logger::info(logger::Event::BootStackGuardInitFail, {});
-            }
-            // NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
-            __stack_chk_guard = stack_cookie;
-            // Clean up secrets
-            stack_cookie = 0;
-        }
-    }
-
     flash::Flash::set_data_from_kernel(flash::Key::NpdsBootReasonOriginal,
                                        get_original_boot_reason());
 
@@ -334,6 +336,16 @@ void __attribute__((no_stack_protector)) Driver::boot_init()
 
     // TBD: time for reset it
     write_application_fault_record(0x0, 0x0, 0x0, 0x0);
+
+    // Check for USB port reset marker
+    uint32_t usb_reset_marker = 0;
+    nv::mainbox::read_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset,
+                                  usb_reset_marker);
+    if (usb_reset_marker == nv::usb::UsbPortResetMagicNumber) {
+        // Clear mailbox
+        nv::mainbox::write_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset, 0x0);
+        logger::info(logger::Event::UsbPortReset, {});
+    }
 
 #if 0
     uint32_t auth_result     = get_auth_result();

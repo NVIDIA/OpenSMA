@@ -27,7 +27,7 @@ using namespace ut;
 
 /**
  * @brief Unit test fixture for testing AT24C01 EEPROM emulation functionality
- * 
+ *
  * This test class provides test cases for verifying the AT24C01 EEPROM emulation
  * implementation, including constructor behavior, I2C read/write operations,
  * and memory initialization with proper EEPROM behavior.
@@ -46,7 +46,7 @@ public:
     {
         eeprom = emulation::At24c01();
         // Create another instance for testing different scenarios
-        eeprom2 = emulation::At24c01();
+        eeprom2      = emulation::At24c01();
         auto memory2 = eeprom2.get_memory();
         std::iota(memory2.begin(), memory2.end(), 0);
         eeprom2.set_memory(memory2);
@@ -76,7 +76,7 @@ public:
  */
 TEST_F(at24c01test, test_eeprom_constructor)
 {
-    auto memory = fixture.eeprom.get_memory();
+    auto memory  = fixture.eeprom.get_memory();
     auto memory2 = fixture.eeprom2.get_memory();
     ensure::is_eq(memory.size(), 128);
     ensure::is_eq(memory.at(0), 0xff);
@@ -103,25 +103,25 @@ TEST_F(at24c01test, test_eeprom_i2c_read)
 {
     // Test sequential read operations
     uint8_t data = 0x00;
-    
+
     // First read should start from address 0
     fixture.eeprom.i2c_read(data, true);
     ensure::is_eq(data, 0xff);  // Should read 0xFF from address 0
-    
+
     // Second read should be from address 1
     fixture.eeprom.i2c_read(data, false);
     ensure::is_eq(data, 0xff);  // Should read 0xFF from address 1
-    
+
     // Third read should be from address 2
     fixture.eeprom.i2c_read(data, false);
     ensure::is_eq(data, 0xff);  // Should read 0xFF from address 2
-    
+
     // Ensure remaining data is 0xFF
     for (int i = 0; i < 125; i++) {
         fixture.eeprom.i2c_read(data, false);
         ensure::is_eq(data, 0xff);  // Should read 0xFF from all addresses
     }
-    
+
     // Test address wrapping with eeprom2
     auto memory2 = fixture.eeprom2.get_memory();
     for (int i = 0; i < 128; i++) {
@@ -142,11 +142,12 @@ TEST_F(at24c01test, test_eeprom_i2c_read)
 TEST_F(at24c01test, test_eeprom_i2c_write)
 {
     // Test writing data to specific addresses
-    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize> write_buffer = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
-    
+    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize> write_buffer = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
+
     // Write 8 bytes starting at address 0
     fixture.eeprom.i2c_write(write_buffer, 8);
-    
+
     // Verify the data was written correctly
     auto memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(0), 0x01);  // First data byte at address 0
@@ -156,24 +157,24 @@ TEST_F(at24c01test, test_eeprom_i2c_write)
     ensure::is_eq(memory.at(4), 0x05);  // Fifth data byte at address 4
     ensure::is_eq(memory.at(5), 0x06);  // Sixth data byte at address 5
     ensure::is_eq(memory.at(6), 0x07);  // Seventh data byte at address 6
-    
+
     // Test writing to a different address
     write_buffer.at(0) = 0x10;  // New address
     write_buffer.at(1) = 0xAA;
     write_buffer.at(2) = 0xBB;
     fixture.eeprom.i2c_write(write_buffer, 3);
-    
+
     // Verify data was written to the new address
     memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(0x10), 0xAA);
     ensure::is_eq(memory.at(0x11), 0xBB);
-    
+
     // Test page boundary handling - write across page boundary
     write_buffer.at(0) = 0x07;  // Start at address 7 (end of first page)
     write_buffer.at(1) = 0xCC;
     write_buffer.at(2) = 0xDD;
     fixture.eeprom.i2c_write(write_buffer, 3);
-    
+
     // Verify data was written correctly across page boundary
     memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(0x07), 0xCC);  // Last byte of first page
@@ -185,14 +186,16 @@ TEST_F(at24c01test, test_eeprom_i2c_write)
 TEST_F(at24c01test, test_eeprom_address_wrapping)
 {
     // Test that addresses wrap around correctly
-    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize> write_buffer = {0x7F, 0xAA};  // Address 127 (last address)
+    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize> write_buffer = {0x7F, 0xAA};  // Address
+                                                                                    // 127 (last
+                                                                                    // address)
     fixture.eeprom.i2c_write(write_buffer, 2);
-    
+
     // Write to address 128 should wrap to address 0
     write_buffer.at(0) = 0x80;  // Address 128 (wraps to 0)
     write_buffer.at(1) = 0xBB;
     fixture.eeprom.i2c_write(write_buffer, 2);
-    
+
     auto memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(127), 0xAA);  // Data at address 127
     ensure::is_eq(memory.at(0), 0xBB);    // Data at address 0 (wrapped)
@@ -201,22 +204,22 @@ TEST_F(at24c01test, test_eeprom_address_wrapping)
 TEST_F(at24c01test, test_eeprom_read_after_write)
 {
     // Test reading data after writing it
-    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize> write_buffer = {0x20, 0x11, 0x22, 0x33};
+    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize> write_buffer = {0x20, 0x11, 0x22, 0x33};
     fixture.eeprom.i2c_write(write_buffer, 4);
-    
+
     // Read the data back
     uint8_t data = 0x00;
     fixture.eeprom.i2c_read(data, true);  // Start new transaction at address 0
-    ensure::is_eq(data, 0xff);  // Should read 0xFF from address 0
-    
+    ensure::is_eq(data, 0xff);            // Should read 0xFF from address 0
+
     // Read from address 0x20 where we wrote data
     fixture.eeprom.i2c_write(write_buffer, 1);  // Set address to 0x20
     fixture.eeprom.i2c_read(data, true);        // Start new transaction
-    ensure::is_eq(data, 0x11);  // Should read first data byte
-    
+    ensure::is_eq(data, 0x11);                  // Should read first data byte
+
     fixture.eeprom.i2c_read(data, false);
     ensure::is_eq(data, 0x22);  // Should read second data byte
-    
+
     fixture.eeprom.i2c_read(data, false);
     ensure::is_eq(data, 0x33);  // Should read third data byte
 };
@@ -228,18 +231,18 @@ TEST_F(at24c01test, test_eeprom_memory_manipulation)
     for (int i = 0; i < 128; i++) {
         test_memory.at(i) = static_cast<uint8_t>(i);
     }
-    
+
     fixture.eeprom.set_memory(test_memory);
-    
+
     auto memory = fixture.eeprom.get_memory();
     for (int i = 0; i < 128; i++) {
         ensure::is_eq(memory.at(i), static_cast<uint8_t>(i));
     }
-    
+
     // Test that changes persist
     memory.at(0) = 0xFF;
     ensure::is_eq(memory.at(0), 0xFF);
-    
+
     // Test that the original memory is unchanged
     auto original_memory = fixture.eeprom.get_memory();
     ensure::is_eq(original_memory.at(0), 0x00);  // Should still be the original value
@@ -248,20 +251,20 @@ TEST_F(at24c01test, test_eeprom_memory_manipulation)
 TEST_F(at24c01test, test_eeprom_edge_cases)
 {
     // Test edge cases
-    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize> write_buffer = {0x00, 0x01};
+    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize> write_buffer = {0x00, 0x01};
     write_buffer.fill(0x01);
     write_buffer.at(0) = 0x00;
-    
+
     // Test writing 0 bytes (should do nothing)
     fixture.eeprom.i2c_write(write_buffer, 0);
     auto memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(0), 0xff);  // Should still be 0xFF
-    
+
     // Test writing only address (should set address but not write data)
     fixture.eeprom.i2c_write(write_buffer, 1);
     memory = fixture.eeprom.get_memory();
     ensure::is_eq(memory.at(0), 0xff);  // Should still be 0xFF
-    
+
     // Test writing more bytes than buffer size (should be limited)
     fixture.eeprom.i2c_write(write_buffer, 40);  // More than buffer size
     memory = fixture.eeprom.get_memory();

@@ -178,17 +178,29 @@ void pldm_write(NvU16                                          comp_id,
             auto status = flash::Flash::write(offset + i * PageSize, Item, 1s);
             if (status != flash::Status::Ok) {
                 err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
+                nv::logger::info(nv::logger::Event::PldmWriteFail,
+                                 nv::logger::data_from_u32(static_cast<uint32_t>(status)));
                 return;
             }
         }
         err = NV_PLDM_RET_SUCCUSS;
     }
     else {
-        // TODO: support other component id
         if (offset == 0) {
             nv::ap_operation::pldm_update_ap_fw_prepare();
         }
-        nv::ap_operation::write_data_to_ap(offset, buffer);
+        // Only write the actual valid data size, not the entire buffer
+        // to avoid writing residual data from previous transfers
+        const std::span<const uint8_t> valid_data(buffer.data(), size);
+        auto status = nv::ap_operation::write_data_to_ap(offset, valid_data);
+
+        if (status != nv::ap_operation::ApOperationErrorCode::Success) {
+            nv::info("ap fw write fail %d\n", status);
+            nv::logger::info(nv::logger::Event::PldmWriteFailAp,
+                             {static_cast<uint8_t>(status)});
+            err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
+            return;
+        }
         err = NV_PLDM_RET_SUCCUSS;
     }
 }
@@ -215,6 +227,8 @@ void pldm_update_pds(NvU16 component_id, NvU8 status, NvU16& err)
         if (status == static_cast<flash::Data>(PldmApFwStatus::Update_In_Progress)) {
             update_state = static_cast<flash::Data>(bootloader::Driver::State::InProgress);
             bootable     = false;
+            // If pldm update is triggered, allow image copy
+            (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 1);
         }
         else if (status == static_cast<flash::Data>(PldmApFwStatus::Update_Complete)) {
             update_state = static_cast<flash::Data>(bootloader::Driver::State::Complete);
@@ -484,7 +498,8 @@ void check_offset_within_transfer_size(NvU32 offset,
     }
 }
 
-void parse_header(NvU32     cur_fw_offset,
+void parse_header(NvU16     component_id,
+                  NvU32     cur_fw_offset,
                   NvU32     transfer_size,
                   NvU8*     data,
                   Metadata* metadata,
@@ -493,55 +508,100 @@ void parse_header(NvU32     cur_fw_offset,
     constexpr unsigned OffsetFirstByte  = 8u;
     constexpr unsigned OffsetSecondByte = 16u;
     constexpr unsigned OffsetThirdByte  = 24u;
+    if (component_id == sys::flash::config::McuComponentId) {
+        // major
+        constexpr static uint32_t MajorOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_MAJOR_OFFSET;
+        if (is_in_range(cur_fw_offset, transfer_size, MajorOffset, MajorOffset + 1)) {
+            metadata->major = ((unsigned)data[MajorOffset - cur_fw_offset]
+                               | (unsigned)data[MajorOffset + 1 - cur_fw_offset]
+                                     << OffsetFirstByte)
+                            & UINT16_MAX;
+        }
 
-    // major
-    constexpr static uint32_t MajorOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_MAJOR_OFFSET;
-    if (is_in_range(cur_fw_offset, transfer_size, MajorOffset, MajorOffset + 1)) {
-        metadata->major = ((unsigned)data[MajorOffset - cur_fw_offset]
-                           | (unsigned)data[MajorOffset + 1 - cur_fw_offset] << OffsetFirstByte)
-                        & UINT16_MAX;
+        // minor
+        constexpr static uint32_t MinorOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_MINOR_OFFSET;
+        if (is_in_range(cur_fw_offset, transfer_size, MinorOffset, MinorOffset)) {
+            metadata->minor = data[MinorOffset - cur_fw_offset];
+        }
+
+        // patch
+        constexpr static uint32_t PatchOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_PATCH_OFFSET;
+        if (is_in_range(cur_fw_offset, transfer_size, PatchOffset, PatchOffset + 1)) {
+            metadata->patch = ((unsigned)data[PatchOffset - cur_fw_offset]
+                               | (unsigned)data[PatchOffset + 1 - cur_fw_offset]
+                                     << OffsetFirstByte)
+                            & UINT16_MAX;
+        }
+
+        // build
+        constexpr static uint32_t BuildOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_BUILD_OFFSET;
+        if (is_in_range(cur_fw_offset, transfer_size, BuildOffset, BuildOffset + 1)) {
+            metadata->build = ((unsigned)data[BuildOffset - cur_fw_offset]
+                               | (unsigned)data[BuildOffset + 1 - cur_fw_offset]
+                                     << OffsetFirstByte)
+                            & UINT16_MAX;
+        }
+
+        // query apsku
+        constexpr static uint32_t ApSkuOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_APSKU_OFFSET;
+        if (is_in_range(cur_fw_offset, transfer_size, ApSkuOffset, ApSkuOffset + 3)) {
+            // the first download chunk is done
+            is_recv_all_metadata = 1;
+            metadata->ap_sku_id  = (NvU32)data[ApSkuOffset - cur_fw_offset]
+                                | ((NvU32)data[ApSkuOffset + 1 - cur_fw_offset]
+                                   << OffsetFirstByte)
+                                | ((NvU32)data[ApSkuOffset + 2 - cur_fw_offset]
+                                   << OffsetSecondByte)
+                                | ((NvU32)data[ApSkuOffset + 3 - cur_fw_offset]
+                                   << OffsetThirdByte);
+        }
+
+        // check offset of all metadata when receive first download chunk
+        if (cur_fw_offset == 0) {
+            check_offset_within_transfer_size(MajorOffset, 2, transfer_size);
+            check_offset_within_transfer_size(MinorOffset, 1, transfer_size);
+            check_offset_within_transfer_size(PatchOffset, 2, transfer_size);
+            check_offset_within_transfer_size(BuildOffset, 2, transfer_size);
+            check_offset_within_transfer_size(ApSkuOffset, 4, transfer_size);
+        }
     }
+    else {
+        // check if comp id valid
+        NvU8 is_valid = 0;
+        get_fw_info_from_list(component_id, is_valid, FwInfoList);
+        if (!is_valid) {
+            return;
+        }
+        // fw version: 4 bytes
+        if (is_in_range(cur_fw_offset,
+                        transfer_size,
+                        NV_PLDM_CPLD_FW_VERSION_OFFSET,
+                        NV_PLDM_CPLD_FW_VERSION_OFFSET + 3)) {
+            metadata->major = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 3 - cur_fw_offset];
+            metadata->minor = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 2 - cur_fw_offset];
+            metadata->patch = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 1 - cur_fw_offset];
+            metadata->build = data[NV_PLDM_CPLD_FW_VERSION_OFFSET - cur_fw_offset];
+        }
+        // sku id: 4 bytes
+        if (is_in_range(cur_fw_offset,
+                        transfer_size,
+                        NV_PLDM_CPLD_SKU_ID_OFFSET,
+                        NV_PLDM_CPLD_SKU_ID_OFFSET + 3)) {
+            is_recv_all_metadata = 1;
+            metadata->ap_sku_id  = (NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET - cur_fw_offset]
+                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 1 - cur_fw_offset]
+                                   << OffsetFirstByte)
+                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 2 - cur_fw_offset]
+                                   << OffsetSecondByte)
+                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 3 - cur_fw_offset]
+                                   << OffsetThirdByte);
+        }
 
-    // minor
-    constexpr static uint32_t MinorOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_MINOR_OFFSET;
-    if (is_in_range(cur_fw_offset, transfer_size, MinorOffset, MinorOffset)) {
-        metadata->minor = data[MinorOffset - cur_fw_offset];
-    }
-
-    // patch
-    constexpr static uint32_t PatchOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_PATCH_OFFSET;
-    if (is_in_range(cur_fw_offset, transfer_size, PatchOffset, PatchOffset + 1)) {
-        metadata->patch = ((unsigned)data[PatchOffset - cur_fw_offset]
-                           | (unsigned)data[PatchOffset + 1 - cur_fw_offset] << OffsetFirstByte)
-                        & UINT16_MAX;
-    }
-
-    // build
-    constexpr static uint32_t BuildOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_BUILD_OFFSET;
-    if (is_in_range(cur_fw_offset, transfer_size, BuildOffset, BuildOffset + 1)) {
-        metadata->build = ((unsigned)data[BuildOffset - cur_fw_offset]
-                           | (unsigned)data[BuildOffset + 1 - cur_fw_offset] << OffsetFirstByte)
-                        & UINT16_MAX;
-    }
-
-    // query apsku
-    constexpr static uint32_t ApSkuOffset = NV_PLDM_NV_HEADER_OFFSET + NV_PLDM_APSKU_OFFSET;
-    if (is_in_range(cur_fw_offset, transfer_size, ApSkuOffset, ApSkuOffset + 3)) {
-        // the first download chunk is done
-        is_recv_all_metadata = 1;
-        metadata->ap_sku_id  = (NvU32)data[ApSkuOffset - cur_fw_offset]
-                            | ((NvU32)data[ApSkuOffset + 1 - cur_fw_offset] << OffsetFirstByte)
-                            | ((NvU32)data[ApSkuOffset + 2 - cur_fw_offset] << OffsetSecondByte)
-                            | ((NvU32)data[ApSkuOffset + 3 - cur_fw_offset] << OffsetThirdByte);
-    }
-
-    // check offset of all metadata when receive first download chunk
-    if (cur_fw_offset == 0) {
-        check_offset_within_transfer_size(MajorOffset, 2, transfer_size);
-        check_offset_within_transfer_size(MinorOffset, 1, transfer_size);
-        check_offset_within_transfer_size(PatchOffset, 2, transfer_size);
-        check_offset_within_transfer_size(BuildOffset, 2, transfer_size);
-        check_offset_within_transfer_size(ApSkuOffset, 4, transfer_size);
+        // check offset of all metadata when receive first download chunk
+        if (cur_fw_offset == 0) {
+            check_offset_within_transfer_size(NV_PLDM_CPLD_FW_VERSION_OFFSET, 4, transfer_size);
+            check_offset_within_transfer_size(NV_PLDM_CPLD_SKU_ID_OFFSET, 4, transfer_size);
+        }
     }
 }
 
@@ -666,6 +726,23 @@ void get_arr_comp_id_len(NvU32& arrlen)
 const NvU16* get_arr_comp_id_address()
 {
     return AllApComponentId.data();
+}
+
+NvU8 get_write_fail_retry(NvU16 comp_id)
+{
+    if (comp_id == sys::flash::config::McuComponentId) {
+        //  mcu do not support retry since erase unit size is 8KB
+        // if write fail at offset within 8KB, will not re-erase
+        return 0;
+    }
+    // check if comp id valid
+    NvU8 is_valid = 0;
+    get_fw_info_from_list(comp_id, is_valid, FwInfoList);
+    if (is_valid) {
+        // cpld do not support retry since it only support chip erase
+        return 0;
+    }
+    return 0;
 }
 
 }  // namespace nv::pldm

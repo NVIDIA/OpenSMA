@@ -16,10 +16,42 @@
  * limitations under the License.
  */
 #include "nv/nv.h"
+#include "nv/lstp/lstp_task.h"
 #include "sys/gpio/constant.h"
 #include "sys/gpio/driver.h"
 extern "C" {
 // NOLINTBEGIN
+
+static void IRQHandler(nv::gpio::GpioPort port, uint32_t flags)
+{
+    for (nv::gpio::GpioPin pin = 0; pin < sys::gpio::PinsPerPort; pin++) {
+        if ((flags & (1U << pin)) == 0) {
+            continue;
+        }
+        // Check if IRQ pin is related to LSTP Task
+        const nv::lstp::GpioIndex gpio_idx = nv::lstp::LstpGpioIdxLookup[port][pin];
+        if (gpio_idx < nv::lstp::LstpGpioNum) {
+            nv::lstp::LstpTask::submit_gpio_irq(gpio_idx);
+        }
+        // Add other tasks as needed
+    }
+}
+
+void GPIO00_IRQHandler()
+{
+    GPIO_Type* inst = GPIO0;
+    uint32_t   flag = GPIO_GpioGetInterruptChannelFlags(inst, 0);
+    GPIO_GpioClearInterruptChannelFlags(inst, flag, 0);
+    IRQHandler(0, flag);
+}
+
+void GPIO01_IRQHandler()
+{
+    GPIO_Type* inst = GPIO0;
+    uint32_t   flag = GPIO_GpioGetInterruptChannelFlags(inst, 1);
+    GPIO_GpioClearInterruptChannelFlags(inst, flag, 1);
+    IRQHandler(0, flag);
+}
 
 void GPIO40_IRQHandler()
 {

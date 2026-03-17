@@ -65,5 +65,8 @@ private:
     nv::flash::Driver* _driver = nullptr;
 
     constexpr static uint8_t DigestMagic = 0x5A;  // TBD: Remove after crypto lib ready
+
+    // WAR 5956416
+    Status recover_corrupted_power_info(PdsInfo& pds_info);
 };
 }  // namespace nv::flash

@@ -40,4 +40,7 @@ ApOperationErrorCode pldm_update_ap_fw_prepare();
 ApOperationErrorCode
 pldm_update_ap_fw_callback(const nv::spdm::crypto::CryptoStatus ap_auth_result);
 
+// Write debug token notify bit to CPLD
+ApOperationErrorCode modify_cpld_debug_status(bool unlock);
+
 }  // namespace nv::ap_operation

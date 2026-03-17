@@ -32,8 +32,8 @@ void Pca9544a::i2c_read(uint8_t& return_data)
     return_data = control_register;
 }
 
-void Pca9544a::i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-                         uint8_t                                                    data_length)
+void Pca9544a::i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                         uint8_t                                            data_length)
 {
     // only care about last byte for writing
     // cn only write to non interrupt bits

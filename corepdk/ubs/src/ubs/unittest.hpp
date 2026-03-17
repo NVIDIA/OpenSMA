@@ -127,7 +127,7 @@ struct TestImpl : Test
                 break;
             }
         }
-        assert(registered && "Increa\\se NV_UNITTEST_MAX");
+        assert(registered && "Increase NV_UNITTEST_MAX");
     }
     ~TestImpl() override = default;
 

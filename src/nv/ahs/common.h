@@ -33,24 +33,24 @@ namespace nv::nhp {
 struct E1sOutputPins
 {
     /** @brief PCIe reset control pin - output (active low) */
-    nv::gpio::GpioPort perst_l_port;
+    nv::gpio::GpioPort perst_l_port = nv::gpio::InvalidGpioPort;
     /** @brief PCIe reset control pin number */
-    nv::gpio::GpioPin perst_l_pin;
+    nv::gpio::GpioPin perst_l_pin = nv::gpio::InvalidGpioPin;
 
     /** @brief PCIe clock enable control pin - output (active low) */
-    nv::gpio::GpioPort clk_en_l_port;
+    nv::gpio::GpioPort clk_en_l_port = nv::gpio::InvalidGpioPort;
     /** @brief PCIe clock enable control pin number */
-    nv::gpio::GpioPin clk_en_l_pin;
+    nv::gpio::GpioPin clk_en_l_pin = nv::gpio::InvalidGpioPin;
 
-    /** @brief Internal drive power disable control pin - output */
-    nv::gpio::GpioPort pwrdis_port;
+    /** @brief Internal drive power disable control pin - output (active high)*/
+    nv::gpio::GpioPort pwrdis_port = nv::gpio::InvalidGpioPort;
     /** @brief Internal drive power disable control pin number */
-    nv::gpio::GpioPin pwrdis_pin;
+    nv::gpio::GpioPin pwrdis_pin = nv::gpio::InvalidGpioPin;
 
     /** @brief 12V power enable control pin - output (active low) */
-    nv::gpio::GpioPort pwren_l_port;
+    nv::gpio::GpioPort pwren_l_port = nv::gpio::InvalidGpioPort;
     /** @brief 12V power enable control pin number */
-    nv::gpio::GpioPin pwren_l_pin;
+    nv::gpio::GpioPin pwren_l_pin = nv::gpio::InvalidGpioPin;
 
     /** @brief LED tristate control pin - output
      *
@@ -59,9 +59,9 @@ struct E1sOutputPins
      * - Low = blue LED on
      * - High-Z = amber LED on
      */
-    nv::gpio::GpioPort led_tristate_ctrl_port;
+    nv::gpio::GpioPort led_tristate_ctrl_port = nv::gpio::InvalidGpioPort;
     /** @brief LED tristate control pin number */
-    nv::gpio::GpioPin led_tristate_ctrl_pin;
+    nv::gpio::GpioPin led_tristate_ctrl_pin = nv::gpio::InvalidGpioPin;
 };
 
 /**
@@ -74,9 +74,14 @@ struct E1sOutputPins
 struct E1sInputPins
 {
     /** @brief Drive presence detection pin - input (active low) */
-    nv::gpio::GpioPort prsnt_l_port;
+    nv::gpio::GpioPort prsnt_l_port = nv::gpio::InvalidGpioPort;
     /** @brief Drive presence detection pin number */
-    nv::gpio::GpioPin prsnt_l_pin;
+    nv::gpio::GpioPin prsnt_l_pin = nv::gpio::InvalidGpioPin;
+
+    /** @brief PCIE PERST# pin - input (active low) */
+    nv::gpio::GpioPort perst_l_port = nv::gpio::InvalidGpioPort;
+    /** @brief PCIE PERST# pin number */
+    nv::gpio::GpioPin perst_l_pin = nv::gpio::InvalidGpioPin;
 
     /** @brief ADC peripheral for power good monitoring */
     sys::adc::AdcPeripheral pgood_peripheral;

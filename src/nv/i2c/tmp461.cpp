@@ -18,6 +18,8 @@
 #include "nv/i2c/tmp461.h"
 #include "nv/nv.h"
 
+// The class and APIs can be reused for Onsemi Nct72.
+
 using namespace nv::i2c;
 
 Tmp461::Tmp461(Port port, uint8_t address, nv::telemetry::TelemId item)

@@ -18,6 +18,22 @@
 
 #include "nv/ahs/hssm.h"
 #include "nv/gpio/driver.h"
+#include "nv/logger/common.h"
+#include "nv/logger/log.h"
+#include NV_IPC_CONFIG_H
+
+#ifndef ENABLE_CLK_EN_L_REVERSE_POLARITY
+constexpr static bool EnableClkEnLReversePolarity = false;
+#else
+constexpr static bool EnableClkEnLReversePolarity = ENABLE_CLK_EN_L_REVERSE_POLARITY ? true
+                                                                                     : false;
+#endif
+
+#ifndef ENABLE_PERSTL_ACTIVE_HIGH
+constexpr static bool EnablePerstLActiveHigh = false;
+#else
+constexpr static bool EnablePerstLActiveHigh = ENABLE_PERSTL_ACTIVE_HIGH ? true : false;
+#endif
 
 namespace nv::ahs {
 
@@ -31,16 +47,12 @@ namespace nv::ahs {
  * @param pin_config Pin configuration for the drive
  * @param pgood Initial power good status
  * @param prsntL Initial presence detection status
- * @param amberLed Initial amber LED status
- * @param blueLed Initial blue LED status
  * @param hotSwapEvent Pointer to hot swap event for notifications
  * @param driveNum Drive number identifier
  */
 E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
                        bool                   pgood,
                        bool                   prsntL,
-                       bool                   amberLed,
-                       bool                   blueLed,
                        nv::ipc::Event*        hotSwapEvent,
                        uint8_t                driveNum)
 : state(DriveDisabled)
@@ -52,7 +64,7 @@ E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
     init_pins();
 
     // Update state machine with initial conditions
-    updateStateMachine(pgood, prsntL, amberLed, blueLed);
+    updateStateMachine(pgood, prsntL, false);
 
     nv::info("Initialized drive %d hot swap controller.\n", _driveNum);
 }
@@ -80,7 +92,7 @@ E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
     init_pins();
 
     // Update state machine with default initial state (drive not present)
-    updateStateMachine(false, true, false, false);
+    updateStateMachine(false, true, false);
 
     nv::info("Initialized drive %d hot swap controller.\n", _driveNum);
 }
@@ -114,88 +126,61 @@ E1sHotSwap::E1sHotSwap() : state(), pinout(), _hotSwapEvent(), _driveNum()
  *
  * @param pgood Current power good status
  * @param prsntL Current presence detection status
- * @param amberLed Current amber LED status
- * @param blueLed Current blue LED status
  * @param timerDone true if a timer has expired, false otherwise
  */
-void E1sHotSwap::updateStateMachine(
-    bool pgood, bool prsntL, bool amberLed, bool blueLed, bool timerDone)
+void E1sHotSwap::updateStateMachine(bool pgood, bool prsntL, bool perstL, bool timerDone)
 {
     switch (state) {
         case DriveDisabled: {
-            // Check if drive has been inserted and power is available
-            if (!prsntL && !pgood) {
+            // Drive not present, waiting for drive to be inserted
+            if (prsntL) {
+                // Drive not present - stay in disabled state
+                state = DriveDisabled;
+            }
+            else if (!pgood) {
                 // Drive present but no power - enable power and wait for power good
                 state = WaitPgood;
                 // uncomment this to enable power fault state
                 // startTimer();
             }
-            else if (!prsntL && pgood) {
+            else if (pgood) {
                 // Drive present and power available - enable clocks and wait for stabilization
                 state = WaitClkStable;
                 startTimer();
             }
-            else if (prsntL) {
-                // Drive not present - stay in disabled state
-                // stay
-            }
-            else {
-                // coverity[dead_error_line] leaving this in case state conditions change
-                nv::error("Unexpected state change\n");
-            }
             break;
         }
         case WaitPgood: {
-            // Waiting for power good signal after enabling power
-            // Power fault detection is intentionally disabled
-            // TODO: Enable when fault recovery is implemented
-            timerDone = false;  // Override to disable fault timeout
+            // Drive present, waiting for power good
             if (prsntL) {
                 // Drive removed while waiting - return to disabled state
                 state = DriveDisabled;
             }
-            else if (!prsntL && pgood) {
+            else if (!pgood) {
+                // Still waiting for power good - stay in current state
+                state = WaitPgood;
+            }
+            else if (pgood) {
                 // Power good received - enable clocks and wait for stabilization
                 state = WaitClkStable;
                 startTimer();
             }
-            else if (!prsntL && !pgood && timerDone) {
-                // Power good timeout - transition to fault state
-                // coverity[dead_error_line] leaving this if we want to enable fault
-                state = Fault;
-            }
-            else if (!prsntL && !pgood && !timerDone) {
-                // Still waiting for power good - stay in current state
-                // stay
-            }
-            else {
-                // coverity[dead_error_line] leaving this in case state conditions change
-                nv::error("Unexpected state change\n");
-            }
             break;
         }
         case WaitClkStable: {
-            // Waiting for clock stabilization after enabling clocks
+            // Drive present, power good, waiting for clock stabilization
             if (prsntL) {
                 // Drive removed while waiting - return to disabled state
                 state = DriveDisabled;
             }
-            else if (!prsntL && pgood && timerDone) {
+            else if (!pgood) {
+                // Power good lost during clock stabilization - return to waiting for power good
+                state = WaitPgood;
+            }
+            else if (pgood && timerDone) {
                 // Clock stabilization complete and power good - enable PCIe and give control to
                 // host
                 state = DriveOn;
-            }
-            else if (!prsntL && !pgood && timerDone) {
-                // Power good lost during clock stabilization - transition to fault state
-                state = Fault;
-            }
-            else if (!prsntL && !timerDone) {
-                // Still waiting for clock stabilization - stay in current state
-                // stay
-            }
-            else {
-                // coverity[dead_error_line] leaving this in case state conditions change
-                nv::error("Unexpected state change\n");
             }
             break;
         }
@@ -205,48 +190,21 @@ void E1sHotSwap::updateStateMachine(
                 // Drive removed - return to disabled state
                 state = DriveDisabled;
             }
-            else if (!prsntL && !pgood) {
-                // Power good lost - transition to fault state
-                state = Fault;
-            }
-            else if (!prsntL && pgood) {
-                // Drive present and power good - stay operational
-                // stay
-            }
-            else {
-                // coverity[dead_error_line] leaving this in case state conditions change
-                nv::error("Unexpected state change\n");
+            else if (!pgood) {
+                // Power good lost - return to waiting for power good
+                state = WaitPgood;
             }
             break;
         }
         case Fault: {
             // Fault state - currently stays here forever
-
-            // Could implement retry timer for automatic recovery
-            /*
-            if (prsntL && retryAfterFaultTimerDone) {
-                state = DriveDisabled;
-            }
-            else if (!prsntL && pgood && retryAfterFaultTimerDone) {
-                state = WaitClkStable;
-                startTimer();
-            }
-            else if (!prsntL && !pgood && retryAfterFaultTimerDone) {
-                state = WaitPgood;
-                // startTimer();
-            }
-            else if (!prsntL && !retryAfterFaultTimerDone) {
-                // stay
-            }
-            else {
-                // coverity[dead_error_line] leaving this in case state conditions change
-                nv::error("Unexpected state change\n");
-            }
-            */
             break;
         }
         default: {
             nv::error("Invalid HSSM state %d\n", state);
+            nv::logger::error(logger::Event::AhsInvalidHotPlugState,
+                              {static_cast<uint8_t>(state)});
+            state = DriveDisabled;
             break;
         }
     }
@@ -254,7 +212,7 @@ void E1sHotSwap::updateStateMachine(
     // nv::info("Drive %d state: %x\n", _driveNum, state);  // DEBUG
 
     // Update all GPIO pins according to the new state
-    update_pins(amberLed, blueLed);
+    update_pins(perstL);
 }
 
 /**
@@ -263,17 +221,17 @@ void E1sHotSwap::updateStateMachine(
  * Sets the power, clock, reset, and LED pins based on the current
  * state of the hot swap state machine. Each state has specific pin
  * configurations to ensure proper drive operation and safety.
- *
- * @param amberLed Current amber LED status
- * @param blueLed Current blue LED status
  */
-void E1sHotSwap::update_pins(bool amberLed, bool blueLed)
+void E1sHotSwap::update_pins(bool perstL)
 {
     switch (state) {
         case DriveDisabled: {
             // Hold everything off - safe state for drive removal
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);     // PCIe reset asserted
-            set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, High);  // Clocks disabled
+            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
+            set_pin(pinout.clk_en_l_port,
+                    pinout.clk_en_l_pin,
+                    High,
+                    EnableClkEnLReversePolarity);                 // Clocks disabled
             set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
             set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable disabled
             set_leds(false, false);                                  // LEDs off
@@ -282,44 +240,59 @@ void E1sHotSwap::update_pins(bool amberLed, bool blueLed)
         case WaitPgood: {
             // Power enabled, waiting for power good signal
             set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still asserted
-            set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, High);  // Clocks still disabled
+            set_pin(pinout.clk_en_l_port,
+                    pinout.clk_en_l_pin,
+                    High,
+                    EnableClkEnLReversePolarity);                 // Clocks still disabled
             set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
             set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
-            // set_leds(amberLed, blueLed);                             // Could use actual LED
-            // states
             set_leds(true, false);  // Amber LED on to indicate power
             break;
         }
         case WaitClkStable: {
             // Power and clock enabled, waiting for stabilization
             set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still asserted
-            set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, Low);  // Clocks enabled
+            set_pin(pinout.clk_en_l_port,
+                    pinout.clk_en_l_pin,
+                    Low,
+                    EnableClkEnLReversePolarity);                 // Clocks enabled
             set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
             set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
-            set_leds(amberLed, blueLed);                            // Use actual LED states
+            set_leds(true, false);  // Amber LED on to indicate power
             break;
         }
         case DriveOn: {
             // Power, clock, and PCIe fully enabled
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, HiZ);    // PCIe reset deasserted
-            set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, Low);  // Clocks enabled
+            const PinState perstL_value = (EnablePerstLActiveHigh) ? High : HiZ;
+            const PinState perstL_state = (perstL) ? perstL_value : Low;
+            set_pin(pinout.perst_l_port, pinout.perst_l_pin, perstL_state);  // PCIe reset
+                                                                             // deasserted
+            set_pin(pinout.clk_en_l_port,
+                    pinout.clk_en_l_pin,
+                    Low,
+                    EnableClkEnLReversePolarity);                 // Clocks enabled
             set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable disabled
-                                                                     // (host control)
-            set_leds(amberLed, blueLed);                             // Use actual LED states
+            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+                                                                    // (host control)
+            set_leds(false, true);  // Blue LED on to indicate drive is on
             break;
         }
         case Fault: {
             // Fault state - hold everything off for safety
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);     // PCIe reset asserted
-            set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, High);  // Clocks disabled
+            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
+            set_pin(pinout.clk_en_l_port,
+                    pinout.clk_en_l_pin,
+                    High,
+                    EnableClkEnLReversePolarity);                 // Clocks disabled
             set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
             set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable disabled
-            set_leds(amberLed, blueLed);                             // Use actual LED states
+            set_leds(false, false);  // LEDs off to indicate fault
             break;
         }
         default: {
             nv::error("Invalid HSSM state %d\n", state);
+            nv::logger::error(logger::Event::AhsInvalidHotPlugPinState,
+                              {static_cast<uint8_t>(state)});
             break;
         }
     }
@@ -390,15 +363,27 @@ void E1sHotSwap::init_pins()
  * @param pin GPIO pin to control
  * @param pin_state Desired pin state (High, Low, or HiZ)
  */
-void E1sHotSwap::set_pin(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, PinState pin_state)
+void E1sHotSwap::set_pin(nv::gpio::GpioPort port,
+                         nv::gpio::GpioPin  pin,
+                         PinState           pin_state,
+                         bool               reverse_polarity)
 {
-    switch (pin_state) {
+    PinState actual_pin_state = pin_state;
+    if (reverse_polarity) {
+        actual_pin_state = (pin_state == Low) ? High : (pin_state == High) ? Low : pin_state;
+    }
+
+    switch (actual_pin_state) {
         case Low: {
             // Configure pin as output and drive low
             const nv::gpio::Status gpio_status = nv::gpio::Driver::init_pin(
                 port, pin, nv::gpio::Direction::Output, nv::gpio::GpioState::Low);
             if (gpio_status != nv::gpio::Status::Ok) {
                 nv::error("Error setting GPIO%d_%d to %d in HSSM\n", port, pin, pin_state);
+                nv::logger::error(logger::Event::AhsInvalidPinState,
+                                  {static_cast<uint8_t>(port),
+                                   static_cast<uint8_t>(pin),
+                                   static_cast<uint8_t>(pin_state)});
             }
             break;
         }
@@ -408,6 +393,10 @@ void E1sHotSwap::set_pin(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, PinStat
                 port, pin, nv::gpio::Direction::Output, nv::gpio::GpioState::High);
             if (gpio_status != nv::gpio::Status::Ok) {
                 nv::error("Error setting GPIO%d_%d to %d in HSSM\n", port, pin, pin_state);
+                nv::logger::error(logger::Event::AhsInvalidPinState,
+                                  {static_cast<uint8_t>(port),
+                                   static_cast<uint8_t>(pin),
+                                   static_cast<uint8_t>(pin_state)});
             }
             break;
         }
@@ -417,11 +406,19 @@ void E1sHotSwap::set_pin(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, PinStat
                 port, pin, nv::gpio::Direction::Input, nv::gpio::GpioState::Low);
             if (gpio_status != nv::gpio::Status::Ok) {
                 nv::error("Error setting GPIO%d_%d to %d in HSSM\n", port, pin, pin_state);
+                nv::logger::error(logger::Event::AhsInvalidPinState,
+                                  {static_cast<uint8_t>(port),
+                                   static_cast<uint8_t>(pin),
+                                   static_cast<uint8_t>(pin_state)});
             }
             break;
         }
         default: {
             nv::error("Setting invalid pin state %d for GPIO%d_%d\n", pin_state, port, pin);
+            nv::logger::error(logger::Event::AhsInvalidPinState,
+                              {static_cast<uint8_t>(port),
+                               static_cast<uint8_t>(pin),
+                               static_cast<uint8_t>(pin_state)});
             break;
         }
     }
@@ -442,6 +439,8 @@ void E1sHotSwap::startTimer()
     // Validate drive number is within event bit range
     if (_driveNum >= (sizeof(nv::ipc::Event::Bits) * 8)) {
         nv::error("Drive number %d exceeds event bit range\n", _driveNum);
+        nv::logger::error(logger::Event::AhsInvalidTimerEvent,
+                          {static_cast<uint8_t>(_driveNum)});
         return;
     }
 
@@ -449,6 +448,7 @@ void E1sHotSwap::startTimer()
     if (_hotSwapEvent->set(static_cast<nv::ipc::Event::Bits>(0x1U << _driveNum))
         != nv::ipc::Event::Status::Ok) {
         nv::error("Error setting drive timer event bits\n");
+        nv::logger::error(logger::Event::AhsTimerSetFail, {static_cast<uint8_t>(_driveNum)});
     }
 }
 

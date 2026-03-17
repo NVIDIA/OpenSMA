@@ -1,8 +1,12 @@
 #include "nv/ap_operation/ap_operation.h"
+#include "nv/debugtoken/debugtoken.h"
 #include "nv/i2c/lattice_driver.h"
+
+#include <array>
 #include <cstring>
 #include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/logger/log.h"
+#include "sys/i2c/utils.h"
 #include NV_IPC_CONFIG_H
 
 using namespace nv::ipc;
@@ -15,7 +19,7 @@ namespace nv::ap_operation {
 ApOperationErrorCode read_metadata_from_ap([[maybe_unused]] const uint32_t     start_address,
                                            [[maybe_unused]] std::span<uint8_t> data)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -34,7 +38,7 @@ ApOperationErrorCode read_metadata_from_ap([[maybe_unused]] const uint32_t     s
 ApOperationErrorCode read_image_from_ap([[maybe_unused]] const uint32_t     start_address,
                                         [[maybe_unused]] std::span<uint8_t> data)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -54,7 +58,7 @@ ApOperationErrorCode read_image_from_ap([[maybe_unused]] const uint32_t     star
 ApOperationErrorCode write_metadata_to_ap([[maybe_unused]] const uint32_t start_address,
                                           [[maybe_unused]] const std::span<const uint8_t>& data)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -74,7 +78,7 @@ ApOperationErrorCode write_metadata_to_ap([[maybe_unused]] const uint32_t start_
 ApOperationErrorCode write_image_to_ap([[maybe_unused]] const uint32_t start_address,
                                        [[maybe_unused]] const std::span<const uint8_t>& data)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -93,7 +97,7 @@ ApOperationErrorCode write_image_to_ap([[maybe_unused]] const uint32_t start_add
 ApOperationErrorCode read_data_from_ap([[maybe_unused]] const uint32_t     start_address,
                                        [[maybe_unused]] std::span<uint8_t> data)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -127,7 +131,7 @@ ApOperationErrorCode write_data_to_ap([[maybe_unused]] const uint32_t start_addr
 
 ApOperationErrorCode secure_boot_ap_fw_authenticate_prepare()
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -146,13 +150,11 @@ ApOperationErrorCode secure_boot_ap_fw_authenticate_prepare()
 ApOperationErrorCode secure_boot_ap_fw_authenticate_callback(
     [[maybe_unused]] const nv::spdm::crypto::CryptoStatus ap_auth_result)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
         nv::info("CPLD FW Auth Status at cold boot: %d\n", ap_auth_result);
-        nv::logger::info(nv::logger::Event::SpdmApAuthResult,
-                         {static_cast<uint8_t>(ap_auth_result)});
 
         auto& cpld = i2c::LatticeCpld::inst();
 
@@ -168,13 +170,16 @@ ApOperationErrorCode secure_boot_ap_fw_authenticate_callback(
             }
         }
 
+        // Sync debug token status after AP FW is ready
+        nv::debugtoken::sync_cpld_debug_token_on_boot();
+
         return ApOperationErrorCode::Success;
     }
 }
 
 ApOperationErrorCode pldm_update_ap_fw_prepare()
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -197,7 +202,7 @@ ApOperationErrorCode pldm_update_ap_fw_prepare()
 ApOperationErrorCode
 pldm_update_ap_fw_callback([[maybe_unused]] const nv::spdm::crypto::CryptoStatus ap_auth_result)
 {
-    if constexpr (CPLD_I2C_PORT == i2c::Port::End) {
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
     else {
@@ -210,6 +215,24 @@ pldm_update_ap_fw_callback([[maybe_unused]] const nv::spdm::crypto::CryptoStatus
 
         return ApOperationErrorCode::Success;
     }
+}
+
+ApOperationErrorCode modify_cpld_debug_status([[maybe_unused]] bool unlock)
+{
+    if constexpr (!i2c::LatticeCpld::is_enabled()) {
+        return ApOperationErrorCode::NotSupported;
+    }
+
+    const uint8_t value = (unlock) ? Cpld_User_Reg::MCU_UNLOCK_EN_UNLOCK
+                                   : Cpld_User_Reg::MCU_UNLOCK_EN_LOCK;
+
+    auto& cpld   = i2c::LatticeCpld::inst();
+    auto  status = cpld.write_debug_bit(value);
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
+    }
+
+    return ApOperationErrorCode::Success;
 }
 
 }  // namespace nv::ap_operation

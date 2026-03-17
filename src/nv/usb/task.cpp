@@ -70,20 +70,20 @@ Task::Task()
                    | UpdateRoutingTableBit | HidRxBit | WdtEventBit;
 
     // Add flashrom-related event bits if enabled
-    if constexpr (nv::ipc::EnableFlashrom) {
-        wait_bits = wait_bits | SpiRxBit | SpiTxBit | SpiTxDoneBit;
+    if constexpr (nv::ipc::EnableLstp) {
+        wait_bits = wait_bits | LstpRxBit | LstpTxBit | LstpTxDoneBit;
     }
 
     uint32_t init_status = 0;
-    if constexpr (nv::ipc::EnableFlashrom) {
+    if constexpr (nv::ipc::EnableLstp) {
         init_status = _driver.init(mctp_rx_buffer.data(),
                                    mctp_rx_buffer.data(),
                                    hid_rx_buffer.data(),
                                    hid_rx_buffer.data(),
                                    hid_ep0_buffer.data(),
-                                   spi_rx_buffer.data(),
-                                   spi_rx_buffer.data(),
-                                   &spi_rx_len);
+                                   lstp_rx_buffer.data(),
+                                   lstp_tx_buffer.data(),
+                                   &lstp_rx_len);
     }
     else {
         init_status = _driver.init(mctp_rx_buffer.data(),
@@ -98,6 +98,10 @@ Task::Task()
     }
 
     was_vbus_on = _driver.check_vbus();
+
+    if constexpr (nv::ipc::EnableLstp) {
+        _lstp_router.init();
+    }
 
     nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Usb);
 
@@ -134,35 +138,35 @@ Task::Task()
             hid_receive();
         }
 
-        /* Flashrom/SPI event handling */
-        if constexpr (nv::ipc::EnableFlashrom) {
-            /* SpiRxBit */
-            if (active_bits & SpiRxBit) {
-                _event.clear(SpiRxBit);
-                spi_receive();
+        /* LSTP event handling */
+        if constexpr (nv::ipc::EnableLstp) {
+            /* LstpRxBit */
+            if (active_bits & LstpRxBit) {
+                _event.clear(LstpRxBit);
+                lstp_receive();
             }
 
-            /* SpiTxBit */
-            if (active_bits & SpiTxBit) {
-                _event.clear(SpiTxBit);
-                tx_result = spi_transmit();
+            /* LstpTxBit */
+            if (active_bits & LstpTxBit) {
+                _event.clear(LstpTxBit);
+                tx_result = lstp_transmit();
 
                 if (tx_result == 0) {
-                    // if transmission is successful, disable SpiTxBit in wait_bits.
-                    wait_bits = disable_bit(wait_bits, SpiTxBit);
+                    // if transmission is successful, disable LstpTxBit in wait_bits.
+                    wait_bits = disable_bit(wait_bits, LstpTxBit);
                 }
             }
 
-            /* SpiTxDoneBit */
-            if (active_bits & SpiTxDoneBit) {
-                _event.clear(SpiTxDoneBit);
+            /* LstpTxDoneBit */
+            if (active_bits & LstpTxDoneBit) {
+                _event.clear(LstpTxDoneBit);
                 // enable tx
-                wait_bits = enable_bit(wait_bits, SpiTxBit);
+                wait_bits = enable_bit(wait_bits, LstpTxBit);
 
-                // Set SpiTxBit if tx queue not empty
-                auto& queue = ipc::Queue::make(ipc::QueueId::SpiToUsb);
+                // Set LstpTxBit if tx queue not empty
+                auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
                 if (queue.size() != 0) {
-                    (void)_event.set(EventBits::SpiTxBit);
+                    (void)_event.set(EventBits::LstpTxBit);
                 }
             }
         }
@@ -226,9 +230,9 @@ void Task::check_tx_done_status(uint32_t active_bits)
     }
 }
 
-void Task::recover_spi_endpoint()
+void Task::recover_lstp_endpoint()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
+    if constexpr (nv::ipc::EnableLstp) {
         // Clear the stuck endpoint
         _driver.recover_spi_endpoint();
     }
@@ -307,7 +311,11 @@ void Task::mctp_receive()
                         else if (entry.client == mctp::Client::DsI2c0
                                  || entry.client == mctp::Client::DsI2c1
                                  || entry.client == mctp::Client::DsI2c2
-                                 || entry.client == mctp::Client::DsI2c3) {
+                                 || entry.client == mctp::Client::DsI2c3
+                                 || entry.client == mctp::Client::DsI2c4
+                                 || entry.client == mctp::Client::DsI2c5
+                                 || entry.client == mctp::Client::DsI2c6
+                                 || entry.client == mctp::Client::DsI2c7) {
                             auto status = i2c::Task::tx(pkt);
                             if (status != i2c::Task::Status::Ok) {
                                 logger::error(logger::Event::UsbCannotSend,
@@ -390,49 +398,52 @@ void Task::hid_receive()
     }
 }
 
-uint8_t Task::spi_transmit()
+uint8_t Task::lstp_transmit()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
-        auto&              queue = ipc::Queue::make(ipc::QueueId::SpiToUsb);
-        std::span<uint8_t> item(spi_tx_buffer.data(), nv::ipc::UsbSpiMsgSize);
+    if constexpr (nv::ipc::EnableLstp) {
+        auto&              queue = ipc::Queue::make(ipc::QueueId::LstpTx);
+        std::span<uint8_t> item(lstp_tx_buffer.data(), nv::ipc::UsbLstpMsgSize);
 
         auto status = queue.recv(item, 100ms);
         if (status != ipc::Queue::Status::Ok) {
-            logger::error(logger::Event::UsbSpiQueueRecvError, {static_cast<uint8_t>(status)});
+            logger::error(logger::Event::UsbLstpQueueRecvError, {static_cast<uint8_t>(status)});
             return static_cast<uint8_t>(status);
         }
 
-        auto           spiTxHdr = nv::spi::FlashromMsgHdr_from(spi_tx_buffer);
+        auto           spiTxHdr = nv::spi::FlashromMsgHdr_from(lstp_tx_buffer);
         const uint16_t tx_len   = ((spiTxHdr->len_msb << 8) | spiTxHdr->len_lsb)
                               + nv::spi::Flashrom::SPI_HEADER_LEN;
         if (tx_len
             > (nv::spi::Flashrom::SPI_MAX_DATA_LEN + nv::spi::Flashrom::SPI_HEADER_LEN)) {
-            logger::error(logger::Event::UsbSpiWriteError, {static_cast<uint8_t>(0)});
+            logger::error(logger::Event::UsbLstpWriteError, {static_cast<uint8_t>(0)});
             return 1;  // Abort transmission on invalid length
         }
 
-        auto result = _driver.write_spi(spi_tx_buffer.begin(), tx_len);
+        auto result = _driver.write_spi(lstp_tx_buffer.begin(), tx_len);
         if (result != 0) {
-            logger::error(logger::Event::UsbSpiWriteError, {static_cast<uint8_t>(result)});
+            logger::error(logger::Event::UsbLstpWriteError, {static_cast<uint8_t>(result)});
         }
     }
     return 0;
 }
 
-void Task::spi_receive()
+void Task::lstp_receive()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
-        auto spiRxHdr = nv::spi::FlashromMsgHdr_from(spi_rx_buffer);
-        if ((spiRxHdr->cmdCode & nv::spi::Flashrom::CMD_CODE_MASK)
-            == nv::spi::FlashromCmdCode::SPI_CMD_CONFIG) {
-            recover_spi_endpoint();
-            clear_usb_spi_queue();
+    if constexpr (nv::ipc::EnableLstp) {
+        if constexpr (nv::lstp::EnableSpi) {
+            auto spiRxHdr = nv::spi::FlashromMsgHdr_from(lstp_rx_buffer);
+            if ((spiRxHdr->cmdCode & nv::spi::Flashrom::CMD_CODE_MASK)
+                == nv::spi::FlashromCmdCode::SPI_CMD_CONFIG) {
+                // For backward compatibility with Flashrom NV_SMA_SPI
+                recover_lstp_endpoint();
+                clear_usb_lstp_queue();
+            }
         }
-        std::span<uint8_t> item(spi_rx_buffer.data(), nv::ipc::UsbSpiMsgSize);
-        nv::spi::FlashromTask::to_spi(item);
+
+        _lstp_router.receive(lstp_rx_buffer, lstp_rx_len);
         auto error = _driver.enable_spi_rx();
         if (error) {
-            logger::error(logger::Event::UsbSpiRecvError, {static_cast<uint8_t>(error)});
+            logger::error(logger::Event::UsbLstpRecvError, {static_cast<uint8_t>(error)});
         }
     }
 }
@@ -504,13 +515,13 @@ void Task::clear_queue()
     }
 }
 
-void Task::clear_usb_spi_queue()
+void Task::clear_usb_lstp_queue()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
-        auto& queue = ipc::Queue::make(ipc::QueueId::SpiToUsb);
+    if constexpr (nv::ipc::EnableLstp) {
+        auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
         // Use a local buffer instead of instance member
-        std::array<uint8_t, nv::ipc::UsbSpiMsgSize> temp_buffer{};
-        std::span<uint8_t> item(temp_buffer.data(), nv::ipc::UsbSpiMsgSize);
+        std::array<uint8_t, nv::ipc::UsbLstpMsgSize> temp_buffer{};
+        std::span<uint8_t> item(temp_buffer.data(), nv::ipc::UsbLstpMsgSize);
 
         auto items_to_remove = queue.size();
 
@@ -577,11 +588,11 @@ usb::Status Task::set_hid_rx_event()
     return usb::Status::Ok;
 }
 
-usb::Status Task::set_spi_rx_event()
+usb::Status Task::set_lstp_rx_event()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
+    if constexpr (nv::ipc::EnableLstp) {
         auto& event        = Event::make(EventId::UsbTask);
-        auto  event_status = event.set(SpiRxBit);
+        auto  event_status = event.set(LstpRxBit);
 
         if (event_status != Event::Status::Ok) {
             return usb::Status::EventSetFail;
@@ -590,11 +601,11 @@ usb::Status Task::set_spi_rx_event()
     return usb::Status::Ok;
 }
 
-usb::Status Task::set_spi_tx_done_event()
+usb::Status Task::set_lstp_tx_done_event()
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
+    if constexpr (nv::ipc::EnableLstp) {
         auto& event        = Event::make(EventId::UsbTask);
-        auto  event_status = event.set(SpiTxDoneBit);
+        auto  event_status = event.set(LstpTxDoneBit);
 
         if (event_status != Event::Status::Ok) {
             return usb::Status::EventSetFail;
@@ -692,20 +703,20 @@ void Task::wdt_notify()
     }
 }
 
-usb::Status Task::to_usbSpi(std::span<uint8_t>& item)
+usb::Status Task::to_usbLstp(std::span<uint8_t>& item)
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
-        auto& queue = Queue::make(QueueId::SpiToUsb);
+    if constexpr (nv::ipc::EnableLstp) {
+        auto& queue = Queue::make(QueueId::LstpTx);
         auto& event = Event::make(EventId::UsbTask);
 
         auto queue_status = queue.send(item, 100ms);
         if (queue_status != Queue::Status::Ok) {
-            logger::error(logger::Event::UsbSpiQueueSendError,
+            logger::error(logger::Event::UsbLstpQueueSendError,
                           {static_cast<uint8_t>(queue_status)});
             return usb::Status::QueueSendFail;
         }
 
-        event.set(SpiTxBit);
+        event.set(LstpTxBit);
     }
     return usb::Status::Ok;
 }

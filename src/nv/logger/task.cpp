@@ -26,6 +26,7 @@
 #include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
 #include "nv/watchdog/runtime.h"
 #include "sys/flash/flash_config.h"
+#include "nv/fw_parser/fw_parser_mcu.h"
 #include NV_IPC_CONFIG_H
 
 using namespace nv::logger;
@@ -87,10 +88,22 @@ void Task::entrypoint(void* params)
 Status
 Task::request(const Item& item, Item& resp_item, bool wait, nv::ipc::Queue::Usecs timeout)
 {
+    const bool is_in_isr = sys::ipc::is_in_isr();
+
+    if (is_in_isr) {
+        timeout = nv::ipc::Queue::Usecs(0);
+        wait    = false;
+    }
+
     auto queue_id     = ipc::QueueId::LogRequest;
     auto request_item = ipc::Queue::Item(std::bit_cast<uint8_t*>(&item), sizeof(item));
     ipc::Queue::Status request_status{};
-    request_status = ipc::Queue::make(queue_id).send(request_item, timeout);
+    if (is_in_isr) {
+        request_status = ipc::Queue::make(queue_id).send_isr(request_item);
+    }
+    else {
+        request_status = ipc::Queue::make(queue_id).send(request_item, timeout);
+    }
 
     if (request_status != ipc::Queue::Status::Ok) {
         if ((nv::common::to_underlying(item.direction)
@@ -286,28 +299,16 @@ bool Task::log_signing_class()
     using namespace nv::ipc;
     EventData data{};
 
-    const uint32_t CertBlockOffset = Slot0FwAddress + NV_PLDM_CERT_BLOCK_OFFSET;
-
-    // get cert block offset
-    std::array<uint8_t, 4> buffer{};
-    const ipc::Queue::Item item(buffer.begin(), buffer.end());
-
-    if (flash::Flash::read(CertBlockOffset, item, std::chrono::seconds(1))
-        != flash::Status::Ok) {
+    auto key_version_parse_result = nv::fw_parser::mcu::get_image_signing_key_version(
+        nv::fw_parser::mcu::ParsingFwType::ActiveSlot);
+    if (!key_version_parse_result.has_value()) {
         return false;
     }
-
-    // read key index
-    const uint32_t         keyIndexOffset = array_to_u32(buffer) + NV_PLDM_KEY_IDX_OFFSET;
-    std::array<uint8_t, 1> key_index_buffer{};
-    const ipc::Queue::Item key_item(key_index_buffer.begin(), key_index_buffer.end());
-
-    if (flash::Flash::read(keyIndexOffset, key_item, std::chrono::seconds(1))
-        != flash::Status::Ok) {
+    // for backward compatibility, the key version is limited to 255
+    if (*key_version_parse_result > std::numeric_limits<uint8_t>::max()) {
         return false;
     }
-
-    data[0] = key_index_buffer[0];
+    data[0] = *key_version_parse_result;
 
     const Item SigningLog{
         .event = Event::SigningClass.unique_id, .level = Level::Info, .data = data};

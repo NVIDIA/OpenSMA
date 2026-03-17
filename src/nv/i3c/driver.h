@@ -30,7 +30,8 @@ namespace nv::i3c {
 class Driver : protected sys::i3c::Driver
 {
 public:
-    static constexpr size_t  BufferSize    = 70;
+    constexpr static size_t BufferSize = nv::lstp::EnableI2c ? 519 : 71;
+
     static constexpr size_t  IbiDataSize   = 8;
     static constexpr uint8_t TargetAddress = 0x31;
     using I3cBuffer                        = std::array<uint8_t, Driver::BufferSize>;
@@ -84,6 +85,9 @@ public:
     bool ocp_query_interface_mastering(uint8_t address, bool& enable);
     bool ocp_enable_interface_mastering(uint8_t address);
     bool gpu_query_i3c_mode(uint8_t address, bool& i3c);
+    bool gpu_configure_cms1(uint8_t address);
+    bool gpu_program_cms1(uint8_t address, std::span<uint8_t> buffer);
+    bool gpu_read_cms1(uint8_t address, std::span<uint8_t> buffer);
 
     uint32_t                  _error_log_count{};
     static constexpr uint32_t ErrorLogThreshold = 100;

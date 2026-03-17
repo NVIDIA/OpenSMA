@@ -45,9 +45,7 @@ constexpr uint32_t DBG_TOKEN_NONCE_INVALID = 0xFF;
 
 typedef struct [[gnu::packed]]
 {
-    uint8_t was_installed;   // Byte 0: Was a Debug token ever installed? Bit 1: Is Debug token
-                             // currently installed?
-    uint32_t install_count;  // Byte 1~4: Debug token installation counter little endian
+    uint8_t currently_installed;  // Byte 0: Is Debug token currently installed?
 } DebugTokenStatsT;
 
 /// General integer constants
@@ -67,14 +65,14 @@ enum class Type : uint32_t
 {
     Invalid      = 0x00,  ///< UNDEFINED
     FlashDebugFw = 0x01,  ///< Debug firmware
-    OtpDumpEn    = 0x02,  ///< Token to enable dumping of OTP data
-    RasDebug     = 0x04,  ///< RAS Debug token
+    McuDebug     = 0x02,  ///< MCU debug capability token
+    CpldDebug    = 0x04,  ///< CPLD debug capability token
     Max                   ///< Represents the maximum value for token types
 };
 
 constexpr uint32_t DebugOptionsFlags = static_cast<uint32_t>(Type::FlashDebugFw)
-                                     | static_cast<uint32_t>(Type::OtpDumpEn)
-                                     | static_cast<uint32_t>(Type::RasDebug);
+                                     | static_cast<uint32_t>(Type::McuDebug)
+                                     | static_cast<uint32_t>(Type::CpldDebug);
 
 /// Valid hash sizes
 enum class HashSize : uint16_t
@@ -140,21 +138,52 @@ constexpr uint32_t TlvTokenRequestSize = 65;
 
 // Debug Token Type and Subtype definitions for 0x0016 TLV
 // Token Type/Subtype pairs are 2 bytes each: [Type|Subtype]
-constexpr uint8_t  DebugTokenTypeDebugFw      = 0x1;  // Debug FW token type
-constexpr uint8_t  DebugTokenSubtypeDebugFw   = 0x0;  // Debug FW subtype
-constexpr uint8_t  DebugTokenTypeOtpDump      = 0x2;  // OTP dump enable token type
-constexpr uint8_t  DebugTokenSubtypeOtpDump   = 0x0;  // OTP dump enable subtype
-constexpr uint8_t  DebugTokenTypeRasDebug     = 0x4;  // RAS Debug token type
-constexpr uint8_t  DebugTokenSubtypeRasDebug  = 0x0;  // RAS Debug subtype
-constexpr uint16_t TokenTypeSubtypeListLength = 8;    // Length of type/subtype list (8 bytes)
+constexpr uint8_t DebugTokenTypeDebugFw   = 0x01;  // Debug FW token type
+constexpr uint8_t DebugTokenTypeMcuDebug  = 0x02;  // MCU debug capability token type
+constexpr uint8_t DebugTokenTypeCpldDebug = 0x04;  // CPLD debug capability token type
 
-// Bit positions for each token type (for bitmask operations)
-constexpr uint32_t DebugTokenBitPosDebugFw  = 0;  // Bit 0 = 0x1
-constexpr uint32_t DebugTokenBitPosOtpDump  = 1;  // Bit 1 = 0x2
-constexpr uint32_t DebugTokenBitPosRasDebug = 2;  // Bit 2 = 0x4
+// Default subtypes for each token type
+constexpr uint8_t DebugTokenSubtypeDebugFw   = 0x00;  // Default subtype for Debug FW
+constexpr uint8_t DebugTokenSubtypeMcuDebug  = 0x00;  // Default subtype for MCU debug
+constexpr uint8_t DebugTokenSubtypeCpldDebug = 0x00;  // Default subtype for CPLD debug
+
+// Subtypes for FlashDebugFw (0x01) token type
+constexpr uint8_t DebugTokenSubtypeNone   = 0x00;  // No specific subtype
+constexpr uint8_t DebugTokenSubtypeMcuFw  = 0x01;  // MCU firmware debug
+constexpr uint8_t DebugTokenSubtypeCpldFw = 0x02;  // CPLD firmware debug
+
+// Subtypes for CpldDebug (0x04) token type
+constexpr uint8_t DebugTokenSubtypeCpldUnlockEn = 0x01;  // CPLD unlock enable
+
+// Valid subtypes bitmask for each token type
+constexpr uint32_t DebugTokenSubtypeValidMaskDebugFw = DebugTokenSubtypeMcuFw
+                                                     | DebugTokenSubtypeCpldFw;
+constexpr uint32_t DebugTokenSubtypeValidMaskMcuDebug = 0;  // No subtypes defined yet for MCU
+                                                            // debug
+constexpr uint32_t DebugTokenSubtypeValidMaskCpldDebug = DebugTokenSubtypeCpldUnlockEn;
+
+constexpr uint32_t get_subtype_valid_mask(uint32_t token_type)
+{
+    switch (token_type) {
+        case DebugTokenTypeDebugFw  : return DebugTokenSubtypeValidMaskDebugFw;
+        case DebugTokenTypeMcuDebug : return DebugTokenSubtypeValidMaskMcuDebug;
+        case DebugTokenTypeCpldDebug: return DebugTokenSubtypeValidMaskCpldDebug;
+        default                     : return 0;
+    }
+}
+
+constexpr uint16_t TokenTypeSubtypePairSize   = 8;  // Size of each type/subtype pair
+constexpr uint16_t MaxTokenTypeSubtypePairs   = 4;  // Maximum number of type/subtype pairs
+constexpr uint16_t TokenTypeSubtypeListLength = MaxTokenTypeSubtypePairs
+                                              * TokenTypeSubtypePairSize;
+
+// Bit positions for each token type
+constexpr uint32_t DebugTokenBitPosDebugFw   = 0;  // Bit 0 = 0x1
+constexpr uint32_t DebugTokenBitPosMcuDebug  = 1;  // Bit 1 = 0x2
+constexpr uint32_t DebugTokenBitPosCpldDebug = 2;  // Bit 2 = 0x4
 
 // Maximum number of supported token types
-constexpr uint32_t MaxTokenTypes = 3;  // FlashDebugFw, OtpDumpEn, RasDebug
+constexpr uint32_t MaxTokenTypes = 3;  // FlashDebugFw, McuDebug, CpldDebug
 
 // SKU Information values
 constexpr uint8_t McuDebugMode = 0x1;  // Debug mode SKU
@@ -315,6 +344,20 @@ struct [[gnu::packed]] TlvTokenConfig
     uint16_t value  = 0;                     ///< Token configuration (initialized to 0)
 };
 
+// Token Type/Subtype pair structure
+struct [[gnu::packed]] TokenTypeSubtypePair
+{
+    uint32_t type    = 0;  ///< Token type
+    uint32_t subtype = 0;  ///< Token subtype bitmap
+};
+
+struct [[gnu::packed]] TlvTokenTypeSubtypeList
+{
+    TlvType              type   = TlvType::TokenTypeSubtypeList;  ///< Type: 0x0016
+    uint16_t             length = TokenTypeSubtypeListLength;  ///< Length of type/subtype pairs
+    TokenTypeSubtypePair pairs[MaxTokenTypeSubtypePairs] = {};  ///< Type/Subtype pairs
+};
+
 // Generic TLV structure for variable-length data
 struct [[gnu::packed]] TlvData
 {
@@ -450,6 +493,15 @@ TokenErrorCode erase_installed_dbg_token_tlv();
 TokenErrorCode check_debug_token_type_enabled(Type token_type);
 
 /**
+ *  Check if debug token with specific subtype is enabled.
+ *
+ *  @param[in] token_type    Type of token
+ *  @param[in] token_subtype Subtype to verify
+ *  @return TokenErrorCode for standardized error reporting
+ */
+TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token_subtype);
+
+/**
  *  TLV version: This function installs debug token to spi flash upon reciept as mctp vdm
  *  message payload. Only after successful authentication will a token get installed
  *  in mcufw internal spi flash.
@@ -472,5 +524,15 @@ TokenErrorCode auth_token_tlv(
     const std::span<const uint8_t>& token_payload,
     const std::array<uint8_t, static_cast<uint8_t>(debugtoken::HashSize::Mcu384Pubkey)>&
         pubkey);
+
+/**
+ * synchronize debug token status to CPLD on system boot
+ * This ensures:
+ * 1. Token installed during normal operation -> CPLD bit is set
+ * 2. Token erased during normal operation -> CPLD bit is cleared
+ * 3. Token exists during secure boot -> CPLD bit is synced after CPLD ready
+ * 4. Token erased during MCU recovery (CPLD not reset) -> CPLD bit is cleared on boot
+ */
+void sync_cpld_debug_token_on_boot();
 
 }  // namespace nv::debugtoken

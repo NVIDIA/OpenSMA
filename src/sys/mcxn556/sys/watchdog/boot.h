@@ -64,7 +64,8 @@ protected:
         uint8_t          slot0_runtime_flag : 2;
         uint8_t          slot1_runtime_flag : 2;
         uint8_t          target_boot_slot   : 2;
-        uint16_t         rvsd               : 6;
+        uint16_t         TotalSwitchTime    : 3;
+        uint16_t         Reserved           : 3;
     };
 
     static_assert(sizeof(BootFailedRecord) == sizeof(uint32_t),

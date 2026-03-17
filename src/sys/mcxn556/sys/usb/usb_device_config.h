@@ -20,9 +20,10 @@
 #ifndef _USB_DEVICE_CONFIG_H_
 #define _USB_DEVICE_CONFIG_H_
 
-#include NV_IPC_CONFIG_H
+// All USB configuration (endpoints, classes, interfaces) calculated here
+#include "usb_config_wrapper.h"
 
-/* USB PHY condfiguration */
+/* USB PHY configuration */
 #define BOARD_USB_PHY_D_CAL     (0x04U)
 #define BOARD_USB_PHY_TXCAL45DP (0x07U)
 #define BOARD_USB_PHY_TXCAL45DM (0x07U)
@@ -32,13 +33,18 @@
 #ifndef USB_DEVICE_CONFIG_HID
 #define USB_DEVICE_CONFIG_HID (1U)
 #endif
-#if ((defined(USB_CONFIG_NV_SMA_SPI)) && (USB_CONFIG_NV_SMA_SPI > 0U))
+#if ((defined(USB_CONFIG_LSTP)) && (USB_CONFIG_LSTP > 0U))
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)
 #endif
 #endif
+#if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)
+#ifndef USB_DEVICE_CONFIG_CDC_ACM
+#define USB_DEVICE_CONFIG_CDC_ACM (1U)
+#endif
+#endif
 #define USB_DEVICE_CONFIG_MCTP          (1U)
-#define USB_DEVICE_CONFIG_KHCI          (0U)
-#define USB_DEVICE_CONFIG_EHCI          (1U)
+#define USB_DEVICE_CONFIG_KHCI          (0U)  // full speed usb driver (12Mbps)
+#define USB_DEVICE_CONFIG_EHCI          (1U)  // high speed usb driver (480Mbps)
 #define USB_DEVICE_CONFIG_LPCIP3511FS   (0U)
 #define USB_DEVICE_CONFIG_LPCIP3511HS   (0U)
 #define USB_DEVICE_CONFIG_REMOTE_WAKEUP (1U)
@@ -51,8 +57,7 @@
 /*! @brief Whether device is self power. 1U supported, 0U not supported */
 #define USB_DEVICE_CONFIG_SELF_POWER (1U)
 
-/*! @brief How many endpoints are supported in the stack. */
-#define USB_DEVICE_CONFIG_ENDPOINTS (4U)
+/* USB_DEVICE_CONFIG_ENDPOINTS is defined in usb_config_wrapper.h */
 
 #if ((defined(USB_DEVICE_CONFIG_EHCI)) && (USB_DEVICE_CONFIG_EHCI > 0U))
 /*! @brief How many the DTD are supported. */

@@ -22,7 +22,7 @@ INCLUDES += $(MCTP_CPP_MODULE_SRC_PATH)
 # Add PDK CMN Source Files excluding platforms and test files
 SOURCES += $(shell find $(MCTP_CPP_MODULE_SRC_PATH) \
            \( -name "*.adb" -or -name "*.ads" -or -name "*.cpp" \) \
-           -not -name "*-test.adb" -not -name "*-test.ads" -not -name "*-test.cpp" -not -name "main.cpp" \
+           -not -name "*-test.adb" -not -name "*-test.ads" -not -name "*-test.cpp" -not -name "main.cpp" -not -name "main.adb" \
            -not -path "*/platforms/*" )
 		   
 # Separate platform specific sources depending on the platform

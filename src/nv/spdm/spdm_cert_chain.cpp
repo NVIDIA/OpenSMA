@@ -445,7 +445,8 @@ NV_PRIVILEGED_FUNCTION uint16_t get_l4_csr_len_impl()
         nv::info("csr size invalid %d", (csr_header.hdr_size + 0));
         return 0;
     }
-    return csr_header.hdr_size + sizeof(nv::spdm::certlib::CsrHeader);
+    return csr_header.hdr_size + sizeof(nv::spdm::certlib::CsrHeader)
+         + FmcOrdinalNumberStructSize;
 }
 
 uint16_t read_l4_csr(std::span<uint8_t>& input_buffer)
@@ -498,7 +499,14 @@ NV_PRIVILEGED_FUNCTION uint16_t read_l4_csr_impl(std::span<uint8_t>& input_buffe
     if (cert_len > input_buffer.size() || cert_len > csr.size()) {
         return 0;
     }
-    std::copy(csr.begin(), csr.begin() + cert_len, input_buffer.begin());
+    auto copy_it = std::copy(
+        csr.begin(), csr.begin() + cert_len - FmcOrdinalNumberStructSize, input_buffer.begin());
+    // append the fmc ordinal number to the input buffer
+    // NOLINTBEGIN
+    auto& fmc_ordinal_number = *std::bit_cast<std::array<uint8_t, FmcOrdinalNumberStructSize>*>(
+        reinterpret_cast<uint8_t*>(FmcOrdinalNumberRamAddr));
+    // NOLINTEND
+    std::copy(fmc_ordinal_number.begin(), fmc_ordinal_number.end(), copy_it);
     return cert_len;
 }
 
@@ -683,17 +691,16 @@ bool construct_l5_cert_impl(nv::spdm::certlib::CertArray& l5_cert_array)
 
 bool generate_l5_cert()
 {
-    auto l5_cert_array = nv::spdm::certlib::CertArray();
+    auto l5_cert_array          = nv::spdm::certlib::CertArray();
+    bool generate_chain_success = true;
     if (!construct_l5_cert(l5_cert_array)) {
-        erase_l5_cert();
-        return false;
+        generate_chain_success = false;
     }
     // check dev Ik is successful generated.
     if (get_l4_cert_len() == 0) {
         spdm_log_helper(nv::logger::Event::SpdmDevAkGenerateFail,
                         static_cast<uint8_t>(DevAkGenerateErrorCode::L4CertNotFound));
-        erase_l5_cert();
-        return false;
+        generate_chain_success = false;
     }
 
     nv::spdm::certlib::CertArray l4_cert{};
@@ -702,11 +709,10 @@ bool generate_l5_cert()
     if (!nv::spdm::certlib::validate_certificate_signature(l4_cert, l5_cert_array)) {
         spdm_log_helper(nv::logger::Event::SpdmDevAkGenerateFail,
                         static_cast<uint8_t>(DevAkGenerateErrorCode::VerifySignatureFail));
-        erase_l5_cert();
-        return false;
+        generate_chain_success = false;
     }
 
-    return true;
+    return generate_chain_success;
 }
 
 bool read_devik_request(nv::spdm::ik::DevIkRequest&   dev_ik_req,
@@ -754,7 +760,10 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
 {
     if (!nv::ipc::Supervisor::inst()
              .task(nv::ipc::TaskId::Spdm)
-             .checking_parameter_is_from_self_stack(dev_ik_req, l3_cert_array)) {
+             .checking_parameter_is_from_self_stack(dev_ik_req, l3_cert_array)
+        && !nv::ipc::Supervisor::inst()
+                .task(nv::ipc::TaskId::Mctp)
+                .checking_parameter_is_from_self_stack(dev_ik_req, l3_cert_array)) {
         return false;
     }
     // NOLINTBEGIN
@@ -762,8 +771,10 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
         reinterpret_cast<uint8_t*>(get_virtual_address(nv::spdm::cert::L3CertPhyAddr)));
     // NOLINTEND
 
+    bool read_devik_success = true;
     if (cert_buffer.size() > l3_cert_array.size()) {
-        return false;
+        read_devik_success = false;
+        return read_devik_success;
     }
 
     std::copy(cert_buffer.begin(), cert_buffer.end(), l3_cert_array.begin());
@@ -778,7 +789,7 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
     if (dda_ordinal_number == 0) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberNotFound));
-        return false;
+        read_devik_success = false;
     }
 
     // check the dda ordinal number of l3 cert in flash is the same on efuse
@@ -787,7 +798,7 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
     if (dda_ordinal_number != DdaOrdinalNumberFlash) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberMismatch));
-        return false;
+        read_devik_success = false;
     }
 
     for (uint8_t& dda_char : std::ranges::reverse_view(dev_ik_req.dda_ordinal_number)) {
@@ -823,7 +834,7 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
     std::span<const uint8_t> l3_cert_span(l3_cert_array);
     dev_ik_req.authority_key_identifier = nv::spdm::certlib::find_subject_key_identifier(
         l3_cert_span);
-    return true;
+    return read_devik_success;
 }
 
 bool construct_l4_cert(nv::spdm::ik::DevIkHelper&    dev_ik_helper,
@@ -888,11 +899,12 @@ NV_PRIVILEGED_FUNCTION bool construct_l4_cert_impl(nv::spdm::ik::DevIkHelper&   
 
 bool generate_l4_cert()
 {
+    bool generate_chain_success = true;
     // check L3 is exist
     if (nv::spdm::cert::get_l3_cert_len() == 0) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::L3CertNotFound));
-        return false;
+        generate_chain_success = false;
     }
 
     // dda_ordinal_number from otp
@@ -903,14 +915,14 @@ bool generate_l4_cert()
         != nv::flash::Flash::read_efuse(DdaOrdinalEfuseAddr, dda_ordinal_number)) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberReadEfuseFail));
-        return false;
+        generate_chain_success = false;
     }
 
     auto l3_cert_array = nv::spdm::certlib::CertArray();
 
     nv::spdm::ik::DevIkRequest dev_ik_req{};
     if (!read_devik_request(dev_ik_req, dda_ordinal_number, l3_cert_array)) {
-        return false;
+        generate_chain_success = false;
     }
     // dev_ik_req.subject_key_identifier
     // calculate the hash value of pub key
@@ -944,7 +956,7 @@ bool generate_l4_cert()
                     nv::logger::Event::SpdmDevIkGenerateFail,
                     static_cast<uint8_t>(DevIkGenerateErrorCode::SignatureReadEfuseFail),
                     static_cast<uint8_t>(EfuseAddr));
-                return false;
+                generate_chain_success = false;
             }
             auto opt_data_view = *std::bit_cast<
                 std::array<uint8_t, sizeof(decltype(opt_data))>*>(&opt_data);
@@ -1002,7 +1014,7 @@ bool generate_l4_cert()
                     nv::logger::Event::SpdmDevIkGenerateFail,
                     static_cast<uint8_t>(DevIkGenerateErrorCode::SignatureReadEfuseFail),
                     static_cast<uint8_t>(EfuseAddr));
-                return false;
+                generate_chain_success = false;
             }
             auto opt_data_view = *std::bit_cast<
                 std::array<uint8_t, sizeof(decltype(opt_data))>*>(&opt_data);
@@ -1065,26 +1077,28 @@ bool generate_l4_cert()
     auto l4_cert_array = nv::spdm::certlib::CertArray();
 
     if (!construct_l4_cert(dev_ik_helper, l4_cert_array)) {
-        erase_l4_cert();
-        return false;
+        generate_chain_success = false;
     }
     if (!nv::spdm::certlib::validate_certificate_signature(l3_cert_array, l4_cert_array)) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::VerifySignatureFail));
-        erase_l4_cert();
-        return false;
+        generate_chain_success = false;
     }
-    return true;
+    return generate_chain_success;
 }
 
 void erase_l4_cert()
 {
-    nv::spdm::cert::erase_l4_cert_svc();
+    // not erase l4 cert for now
+    // nv::spdm::cert::erase_l4_cert_svc();
+    return;
 }
 
 void erase_l5_cert()
 {
-    nv::spdm::cert::erase_l5_cert_svc();
+    // not erase l5 cert for now
+    // nv::spdm::cert::erase_l5_cert_svc();
+    return;
 }
 
 NV_SYS_CALL void erase_l4_cert_svc()
@@ -1202,7 +1216,10 @@ NV_PRIVILEGED_FUNCTION uint16_t read_l4_cert_impl(std::span<uint8_t>& input_buff
 {
     if (!nv::ipc::Supervisor::inst()
              .task(nv::ipc::TaskId::Spdm)
-             .checking_parameter_is_from_self_stack(input_buffer)) {
+             .checking_parameter_is_from_self_stack(input_buffer)
+        && !nv::ipc::Supervisor::inst()
+                .task(nv::ipc::TaskId::Mctp)
+                .checking_parameter_is_from_self_stack(input_buffer)) {
         return 0;
     }
     auto cert_len = get_l4_cert_len();
@@ -1263,7 +1280,10 @@ NV_PRIVILEGED_FUNCTION uint16_t read_l5_cert_impl(std::span<uint8_t>& input_buff
 {
     if (!nv::ipc::Supervisor::inst()
              .task(nv::ipc::TaskId::Spdm)
-             .checking_parameter_is_from_self_stack(input_buffer)) {
+             .checking_parameter_is_from_self_stack(input_buffer)
+        && !nv::ipc::Supervisor::inst()
+                .task(nv::ipc::TaskId::Mctp)
+                .checking_parameter_is_from_self_stack(input_buffer)) {
         return 0;
     }
     auto cert_len = get_l5_cert_len();
@@ -1418,12 +1438,7 @@ uint16_t get_digest_for_slot(uint8_t slot_num, uint8_t* digest)
 
 uint8_t get_slot_mask()
 {
-    // check the L3~L5 cert are exist.
-    if (get_l5_cert_len() != 0 && get_l4_cert_len() != 0 && get_l3_cert_len() != 0) {
-        return 0x1u;
-    }
-    // no cert avaliable
-    return 0x0u;
+    return nv::spdm::Task::get_task().certificate_chain_slot_mask;
 }
 
 bool valid_slot(uint8_t slot_id)

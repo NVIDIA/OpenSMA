@@ -70,8 +70,7 @@ enum class Register
  *        all pins defined as unUsed/vrPort always have an internal variable in the iox reg
  * table
  */
-static constexpr nv::gpio::GpioPort vrPort = ~0;
-static constexpr nv::gpio::GpioPort unUsed = vrPort;
+constexpr static nv::gpio::GpioPort vrPort = nv::gpio::InvalidGpioPort;
 
 constexpr static uint8_t regNum = 8;
 constexpr static uint8_t pinNum = 16;

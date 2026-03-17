@@ -16,8 +16,27 @@
  * limitations under the License.
  */
 #include "sys/spdm/platform_measurement.h"
+#include <bit>
 
 namespace sys::spdm {
+
+std::array<uint8_t, 16> get_boot_rom_cmac_in_kernel()
+{
+#ifdef CPU_MCXN547VDF
+    return {};
+#else
+
+#define otp_read ((uint32_t(*)(uint8_t word, uint32_t * value))0x1303ab5du)
+    constexpr uint32_t      ROM_PATCH_CMAC_CRC_FUSE_INDEX0 = 21U;
+    std::array<uint32_t, 4> cmac{};
+
+    /* Read ROM patch CMAC from OTP */
+    for (uint32_t i = 0u; i < 4u; i++) {
+        (void)otp_read(ROM_PATCH_CMAC_CRC_FUSE_INDEX0 + i, &cmac[i]);
+    }
+    return *std::bit_cast<std::array<uint8_t, 16>*>(cmac.data());
+#endif
+}
 
 std::array<std::pair<uint32_t, uint32_t>, FUSE_ARRAY_SIZE> get_fuse_index_mask_pair()
 {

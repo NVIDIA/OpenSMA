@@ -71,6 +71,9 @@ bool Vendor::process(const Packet& rx, Packet& tx)
 #ifdef NV_COVERAGE
         case VdmCmd::DownloadCoverage: on_download_coverage(rx, tx); break;
 #endif
+#if ENABLE_FANCONTROL
+        case VdmCmd::FanControl: on_fan_control(rx, tx); break;
+#endif
         default: unsupported_command(rx, tx); return false;
     }
     return result;
@@ -95,6 +98,9 @@ bool Vendor::action(const Packet& rx, Packet& tx) const
         case VdmCmd::ProgramCertificate: break;
         case VdmCmd::AddExtTimestamp   : break;
         case VdmCmd::ScanI2c           : break;
+#if ENABLE_FANCONTROL
+        case VdmCmd::FanControl: break;
+#endif
         case VdmCmd::RegTableAccess:
             if constexpr (ubs::features::reg_table) {
                 break;
@@ -346,15 +352,15 @@ void Vendor::on_background_copy(const Packet& rx, Packet& tx) const
             vtx.data[1] = progress;
         } break;
         case static_cast<uint8_t>(BackgroundCopyCmd::Query_Pending_Bg_Copy): {
-            flash::Data pending_bg_copy{};
+            flash::Data allow_bg_copy{};
             // +1 <status>
             tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
             flash_status = flash::Flash::get_data(flash::Key::NpdsAllowInitBackgroundCopy,
-                                                  pending_bg_copy);
+                                                  allow_bg_copy);
             if (flash_status != flash::Status::Ok) {
-                pending_bg_copy = 0;
+                allow_bg_copy = 0;
             }
-            vtx.data[0] = pending_bg_copy == 0
+            vtx.data[0] = allow_bg_copy == 0
                             ? static_cast<uint8_t>(BackgroundCopyPending::No_Pending)
                             : static_cast<uint8_t>(BackgroundCopyPending::Pending);
         } break;
@@ -608,12 +614,80 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     break;
                 }
 
-                // verify the l4 by l3 cert
-                CertArray l3_cert_array{};
-                nv::spdm::cert::read_l3_cert(std::span<uint8_t>(l3_cert_array));
-                if (!validate_certificate_signature(l3_cert_array, input_cert_array)) {
-                    vtx.data[1] = SignatureValidationFail;
+                std::array<uint8_t, 5> dda_number_in_char{};
+                // dda_ordinal_number from otp
+                constexpr uint32_t DdaOrdinalEfuseAddr = 31;
+                uint32_t           otp_dda_ordinal_number{};
+                // efuse read fail
+                if (nv::flash::Status::Ok
+                    != nv::flash::Flash::read_efuse(DdaOrdinalEfuseAddr,
+                                                    otp_dda_ordinal_number)) {
+                    vtx.data[1] = OtpDdaOrdinalReadFail;
                     break;
+                }
+                uint32_t remain_dda_number = otp_dda_ordinal_number;
+                for (int index = dda_number_in_char.size() - 1; index >= 0; --index) {
+                    constexpr uint32_t TenBase        = 10u;
+                    constexpr uint8_t  TenDigitInChar = '0';
+                    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
+                    dda_number_in_char[index] = (remain_dda_number % TenBase) + TenDigitInChar;
+                    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
+                    remain_dda_number /= TenBase;
+                }
+
+                const uint32_t l4_dda_ordinal_number_cert = parse_dda_ordinal_number(
+                    input_cert_array);
+                // verify the l4 by l3 cert
+                {  // for stack usage optimization
+                    CertArray l3_cert_array{};
+                    nv::spdm::cert::read_l3_cert(std::span<uint8_t>(l3_cert_array));
+                    if (l4_dda_ordinal_number_cert != parse_dda_ordinal_number(l3_cert_array)
+                        || otp_dda_ordinal_number != l4_dda_ordinal_number_cert) {
+                        vtx.data[1] = InvalidDdaOrdinalNumber;
+                        break;
+                    }
+                    if (!validate_certificate_signature(l3_cert_array, input_cert_array)) {
+                        vtx.data[1] = SignatureValidationFail;
+                        break;
+                    }
+                }
+
+                // verify the l5 by l4 cert
+                {  // for stack usage optimization
+                    CertArray l5_cert_array{};
+                    auto      l5_cert_array_span = std::span<uint8_t>(l5_cert_array);
+                    nv::spdm::cert::read_l5_cert(l5_cert_array_span);
+                    if (!validate_certificate_signature(input_cert_array, l5_cert_array)) {
+                        vtx.data[1] = L4verifyL5CertFail;
+                        break;
+                    }
+                }
+                // start to check the template of l4 cert
+                {  // for stack usage optimization
+                    static_assert(sizeof(nv::spdm::ik::DevIkTemplate) <= sizeof(CertArray),
+                                  "CertArray is not large enough to hold the DevIkTemplate");
+                    CertArray l4_cert_array{};
+                    auto      l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
+                    nv::spdm::cert::read_l4_cert(l4_cert_array_span);
+
+                    nv::spdm::ik::DevIkTemplate&
+                        template_generate_by_fw = *std::bit_cast<nv::spdm::ik::DevIkTemplate*>(
+                            &l4_cert_array[0]);
+                    const nv::spdm::ik::DevIkTemplate&
+                        template_from_input_data = *std::bit_cast<nv::spdm::ik::DevIkTemplate*>(
+                            &input_cert_array[0]);
+                    template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
+                    auto comparison_result = nv::spdm::ik::check_two_template_is_same(
+                        template_generate_by_fw, template_from_input_data);
+                    if (comparison_result != nv::spdm::ik::TemplateComparisonError::Success) {
+                        // Log the specific error for debugging
+                        nv::logger::error(nv::logger::Event::SpdmTemplateComparisonFailed,
+                                          nv::logger::data_from_u32(
+                                              static_cast<uint32_t>(comparison_result)));
+
+                        vtx.data[1] = InvalidTemplate;
+                        break;
+                    }
                 }
 
                 // all check pass, start to install the signature of L4
@@ -641,41 +715,42 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                         std::span<uint8_t>(l4sign.s_value)
                             .subspan(StartOffsetOfSign, LengthOfSignDataWithoutPadding);
                 }
-                auto program_efuse = [&](const std::array<uint32_t, FuseArrSizeForSinature>&
-                                                                   EfuseAddrArray,
-                                         const std::span<uint8_t>& data) {
-                    auto signature_iter = data.rbegin();
-                    for (const uint32_t EfuseAddr : std::ranges::reverse_view(EfuseAddrArray)) {
-                        // coverity[parameter_hidden] - This is no hidden
-                        uint32_t data{};
-                        data                               = 0;
-                        std::array<uint8_t, 4>& data_array = *std::bit_cast<
-                            std::array<uint8_t, sizeof(decltype(data))>*>(&data);
-                        for (uint8_t& data_it : std::ranges::reverse_view(data_array)) {
-                            data_it = (signature_iter
-                                       != l4_sign_r_data_without_padding_redundant_size.rend())
-                                        ? *signature_iter++
-                                        : static_cast<uint8_t>(0x00);
+                auto program_efuse =
+                    [&](const std::array<uint32_t, FuseArrSizeForSinature>& EfuseAddrArray,
+                        const std::span<uint8_t>&                           data) {
+                        auto signature_iter     = data.rbegin();
+                        auto signature_end_iter = data.rend();
+                        for (const uint32_t EfuseAddr :
+                             std::ranges::reverse_view(EfuseAddrArray)) {
+                            // coverity[parameter_hidden] - This is no hidden
+                            uint32_t data{};
+                            data                               = 0;
+                            std::array<uint8_t, 4>& data_array = *std::bit_cast<
+                                std::array<uint8_t, sizeof(decltype(data))>*>(&data);
+                            for (uint8_t& data_it : std::ranges::reverse_view(data_array)) {
+                                data_it = (signature_iter != signature_end_iter)
+                                            ? *signature_iter++
+                                            : static_cast<uint8_t>(0x00);
+                            }
+                            // program the data into efuse
+                            if (nv::flash::Flash::program_efuse(EfuseAddr, data)
+                                != nv::flash::Status::Ok) {
+                                vtx.data[1] = OtpL4SignatureProgrammedFail;
+                                return false;
+                            }
+                            uint32_t read_data = 0;
+                            if (nv::flash::Flash::read_efuse(EfuseAddr, read_data)
+                                != nv::flash::Status::Ok) {
+                                vtx.data[1] = OtpL4SignatureReadFail;
+                                return false;
+                            }
+                            if (data != read_data) {
+                                vtx.data[1] = OtpL4SignatureProgrammedCheckFail;
+                                return false;
+                            }
                         }
-                        // program the data into efuse
-                        if (nv::flash::Flash::program_efuse(EfuseAddr, data)
-                            != nv::flash::Status::Ok) {
-                            vtx.data[1] = OtpL4SignatureProgrammedFail;
-                            return false;
-                        }
-                        uint32_t read_data = 0;
-                        if (nv::flash::Flash::read_efuse(EfuseAddr, read_data)
-                            != nv::flash::Status::Ok) {
-                            vtx.data[1] = OtpL4SignatureReadFail;
-                            return false;
-                        }
-                        if (data != read_data) {
-                            vtx.data[1] = OtpL4SignatureProgrammedCheckFail;
-                            return false;
-                        }
-                    }
-                    return true;
-                };
+                        return true;
+                    };
                 // start to program the signature into efuse
                 if (!program_efuse(SignatureEfuseAddrR,
                                    l4_sign_r_data_without_padding_redundant_size)
@@ -916,16 +991,16 @@ void Vendor::action_background_copy(const Packet& rx, Packet& tx) const
     }
 
     if (vrx.data[0] == static_cast<uint8_t>(BackgroundCopyCmd::Init_Bg_Update)) {
-        flash::Data         pending_bg_copy{};
+        flash::Data         allow_bg_copy{};
         const flash::Status flash_status = flash::Flash::get_data(
-            flash::Key::NpdsAllowInitBackgroundCopy, pending_bg_copy);
+            flash::Key::NpdsAllowInitBackgroundCopy, allow_bg_copy);
         if (flash_status != flash::Status::Ok) {
             return;
         }
 
-        if (pending_bg_copy != 0) {
+        if (allow_bg_copy != 0) {
             /* trigger BG */
-            pldm::Task::pldm_bg_init();
+            pldm::Task::pldm_bg_start();
         }
     }
 }
@@ -960,8 +1035,8 @@ void Vendor::on_scan_i2c(const Packet& rx, Packet& tx) const
             return;
         }
 
-        // verify master is enabled and slave is disabled
-        if (!sys::i2c::is_master_enabled(port) || sys::i2c::is_slave_enabled(port)) {
+        // verify master is enabled
+        if (!sys::i2c::is_master_enabled(port)) {
             vtx.completion_code = Ccode::ErrorGeneral;
             return;
         }
@@ -1016,3 +1091,92 @@ void Vendor::on_download_coverage(const Packet& rx, Packet& tx) const
                           + nv::coverage::Coverage::download(rx, tx);
 }
 #endif
+
+#if ENABLE_FANCONTROL
+// Declare the external functions
+#include "nv/fancontrol/driver.h"
+
+void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
+{
+    constexpr uint8_t MaxDutyCyclePercent = 100;
+
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vtx           = VendorPktRes::from(tx);
+    auto& vrx           = VendorPktReq::from(rx);
+    vtx.completion_code = Ccode::Success;
+
+    // version check
+    if (vtx.msg_version != 0x01) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    // Calculate received data length
+    const uint32_t rx_data_length = rx.priv.packet_length
+                                  - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
+    if (rx_data_length < 3) {
+        vtx.completion_code = Ccode::ErrorInvalidLength;
+        return;
+    }
+
+    const uint8_t index       = vrx.data[0];
+    const uint8_t control     = vrx.data[1];
+    const uint8_t duty_cycle  = vrx.data[2];
+    uint16_t      rpm         = 0;
+    uint16_t      temperature = 0;
+
+    // No response payload for most commands, will override in the case of a response payload
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+
+    // Validate control and required payload
+    switch (static_cast<FanControlMode>(control)) {
+        case FanControlMode::Disabled:
+            // Directly control PWM hardware (no IPC queue)
+            nv::fancontrol::Driver::stop_fan_pwm(index);
+            break;
+
+        case FanControlMode::Enabled:
+            // Temperature-based fan control not supported (control algorithm removed)
+            vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+            break;
+
+        case FanControlMode::Steady:
+            if (duty_cycle > MaxDutyCyclePercent) {
+                vtx.completion_code = Ccode::ErrorInvalidData;
+            }
+            else {
+                // Directly control PWM hardware (no IPC queue)
+                nv::fancontrol::Driver::set_fan_pwm(duty_cycle, index);
+            }
+            break;
+
+        case FanControlMode::Rpm:
+            // RPM reading not supported (tach functionality removed)
+            rpm = 0;
+            memcpy(&vtx.data[2], &rpm, sizeof(rpm));
+            tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2 + sizeof(rpm);
+            break;
+
+        case FanControlMode::Temperature:
+            // Temperature reading not supported (control algorithm removed)
+            temperature = 0;
+            memcpy(&vtx.data[2], &temperature, sizeof(temperature));
+            tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2
+                                  + sizeof(temperature);
+            break;
+
+        default: vtx.completion_code = Ccode::ErrorInvalidData; return;
+    }
+}
+#else
+void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
+{
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vtx             = VendorPktRes::from(tx);
+    vtx.completion_code   = Ccode::ErrorUnsupportedCmd;
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+    return;
+}
+#endif  // ENABLE_FANCONTROL

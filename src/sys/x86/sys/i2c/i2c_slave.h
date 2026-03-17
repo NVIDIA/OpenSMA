@@ -31,6 +31,14 @@
 
 namespace sys::i2c {
 
+// Number of I2C target addresses
+constexpr static size_t NumI2cTargetAddresses = static_cast<size_t>(NUM_I2C_TARGET_ADDRESSES);
+
+// Size of the I2C data buffers (RX/TX). Increase this if transactions involve more data
+constexpr static size_t I2cSlaveBufferSize = 35;
+
+using I2cSlaveBuffer = std::array<uint8_t, I2cSlaveBufferSize>;
+
 // Driver Class:
 /*
 Acts as an I2C Slave on the given I2C bus pins
@@ -44,60 +52,28 @@ the data is serviced
 */
 // -----------------------------------------------------------------------------------------
 
+template<typename T>
 class I2CSlaveDriver
 {
 public:
-    // Constants
-    // ---------------------------------------------
-
-    // Number of I2C target addresses
-    constexpr static size_t NumI2cTargetAddresses = static_cast<size_t>(
-        NUM_I2C_TARGET_ADDRESSES);
-
-    // Size of the I2C data buffers (RX/TX). Increase this if transactions involve more data
-    constexpr static size_t BufferSize = 34;
-
-    // Callback Types
-    // --------------------
-
-    // Will call this function on its master task when there is an I2C write request
-    // Parent task must service the buffer data during this function call since it will be
-    // overwritten by next I2C transaction Cannot block this driver or will be stuck forever
-    typedef void (*process_data_callback_t)(
-        uint8_t&                         address,    // Address of the I2C transaction
-        bool                             is_read,    // R/W Bit
-        std::array<uint8_t, BufferSize>& buffer,     // Buffer for sending/receiving
-        size_t&                          data_size,  // Size of the send/receive data
-        void*                            task,  // Context for parent task managing this driver
-        bool new_transaction  // Indicates a new transaction started (not repeated read ack)
-    );
-
-    // Configuration for driver initialization
-    struct Config
-    {
-        nv::i2c::Port           i2c_bus;                // I2C hardware peripheral
-        process_data_callback_t process_data_callback;  // Invoked on read requests for transmit
-                                                        // data
-        std::array<uint8_t, NumI2cTargetAddresses> target_addresses;  // Target addresses to
-                                                                      // ACK/NACK
-        void* parent_task_class;  // Parent task class for running callbacks
-    };
-
     // Public Functions
     // ---------------------------------------------
 
-    // Constructor: Initializes the I2C driver with the given configuration
-    I2CSlaveDriver(Config& driver_config);
-    I2CSlaveDriver();
+    I2CSlaveDriver() = default;
 
     // Starts the I2C slave driver. Must be called after initialization
-    void start();
+    void start() {}
+
+    // Binds the driver, for cases where driver config is not used
+    void bind([[maybe_unused]] nv::i2c::Port                              port,
+              [[maybe_unused]] std::array<uint8_t, NumI2cTargetAddresses> target_addresses,
+              [[maybe_unused]] T*                                         parent)
+    {}
 
     // Callback from HW interrups to service data
-    // Do Not Use: Reserved for NXP HW API callback and testing.
-    static void callback(void* base, void* transfer, void* user_data);
-
-    // Sets the target addresses to ACK/NACK
-    void register_target_address(const uint8_t address);
+    static void callback([[maybe_unused]] void* base,
+                         [[maybe_unused]] void* transfer,
+                         [[maybe_unused]] void* user_data)
+    {}
 };
 }  // namespace sys::i2c

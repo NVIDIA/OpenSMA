@@ -76,7 +76,10 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             &ap_metadata);
         const std::span<uint8_t> ap_metadata_buffer(meta_data_array_view.data(),
                                                     meta_data_array_view.size());
+        // add 10ms delay to avoid boot watchdog trigger, which is two ticks in FreeRTOS
+        constexpr auto i2c_delay_time_on_each_read = std::chrono::milliseconds(10);
         while (need_to_read_size != 0) {
+            nv::spdm::Task::get_task().delay(i2c_delay_time_on_each_read);
             constexpr size_t i2c_each_read_size = 256;
             const size_t     read_size  = std::min(need_to_read_size, i2c_each_read_size);
             auto             sub_buffer = ap_metadata_buffer.subspan(start_address, read_size);
@@ -94,13 +97,6 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             break;
         }
         //  auth public key
-        if (ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[0]
-            && ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[1]) {
-            auth_result = CryptoStatus::FailApPublicKeyMismatch;
-            break;
-        }
-
-        // auth public key
         if (ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[0]
             && ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[1]) {
             auth_result = CryptoStatus::FailApPublicKeyMismatch;
@@ -128,6 +124,63 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             break;
         }
 
+        // check the rollback protection
+        {
+            uint32_t secure_fw_version_on_device = 0;
+            if (nv::flash::Flash::read_secure_fw_version(secure_fw_version_on_device,
+                                                         nv::flash::KeyRollbackSelect::Ap0)
+                != nv::flash::Status::Ok) {
+                auth_result = CryptoStatus::FailCfpaAccess;
+                break;
+            }
+            if (secure_fw_version_on_device > ap_metadata.tbs_data.sec_version) {
+                auth_result = CryptoStatus::FailApRollbackProtection;
+                nv::logger::info(nv::logger::Event::SpdmCryptoApRollbackProtectionActive,
+                                 nv::logger::EventData{
+                                     std::to_underlying(auth_ap_type),
+                                     ap_metadata.tbs_data.sec_version,
+                                     static_cast<uint8_t>(secure_fw_version_on_device),
+                                 });
+                break;
+            }
+        }
+        // check key revoke
+        {
+            uint32_t key_revocation_value_on_device = 0;
+            auto     status = nv::flash::Flash::read_key_revoke(key_revocation_value_on_device,
+                                                            nv::flash::KeyRollbackSelect::Ap0);
+            static_assert(
+                std::tuple_size_v<decltype(ApFwPublicKeys)>
+                    == std::to_underlying(nv::fw_parser::ap::PublicKeyIndex::KeyIndexCount),
+                "ApFwPublicKeys size should be the same as KeyIndexCount");
+            static_assert(
+                sizeof(nv::fw_parser::ap::PublicKeyIndex)
+                    == sizeof(key_revocation_value_on_device),
+                "PublicKeyIndex size should be the same as key_revocation_value_on_device");
+            if (status != nv::flash::Status::Ok
+                || static_cast<size_t>(key_revocation_value_on_device) >= std::to_underlying(
+                       nv::fw_parser::ap::PublicKeyIndex::KeyIndexCount)) {
+                auth_result = CryptoStatus::FailCfpaAccess;
+                break;
+            }
+            // If revocation level requires prod key (debug key revoked),
+            // but firmware is not using prod key - check if debug token allows bypass
+            if (key_revocation_value_on_device
+                    == std::to_underlying(nv::fw_parser::ap::PublicKeyIndex::ProdKeyIndex)
+                && ap_metadata.tbs_data.verif_pub_key
+                       != ApFwPublicKeys[std::to_underlying(
+                           nv::fw_parser::ap::PublicKeyIndex::ProdKeyIndex)]) {
+                auto dt_status = nv::debugtoken::check_debug_token_subtype_enabled(
+                    nv::debugtoken::Type::FlashDebugFw,
+                    nv::debugtoken::DebugTokenSubtypeCpldFw);
+                if (dt_status != nv::debugtoken::TokenErrorCode::NoErrorCode) {
+                    auth_result = CryptoStatus::FailApImageSigningKeyRevoke;
+                    break;
+                }
+            }
+        }
+
+        // check image hash
         for (int i = 0; i < ap_metadata.tbs_data.ap_fw_images_count; i++) {
             auto ctx = Sha384Context{};
             if (!ctx.init()) {
@@ -141,6 +194,7 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                                  + ap_metadata.tbs_data.image_offset;
             // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
             while (need_to_read_size != 0) {
+                nv::spdm::Task::get_task().delay(i2c_delay_time_on_each_read);
                 constexpr size_t                        i2c_each_read_size = 256;
                 std::array<uint8_t, i2c_each_read_size> read_buffer{};
                 const size_t read_size = std::min(need_to_read_size, i2c_each_read_size);
@@ -175,7 +229,6 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
         if (auth_result != CryptoStatus::Success) {
             break;
         }
-
     } while (false);
 
     /*
@@ -241,6 +294,11 @@ CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters)
 CryptoStatus
 authenticate_ap_firmware(const nv::fw_parser::ap::ParsingApFwType InputParseingApFwType)
 {
+    // start to authenticate the ap firmware
+    (void)nv::flash::Flash::set_data(
+        nv::flash::Key::NpdsAp0FwStatus,
+        static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_In_Progress));
+
     // check if the ap fw feature is enabled
     if constexpr (nv::pldm::ApNum == 0) {
         return CryptoStatus::FailUnknown;

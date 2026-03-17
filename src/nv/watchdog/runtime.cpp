@@ -90,7 +90,12 @@ void Runtime::query_task_status(TaskMonitorIndex index)
         case TaskMonitorIndex::I2c1:
         case TaskMonitorIndex::I2c2:
         case TaskMonitorIndex::I2c3:
-        case TaskMonitorIndex::I2c4: {
+        case TaskMonitorIndex::I2c4:
+        case TaskMonitorIndex::I2c5:
+        case TaskMonitorIndex::I2c6:
+        case TaskMonitorIndex::I2c7:
+        case TaskMonitorIndex::I2c8:
+        case TaskMonitorIndex::I2c9: {
             i2c::Task::wdt_notify(index);
         } break;
         case TaskMonitorIndex::I3c0:

@@ -22,17 +22,29 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "nv/i2c/lattice_driver.h"
+#include "nv/mctp/constants.h"
 #include "nv/perf_mon/perf_mon.h"
 
 namespace nv::mctp {
 
-constexpr uint8_t NsmDevDiagSupportedCmdNum           = 16;
 constexpr uint8_t DevDiagGetDiagnosticsNoMoreSegments = 0xFF;
 constexpr uint8_t DevDiagTimestampTagId               = 0XFF;
 constexpr uint8_t DevDiagGetDiagnosticsFirstSegment   = 0x00;
 
 constexpr uint8_t DevDiagGetResetStatisticsResetCauseId = 0x08;
 constexpr uint8_t GetResetStatisticsResetLen            = 0x3;
+
+// CPLD Register Table constants
+constexpr uint8_t CpldRegisterTableNoMoreSegments = 0xFF;  // No more segments available
+constexpr uint8_t CpldRegisterTableFirstSegment   = 0x00;  // First segment to query
+constexpr uint16_t
+    CpldRegTablePayloadMaxSize = Constants::MctpTxBufSize - sizeof(nv::mctp::PrivateHeader)
+                               - sizeof(nv::mctp::Header)
+                               - Constants::NsmHeaderResponseSize;  // 1 is for
+                                                                    // the
+                                                                    // next_segment
+                                                                    // field
 
 // Bridge and Port Recovery constants
 constexpr uint8_t  NoMoreResetTargets = 0xFF;  // No more targets of this specific Reset Target
@@ -52,14 +64,6 @@ enum class RecoveryLevel : uint8_t
     // 4-254 are reserved
 };
 
-// NVIDIA TYPE 4 Device Diagnostics Command Code
-enum class NsmDevDiagCmdCode : uint8_t
-{
-    GetDeviceResetStatistics = 0x0,
-    GetDeviceDiagnostics     = 0x40,
-    BridgePortRecovery       = 0x70,
-};
-
 enum class AggregateTaskEvent : uint32_t
 {
     Mctp   = nv::common::bit(0),
@@ -70,34 +74,6 @@ enum class AggregateTaskEvent : uint32_t
     Flash  = nv::common::bit(5),
     Logger = nv::common::bit(6),
     SPDM   = nv::common::bit(7),
-};
-
-constexpr std::array<uint8_t, NsmDevDiagSupportedCmdNum> gen_type4_code_bitmask()
-{
-    std::array<uint8_t, NsmDevDiagSupportedCmdNum> bitmask = {0};
-
-    constexpr uint8_t bit_positions[] = {
-        static_cast<uint8_t>(NsmDevDiagCmdCode::GetDeviceResetStatistics),
-        static_cast<uint8_t>(NsmDevDiagCmdCode::GetDeviceDiagnostics),
-        static_cast<uint8_t>(NsmDevDiagCmdCode::BridgePortRecovery),
-    };
-
-    for (uint8_t pos : bit_positions) {
-        const size_t byte_index = pos / 8;
-        const size_t bit_offset = pos % 8;
-        const size_t value      = (1u << bit_offset);
-        if (value <= UCHAR_MAX) {
-            bitmask.at(byte_index) |= static_cast<uint8_t>(value);
-        }
-    }
-
-    return bitmask;
-}
-
-struct [[gnu::packed]] NsmDevDiagPersistentData
-{
-    static constexpr std::array<uint8_t, NsmDevDiagSupportedCmdNum>
-        suppCmdCode = gen_type4_code_bitmask();
 };
 
 struct [[gnu::packed]] TaskExecutionTimeResp
@@ -133,7 +109,7 @@ struct [[gnu::packed]] T4ErrorCounterResponse
 using DsMcpInterface                 = pdk::mctp::platforms::Interface;
 using DsOobBusError                  = nv::perf_mon::OobBus;
 using DsInterfaceError               = std::tuple<DsMcpInterface, DsOobBusError>;
-constexpr auto T4DsInterfaceErrorNum = 9;
+constexpr auto T4DsInterfaceErrorNum = 13;
 /**
  * @brief DsInterfaceErrorTable defines the OoBerror for each interface
  */
@@ -142,6 +118,10 @@ constexpr inline std::array<DsInterfaceError, T4DsInterfaceErrorNum> DsInterface
     DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c1, nv::perf_mon::OobBus::DsI2c1},
     DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c2, nv::perf_mon::OobBus::DsI2c2},
     DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c3, nv::perf_mon::OobBus::DsI2c3},
+    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c4, nv::perf_mon::OobBus::DsI2c4},
+    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c5, nv::perf_mon::OobBus::DsI2c5},
+    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c6, nv::perf_mon::OobBus::DsI2c6},
+    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c7, nv::perf_mon::OobBus::DsI2c7},
     DsInterfaceError{pdk::mctp::platforms::Interface::DsI3c0, nv::perf_mon::OobBus::DsI3c0},
     DsInterfaceError{pdk::mctp::platforms::Interface::DsI3c1, nv::perf_mon::OobBus::DsI3c1},
     DsInterfaceError{  pdk::mctp::platforms::Interface::Spi0,   nv::perf_mon::OobBus::Spi0},
@@ -163,6 +143,37 @@ struct [[gnu::packed]] BridgePortRecoveryResp
     uint8_t  reserved;               // Reserved (NvU8) - Offset 1
     uint16_t time_since_last_reset;  // Time since last Reset request in msec (NvU16) - Offset
                                      // 2-3
+};
+
+enum T4WriteProtectionMode : uint8_t
+{
+    Clear = 0,
+    Set   = 1,
+};
+
+struct [[gnu::packed]] T4WriteProtectionRequest
+{
+    uint8_t function;
+    uint8_t mode;  // 0 = clear, 1 = set
+    T4WriteProtectionRequest() : function{0}, mode{0}
+    {
+        // Empty
+    }
+};
+
+// CPLD Register Table Request Data Structure
+struct [[gnu::packed]] CpldRegisterTableReq
+{
+    uint8_t segment_index;  // Segment Index (0x00-0xFE for segment, 0xFF for no more segments)
+};
+
+struct [[gnu::packed]] CpldRegisterTableResp
+{
+    uint8_t next_segment;  // Next Segment (0x00-0xFE for next segment, 0xFF for no more
+                           // segments)
+    // Variable length segment data follows after this structure
+    uint8_t segment_data[Cpld_User_Reg::CPLD_USER_REG_SIZE];  // Variable length segment data
+                                                              // follows after this structure
 };
 
 }  // namespace nv::mctp

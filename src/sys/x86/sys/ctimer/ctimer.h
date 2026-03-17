@@ -24,6 +24,7 @@ class Driver
 {
 public:
     static uint32_t read_ticks();
+    static uint32_t read_ticks_inline() { return 0; }
     static void     delay_for_us(uint32_t us);
     static Ticks    get_counter_difference(Ticks start_count, Ticks cur_count);
 };

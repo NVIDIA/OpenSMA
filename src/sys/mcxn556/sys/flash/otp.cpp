@@ -19,24 +19,106 @@
 
 #include "sys/common/utils.h"
 #include "nv/ipc/supervisor.h"
+#include "nv/common/build.h"
+#include "nv/flash/flash.h"
 #include <algorithm>
+#include <array>
 #include <utility>
 namespace sys::flash {
 using namespace nv;
 
+namespace {
+static nv::flash::Key address_to_pds_key(uint32_t address)
+{
+    if (address >= 0 && address <= 81) {
+        return static_cast<nv::flash::Key>(
+            static_cast<uint32_t>(nv::flash::Key::PdsOtpSimultaneousFuseAddress0) + address);
+    }
+    return nv::flash::Key::PdsInvalid;
+}
+status_t EFUSE_Read_Sim(uint32_t address, uint32_t& output_data)
+{
+    const auto PdsKey = address_to_pds_key(address);
+    if (PdsKey != nv::flash::Key::PdsInvalid) {
+        nv::flash::Data data   = 0;
+        auto            status = nv::flash::Flash::get_data_from_kernel(PdsKey, data);
+        output_data            = data;
+        return (status == nv::flash::Status::Ok) ? kStatus_Success : kStatus_Fail;
+    }
+    return kStatus_Fail;
+}
+
+status_t EFUSE_Program_Sim(uint32_t address, uint32_t input_data)
+{
+    const auto PdsKey = address_to_pds_key(address);
+    if (PdsKey != nv::flash::Key::PdsInvalid) {
+        auto status = nv::flash::Flash::set_data_from_kernel(PdsKey, input_data);
+        return (status == nv::flash::Status::Ok) ? kStatus_Success : kStatus_Fail;
+    }
+    return kStatus_Fail;
+}
+
+}  // namespace
+
 status_t OtpDriver::read(uint32_t address, uint32_t& output_data)
 {
-    uint32_t       otp_data = 0;
-    const status_t RetCode  = EFUSE_Read(address, &otp_data);
-    output_data             = otp_data;
-    return RetCode;
+    uint32_t otp_data = 0;
+    status_t ret_code = kStatus_Success;
+    // should not been called in dev mode, just return success
+    if constexpr (nv::common::build::Mode == nv::common::build::Modes::Dev) {
+        ret_code = EFUSE_Read_Sim(address, otp_data);
+    }
+    else {
+        ret_code = EFUSE_Read(address, &otp_data);
+    }
+    output_data = otp_data;
+    return ret_code;
 };
 
 status_t OtpDriver::program(const uint32_t addr, const uint32_t input_data)
 {
-    const status_t RetCode = EFUSE_Program(addr, input_data);
+    // check if the command is for locking fuse
+    constexpr uint32_t LockFuseAddress = 0x0;
+    if (addr == LockFuseAddress) {
+        // check life cycle status
+        LifeCycleStatus life_cycle_status{};
+        if (auto read_sts = read_life_cycle(life_cycle_status); read_sts != kStatus_Success) {
+            return read_sts;
+        }
+        // if life cycle status is not in field, return error
+        if (life_cycle_status == LifeCycleStatus::Blank
+            or life_cycle_status == LifeCycleStatus::Fab
+            or life_cycle_status == LifeCycleStatus::Develop
+            or life_cycle_status == LifeCycleStatus::Develop2) {
+            return kStatus_OutOfRange;
+        }
+        // life cycle check passed - allow programming
+        if constexpr (nv::common::build::Mode != nv::common::build::Modes::Dev) {
+            return EFUSE_Program(addr, input_data);
+        }
+        else {
+            return EFUSE_Program_Sim(addr, input_data);
+        }
+    }
 
-    return RetCode;
+    // check if the address is valid
+    constexpr std::array<uint32_t, 25> UsedEfuseAddr = {31, 32, 33, 34, 35, 36, 37, 38, 39,
+                                                        40, 41, 42, 43, 44, 45, 46, 47, 48,
+                                                        49, 50, 63, 64, 65, 66, 67};
+    static_assert(std::is_sorted(UsedEfuseAddr.begin(), UsedEfuseAddr.end()),
+                  "UsedEfuseAddr is not sorted");
+    // perform a binary search to check if the address is valid
+    if (!std::binary_search(UsedEfuseAddr.begin(), UsedEfuseAddr.end(), addr)) {
+        return kStatus_OutOfRange;
+    }
+
+    // should not been called in dev mode, just return success
+    if constexpr (nv::common::build::Mode == nv::common::build::Modes::Dev) {
+        return EFUSE_Program_Sim(addr, input_data);
+    }
+    else {
+        return EFUSE_Program(addr, input_data);
+    }
 };
 
 status_t OtpDriver::init()

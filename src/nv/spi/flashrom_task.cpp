@@ -26,7 +26,7 @@ using namespace std::chrono_literals;
 
 void FlashromTask::make(Config config)
 {
-    if constexpr (nv::ipc::EnableFlashrom) {
+    if constexpr (nv::lstp::EnableSpi) {
         // Flashrom task requires more stack for USB communication
         constexpr auto StackSize = std::max(480, int(configMINIMAL_STACK_SIZE));
 
@@ -67,9 +67,9 @@ FlashromTask::FlashromTask(Config config) noexcept
     using namespace ipc;
 
     bootloader::Driver::set_task_booted(_boot_event);
-    std::array<uint8_t, nv::ipc::UsbSpiMsgSize> tx_msg{};
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> tx_msg{};
     auto tx_msg_item    = Queue::Item(std::bit_cast<uint8_t*>(&tx_msg), sizeof(tx_msg));
-    auto flashrom_queue = nv::ipc::Queue::make(nv::ipc::QueueId::UsbToSpi);
+    auto flashrom_queue = nv::ipc::Queue::make(nv::ipc::QueueId::LstpToSpi);
 
     // Main task loop - runs continuously processing SPI flashrom messages
     // This task is designed to run for the lifetime of the system
@@ -86,7 +86,7 @@ FlashromTask::FlashromTask(Config config) noexcept
 
 bool FlashromTask::to_spi(std::span<uint8_t>& msg)
 {
-    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::UsbToSpi).send(msg);
+    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::LstpToSpi).send(msg);
     if (status != nv::ipc::Queue::Status::Ok) {
         logger::error(logger::Event::SpiFlashromQueueFail, {static_cast<uint8_t>(status)});
         return false;

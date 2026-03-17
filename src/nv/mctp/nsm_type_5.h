@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -22,23 +22,10 @@
 #include <cstdint>
 #include <cstring>
 
+#include "nv/mctp/constants.h"
+#include "nv/mctp/nsm_msg_bitmask.h"
+
 namespace nv::mctp {
-
-constexpr uint8_t NsmMaxSupportedErrorTypeBitmapBytesNum = 8;
-constexpr uint8_t NsmDevCfgCommonSupportedNum            = 8;
-
-// NVIDIA TYPE 5 Device Configuration Command Code
-enum class NsmDevCfgCmdCode : uint8_t
-{
-    SetErrorInjectionMode           = 0x03,
-    GetErrorInjectionMode           = 0x04,
-    GetSupportedErrorInjectionTypes = 0x05,
-    SetCurrentErrorInjectionTypes   = 0x06,
-    GetCurrentErrorInjectionTypes   = 0x07,
-    GetErrorInjectionPayload        = 0x0A,
-    SetErrorInjectionPayload        = 0x0B,
-    ActivateErrorInjection          = 0x0C,
-};
 
 /** Common Enable Disable enums */
 enum NsmDevCfgEnablingMode : uint8_t
@@ -90,6 +77,13 @@ enum PortRecoveryEIPayloadValues : uint8_t
 
     // L3 device reset recovery bitmap (Offset 10) - reserved 0
 };
+// USB Bridge Protocol Types
+enum class USBBridgeProtocolType : uint8_t
+{
+    I2c        = 0x02,  // I2C protocol
+    Spi        = 0x03,  // SPI protocol
+    I2cPca9555 = 0x05   // I2C PCA9555 expander protocol
+};
 
 // USB Bridge Emulation Errors payload values
 enum USBBridgeEmulationEIPayloadValues : uint8_t
@@ -123,49 +117,12 @@ struct [[gnu::packed]] NsmDevCfgErrorInjectionModeResponse
     }
 };
 
-constexpr std::array<uint8_t, NsmDevCfgCommonSupportedNum> gen_type5_code_bitmask()
-{
-    std::array<uint8_t, NsmDevCfgCommonSupportedNum> bitmask = {0};
-
-    constexpr uint8_t bit_positions[] = {
-        static_cast<uint8_t>(NsmDevCfgCmdCode::SetErrorInjectionMode),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::GetErrorInjectionMode),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::GetSupportedErrorInjectionTypes),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::SetCurrentErrorInjectionTypes),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::GetCurrentErrorInjectionTypes),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::GetErrorInjectionPayload),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::SetErrorInjectionPayload),
-        static_cast<uint8_t>(NsmDevCfgCmdCode::ActivateErrorInjection),
-    };
-
-    for (uint8_t pos : bit_positions) {
-        const size_t byte_index = pos / 8;
-        const size_t bit_offset = pos % 8;
-        const size_t value      = (1u << bit_offset);
-        if (value <= UCHAR_MAX) {
-            bitmask.at(byte_index) |= static_cast<uint8_t>(value);
-        }
-    }
-
-    return bitmask;
-}
-
-constexpr std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum>
+constexpr std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum>
 gen_type5_supported_errors_injection_bitmask()
 {
-    std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum> bitmask = {0};
-
-    constexpr uint8_t bit_positions[] = {static_cast<uint8_t>(DeviceError),
-                                         static_cast<uint8_t>(GpioSpoofing)};
-
-    for (uint8_t pos : bit_positions) {
-        const size_t byte_index = pos / 8;
-        const size_t bit_offset = pos % 8;
-        const size_t value      = (1u << bit_offset);
-        if (value <= UCHAR_MAX) {
-            bitmask.at(byte_index) |= static_cast<uint8_t>(value);
-        }
-    }
+    std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum> bitmask = {0};
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(DeviceError));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(GpioSpoofing));
     return bitmask;
 }
 
@@ -191,6 +148,17 @@ struct [[gnu::packed]] FatalErrorPayload
     uint32_t fault_payload_bitmap = 0;  // Offset 8: Bit map for fault control and indication
 
     // No user-defined constructor - this makes the type trivial
+};
+
+//  Set GPU degrade mode Request
+struct [[gnu::packed]] NsmDevCfgGpuDegradeModeRequest
+{
+    uint8_t device_index;
+    uint8_t action;
+    NsmDevCfgGpuDegradeModeRequest() : device_index{0}, action{NsmDevCfgEnablingMode::Disable}
+    {
+        // Empty
+    }
 };
 
 // Port Recovery Errors payload structure
@@ -230,12 +198,8 @@ constexpr uint8_t MaxGPIOSpoofingEntries = 16;
 struct [[gnu::packed]] GpioSpoofingEntry
 {
     uint16_t gpioIndex : 14;
-    union
-    {
-        uint16_t reserved  : 1;  // for request
-        uint16_t gpioValue : 1;  // for response
-    };
-    uint16_t eiOperation : 1;
+    uint16_t activated : 1;  // for response
+    uint16_t polarity  : 1;  // for response
 };
 
 // GPIO Spoofing Response data structure according to spec
@@ -261,16 +225,74 @@ enum GPIOErrorStatusBitmap : uint8_t
     GPIOSpoofingError = 0,
 };
 
+struct [[gnu::packed]] T5PowerSupplyRequest
+{
+    uint8_t device_index;
+    uint8_t mode;  // Enable  Disable
+    T5PowerSupplyRequest() : device_index{0}, mode{0}
+    {
+        // Empty
+    }
+};
+
+/** Get SMA baseboard settings 0X05 0X64 */
+enum SmaBaseboardSets
+{
+    WPSettings                = 0x00,
+    PcieFundamentalResetValue = 0x01,
+    GpuDegradeModeSettings    = 0x03,
+    PowerSupplyStatus         = 0x05,
+    GpuPresence               = 0x0C,
+    GpuPgdStatus              = 0x0D,
+    Aggregate                 = 0xFF
+};
+
+constexpr auto                                             SmaBaseboardSetsSize = 7;
+constexpr inline std::array<uint8_t, SmaBaseboardSetsSize> smaBaseboardSettingsRequests{
+    SmaBaseboardSets::WPSettings,
+    SmaBaseboardSets::PcieFundamentalResetValue,
+    SmaBaseboardSets::GpuDegradeModeSettings,
+    SmaBaseboardSets::PowerSupplyStatus,
+    SmaBaseboardSets::GpuPresence,
+    SmaBaseboardSets::GpuPgdStatus,
+    SmaBaseboardSets::Aggregate};
+static_assert(SmaBaseboardSetsSize == smaBaseboardSettingsRequests.size());
+
+struct [[gnu::packed]] T5SmaBaseboardSetsRequest
+{
+    uint8_t data_index;
+    T5SmaBaseboardSetsRequest() : data_index{0}
+    {
+        // Empty
+    }
+};
+
+constexpr auto T5SmaBaseboardSetsResponseSize = 8;
+
+struct [[gnu::packed]] T5SmaBaseboardSetsResponse
+{
+    std::array<uint8_t, T5SmaBaseboardSetsResponseSize> bitarray{0};
+};
+
+using T5SmaBaseboardSetsBitResp                  = std::tuple<uint8_t, uint8_t>;
+constexpr auto T5SmaBaseboardSetsBitPositionSize = 4;
+
+constexpr inline std::array<T5SmaBaseboardSetsBitResp, T5SmaBaseboardSetsBitPositionSize>
+    smaBaseboardSetsBitResp{
+        T5SmaBaseboardSetsBitResp{WP_BASEBOARD_FRU_EEPROM, 0x1}, // bit 1 byte 0
+        T5SmaBaseboardSetsBitResp{        WP_NVSW_QM4_SPI, 0x3}, // bit 3 byte 0
+        T5SmaBaseboardSetsBitResp{             WP_CX9_SPI, 0x4}, // bit 4 byte 0
+        T5SmaBaseboardSetsBitResp{             WP_GPU_SPI, 0x7}, // bit 7 byte 0
+};
+/** END Get SMA baseboard settings 0X05 0X64 */
+
 /** single data structure for type persistent data */
 struct [[gnu::packed]] NsmDevCfgPersistentData
 {
     NsmDevCfgErrorInjectionModeResponse errorInjectionModeResponse;
-    static constexpr std::array<uint8_t, NsmDevCfgCommonSupportedNum>
-        suppCmdCode = gen_type5_code_bitmask();
-    static constexpr std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum>
+    static constexpr std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum>
         suppErrorTypes = gen_type5_supported_errors_injection_bitmask();
-    std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum>
-        current_errors_injection_bitmask{};
+    std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum> current_errors_injection_bitmask{};
 
     uint32_t device_error_status_bitmap        = 0;
     uint32_t gpio_spoofing_error_status_bitmap = 0;
@@ -287,6 +309,11 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
     // GPIO Spoofing Errors payload
     GPIOSpoofingPayload gpioSpoofingResp;
 
+    // device mode setting index 17 - NcsiMacAddr
+    bool                   currentNcsiMacAddrLoaded = false;
+    std::array<uint8_t, 6> currentNcsiMacAddr{};
+    std::array<uint8_t, 6> pendingNcsiMacAddr{};
+
     bool isErrorInjectionModeEnabled()
     {
         return errorInjectionModeResponse.mode == NsmDevCfgEnablingMode::Enable;
@@ -294,22 +321,15 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
 
     bool isErrorInjectionIDSupported(uint8_t error_injection_id)
     {
-        const uint8_t byte_index = error_injection_id / 8;
-        const uint8_t bit_offset = error_injection_id % 8;
-        if (byte_index < suppErrorTypes.size()) {
-            if (suppErrorTypes.at(byte_index) & (1u << bit_offset)) {
-                return true;
-            }
-        }
-        return false;
+        return nsm_msg::is_bit_set(suppErrorTypes, error_injection_id);
     }
 
     bool isErrorInjectionIdBitmapSupported(
-        const std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum>& error_bitmap)
+        const std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum>& error_bitmap)
     {
         // Check if error_bitmap contains only supported error types
         // Return false if any unsupported bits are set
-        for (size_t index = 0; index < NsmMaxSupportedErrorTypeBitmapBytesNum; ++index) {
+        for (size_t index = 0; index < nsm_msg::NsmT5SuppErrorTyesNum; ++index) {
             if (error_bitmap.at(index) & ~suppErrorTypes.at(index)) {
                 return false;  // Found unsupported bits
             }
@@ -332,7 +352,7 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
     bool isCurrentErrorInjectionBitmaskCleared()
     {
         return current_errors_injection_bitmask
-            == std::array<uint8_t, NsmMaxSupportedErrorTypeBitmapBytesNum>{};
+            == std::array<uint8_t, nsm_msg::NsmT5SuppErrorTyesNum>{};
     }
 
     void clearErrorInjectionPayload(uint8_t error_injection_id)
@@ -341,10 +361,9 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
             fatalerrorResp         = FatalErrorPayload{};
             portRecoveryResp       = PortRecoveryPayload{};
             usbBridgeEmulationResp = USBBridgeEmulationPayload{};
-            gpioSpoofingResp       = GPIOSpoofingPayload{};
         }
         else if (error_injection_id == static_cast<uint8_t>(ErrorInjectionID::GpioSpoofing)) {
-            // TODO: Add API here to clear the GPIO spoofing error
+            gpioSpoofingResp = GPIOSpoofingPayload{};
         }
     }
 
@@ -393,6 +412,20 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
     }
 };
 
+/** Get Supported Device Modes v2 (0x84) - Request */
+struct [[gnu::packed]] NsmT5GetSupportedDeviceModesReq
+{
+    uint32_t handle;  // 0 for first request, use previous response's handle for subsequent
+};
+
+/** Get Supported Device Modes v2 (0x84) - Response data (after completion code) */
+struct [[gnu::packed]] NsmT5GetSupportedDeviceModesResp
+{
+    uint32_t handle;      // 0 if last (or only) part, non-zero if more modes available
+    uint32_t mode_count;  // Number of supported modes in this response
+    uint32_t modes[1];    // Array of DeviceModeIndex values (variable length)
+};
+
 namespace nsm_type5 {
 
 /**
@@ -401,6 +434,18 @@ namespace nsm_type5 {
  *                 It identifies which Fatal Fault is going to be launched
  */
 void on_nsm_t5_fatal_fault_ei(uint8_t bitmap);
+
+/**
+ * @brief This is the callback for the NSM T5 Protocol Error Injection
+ * @param protocol_type - The protocol type (0x02: I2C, 0x05: I2C PCA9555, 0x03: SPI)
+ * @param bus_number    - The bus number
+ * @param bus_error     - The error type to inject
+ * @param address       - The target address (0x0: Not applied)
+ */
+void on_nsm_t5_protocol_ei(uint8_t protocol_type,
+                           uint8_t bus_number,
+                           uint8_t bus_error,
+                           uint8_t address);
 
 }  // namespace nsm_type5
 

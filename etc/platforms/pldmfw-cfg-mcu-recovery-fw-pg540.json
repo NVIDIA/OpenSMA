@@ -23,7 +23,7 @@
         {
             "Classifier": "0xA",
             "Identifier": "0xff02",
-            "Options": [],
+            "Options": [1],
             "ActivationMethod": [],
             "Version": "mcxn236Mcufw-114.71.8192"
         }

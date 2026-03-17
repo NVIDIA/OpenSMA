@@ -25,6 +25,7 @@
 #include "nv/flash/driver.h"
 #include "nv/ipc/timer.h"
 #include "nv/mctp/driver.h"
+#include "nv/mctp/enums.h"
 #include "nv/nv.h"
 
 namespace nv::mctp {
@@ -56,8 +57,52 @@ void Task::entrypoint(void* params)
     using namespace std::chrono_literals;
     auto& task = *static_cast<nv::mctp::Task*>(params);
 
+    task.power_sensor_mgr().identify_power_sensors();
     Driver drv(task, task.uuid);
     nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Mctp);
     drv.main();
 }
+
+nv::i2c::power::DeviceManager& get_power_sensor_mgr()
+{
+    auto& base_task = nv::ipc::Supervisor::inst().task(nv::ipc::TaskId::Mctp);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+    auto& mctp_task = static_cast<nv::mctp::Task&>(base_task);
+    return mctp_task.power_sensor_mgr();
+}
+
+Task& get_task()
+{
+    auto& base_task = nv::ipc::Supervisor::inst().task(nv::ipc::TaskId::Mctp);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+    return static_cast<nv::mctp::Task&>(base_task);
+}
+
+bool Task::ep_stall_detected()
+{
+    auto bitmap = static_cast<uint8_t>(port_recovery_ei_bitmap_);
+    return (bitmap
+            & (1u << static_cast<uint8_t>(
+                   PortRecoveryEIPayloadValues::PortRecoveryL1MCTPEPStall)))
+        != 0;
+}
+
+bool Task::bridge_hang_detected()
+{
+    auto bitmap = static_cast<uint8_t>(port_recovery_ei_bitmap_ >> 8);
+    return (bitmap
+            & (1u << static_cast<uint8_t>(
+                   PortRecoveryEIPayloadValues::PortRecoveryL2MCTPBridgeHang)))
+        != 0;
+}
+
+bool Task::pldm_t5_hang_detected()
+{
+    auto bitmap = static_cast<uint8_t>(port_recovery_ei_bitmap_ >> 8);
+    return (bitmap
+            & (1u << static_cast<uint8_t>(
+                   PortRecoveryEIPayloadValues::PortRecoveryL2PLDMT5Hang)))
+        != 0;
+}
+
 }  // namespace nv::mctp

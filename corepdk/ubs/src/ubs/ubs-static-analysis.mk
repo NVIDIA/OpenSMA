@@ -111,6 +111,10 @@ coverity::
 # -- Clang-Tidy -------------------------------------------------------------------------------
 UBS_CLANG_TIDY_CFG   := $(ubs_choose_file 'etc/clang-tidy')
 UBS_CLANG_TIDY_FLAGS ?= --quiet --config-file=$(UBS_CLANG_TIDY_CFG)
+UBS_CLANG_TIDY_FLAGS += \
+	-extra-arg=-std=c++23 \
+	-extra-arg=--include=$(UBS_PATH_GEN)/ubs-global-defines.h \
+	-extra-arg=--include=$(UBS_PATH_GEN)/ubs-features.h
 
 # the actual rule is in ubs-rules.mk
 tidy::
@@ -154,6 +158,6 @@ static-analysis: $(UBS_STATIC_ANALYSIS_STAGES)
 
 .PHONY: ubs-cov-build ubs-cov-analyze ubs-cov-html
 .SILENT: $(UBS_COVERITY_STAGES) $(UBS_SAS_STAGES)
-.NOTPARALLEL: coverity tidy sas static-analysis
+.NOTPARALLEL: coverity sas static-analysis
 
 endif

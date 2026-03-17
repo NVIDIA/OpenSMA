@@ -17,7 +17,7 @@
  */
 #pragma once
 
-#include "pdk-cmn-console.h"
+#include "pdk/cmn/log/log.h"
 // exported from Ada Exit_Program(Ex: Integer)
 extern "C" void corepdk_exit_program(int exit_code);
 
@@ -26,7 +26,7 @@ namespace pdk::cmn::flowcontrol {
 inline void corepdk_assert(bool condition, const char* msg)
 {
     if (!condition) {
-        console::error("CorePDK Assertion Failed: %s", msg);
+        pdk::cmn::log::here().error("CorePDK Assertion Failed: %s", msg);
         corepdk_exit_program(1);
     }
 }

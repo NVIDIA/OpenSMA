@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,10 +20,11 @@
 #include <FreeRTOSConfig.h>
 #include <portmacrocommon.h>
 
+#include "mpu_syscall_numbers.h"
+
 #include "nv/common/utils.h"
 #include "nv/nv.h"
 #include "sys/common/utils.h"
-#include "mpu_syscall_numbers.h"
 
 using namespace nv::gpio;
 
@@ -56,19 +57,9 @@ void Driver::init()
     sys::gpio::Driver::init();
 }
 
-bool sys::gpio::Driver::is_pin_valid(nv::gpio::GpioPort port, nv::gpio::GpioPin pin)
-{
-    nv::common::assert(port < sys::gpio::PortsNumber);
-    if (pin >= sys::gpio::PinsPerPort || port >= sys::gpio::PortsNumber) {
-        return false;
-    }
-
-    return (ValidPinMasks.at(port) & (nv::common::bit(pin))) > 0;
-}
-
 GPIO_Type* sys::gpio::Driver::get_gpio_instance(nv::gpio::GpioPort port)
 {
-    nv::common::assert(port < sys::gpio::PortsNumber);
+    (nv::common::assert)(port < sys::gpio::PortsNumber);
     switch (port) {
         case 0: {
             return GPIO0;
@@ -96,7 +87,7 @@ GPIO_Type* sys::gpio::Driver::get_gpio_instance(nv::gpio::GpioPort port)
 
 PORT_Type* sys::gpio::Driver::get_port_instance(nv::gpio::GpioPort port)
 {
-    nv::common::assert(port < sys::gpio::PortsNumber);
+    (nv::common::assert)(port < sys::gpio::PortsNumber);
     switch (port) {
         case 0: {
             return PORT0;
@@ -325,6 +316,22 @@ Status Driver::read(GpioPort port, GpioPin pin, uint8_t& data)
     return Status::Ok;
 }
 
+Status Driver::read_gpio_port(GpioPort port, uint32_t& gpioBitmap)
+{
+    if (port >= sys::gpio::PortsNumber) {
+        return Status::InvalidParam;
+    }
+
+    GPIO_Type* inst = get_gpio_instance(port);
+    if (inst == nullptr) {
+        return Status::Error;
+    }
+
+    gpioBitmap = inst->PDIR;
+
+    return Status::Ok;
+}
+
 Status Driver::write(GpioPort port, GpioPin pin, const uint8_t data)
 {
     if (!is_pin_valid(port, pin)) {
@@ -335,6 +342,24 @@ Status Driver::write(GpioPort port, GpioPin pin, const uint8_t data)
     GPIO_Type* inst = get_gpio_instance(port);
     GPIO_PinWrite(inst, pin, data);
     // nv::info("pin:%d Data to write:%d\n", pin, data);
+
+    return Status::Ok;
+}
+
+Status Driver::getDirection(GpioPort port, GpioPin pin, Direction& dir)
+{
+    if (!is_pin_valid(port, pin)) {
+        return Status::InvalidParam;
+    }
+
+    GPIO_Type* inst = get_gpio_instance(port);
+    if (inst == nullptr) {
+        return Status::Error;
+    }
+
+    // Check PDDR (Pin Data Direction Register): 1 = output, 0 = input
+    const bool is_output = (inst->PDDR & (1u << pin)) != 0;
+    dir                  = is_output ? Direction::Output : Direction::Input;
 
     return Status::Ok;
 }

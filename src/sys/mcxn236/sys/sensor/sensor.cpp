@@ -28,11 +28,6 @@ NV_SHARED_BSS bool is_sensor_init = false;  // NOLINT(*-non-const-global-variabl
 
 void sys::sensor::Driver::init()
 {
-// temporary solution to avoid conflict between ADC leak detection and mcu internal temperature
-// sensor
-#if defined(ENABLE_ADC_LEAK_DETECTION)
-    return;
-#else
     if (is_sensor_init == false) {
         nv::common::info("Sensor init\n");
 
@@ -99,16 +94,10 @@ void sys::sensor::Driver::init()
 
         is_sensor_init = true;
     }
-#endif
 }
 
 bool sys::sensor::Driver::get_current_temperature(float& result)
 {
-// temporary solution to avoid conflict between ADC leak detection and mcu internal temperature
-// sensor
-#if defined(ENABLE_ADC_LEAK_DETECTION)
-    return false;
-#else
     lpadc_conv_result_t conv_result_struct = {};
     uint16_t            vbe1               = 0U;
     uint16_t            vbe8               = 0U;
@@ -161,5 +150,4 @@ bool sys::sensor::Driver::get_current_temperature(float& result)
     result = temperature;
 
     return is_measure_done;
-#endif
 }

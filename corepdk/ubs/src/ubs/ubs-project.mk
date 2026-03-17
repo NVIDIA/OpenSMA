@@ -49,7 +49,7 @@ UBS_CXX_FLAGS += -fstack-usage
 endif
 
 # update include flags
-INCLUDES        += $(UBS)/src $(UBS)/src/pdk/cmn/console_cpp src
+INCLUDES        += $(UBS)/src src
 $(ubs_fixup_includes 'INCLUDES')
 $(ubs_fixup_includes 'SYSTEM_INCLUDES')
 UBS_EXTRA_FLAGS += $(addprefix -isystem,$(SYSTEM_INCLUDES))

@@ -26,6 +26,7 @@
 #include "nv/ahs/eeprom.h"
 #include "sys/i2c/i2c_slave.h"
 #include "sys/adc/adc.h"
+#include <optional>
 
 namespace nv::ahs {
 
@@ -127,12 +128,12 @@ public:
      * @param this_task_instance Pointer to the AHS instance
      * @param new_transaction true if this is a new I2C transaction
      */
-    static void i2c_callback(uint8_t&                                                   address,
-                             bool                                                       is_read,
-                             std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& buffer,
-                             size_t& data_size,
-                             void*   this_task_instance,
-                             bool    new_transaction);
+    static void i2c_callback(uint8_t&                                           address,
+                             bool                                               is_read,
+                             std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& buffer,
+                             size_t&                                            data_size,
+                             void* this_task_instance,
+                             bool  new_transaction);
 
     /**
      * @brief Handles hot swap timer interrupt events
@@ -154,9 +155,9 @@ private:
      * @param rx_buffer Buffer containing data to write
      * @param rx_data_size Size of data to write
      */
-    void i2c_write(uint8_t&                                                   address,
-                   std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& rx_buffer,
-                   size_t&                                                    rx_data_size);
+    void i2c_write(uint8_t&                                           address,
+                   std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& rx_buffer,
+                   size_t&                                            rx_data_size);
 
     /**
      * @brief Handles I2C read operations from PCA9555 IO expander
@@ -166,10 +167,10 @@ private:
      * @param tx_data_size Size of data read
      * @param new_transaction true if this is a new I2C transaction
      */
-    void i2c_read(uint8_t&                                                   address,
-                  std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& tx_buffer,
-                  size_t&                                                    tx_data_size,
-                  bool                                                       new_transaction);
+    void i2c_read(uint8_t&                                           address,
+                  std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& tx_buffer,
+                  size_t&                                            tx_data_size,
+                  bool                                               new_transaction);
 
     /**
      * @brief Updates the interrupt pin state based on IO expander status
@@ -204,11 +205,8 @@ private:
     /** @brief I2C bus port configuration */
     nv::i2c::Port i2c_bus;
 
-    /** @brief I2C slave driver configuration */
-    sys::i2c::I2CSlaveDriver::Config i2c_driver_config;
-
     /** @brief I2C slave driver instance */
-    sys::i2c::I2CSlaveDriver i2c_driver;
+    sys::i2c::I2CSlaveDriver<AHS> i2c_driver;
 
     /** @brief Interrupt pin port */
     nv::gpio::GpioPort interrupt_l_port;
@@ -229,13 +227,13 @@ private:
     std::array<nhp::E1sOutputPins, nhp::NumE1sDrives> e1s_pin_out;
 
     /** @brief PCA9555 GPIO expander object for drive control */
-    std::array<emulation::Pca9555, NumGpioExpanders> e1s_gpio_expanders;
+    std::array<std::optional<emulation::Pca9555>, NumGpioExpanders> e1s_gpio_expanders;
 
     /** @brief EEPROM object for configuration storage */
-    std::array<EEPROM, NumGpioExpanders> ahs_eeproms;
+    std::array<std::optional<EEPROM>, NumGpioExpanders> ahs_eeproms;
 
     /** @brief Hot swap state machine instances for each drive */
-    std::array<ahs::E1sHotSwap, nhp::NumE1sDrives> e1s_hssms;
+    std::array<std::optional<ahs::E1sHotSwap>, nhp::NumE1sDrives> e1s_hssms;
 
     /** @brief Power good status values for each drive */
     std::array<bool, nhp::NumE1sDrives> pgood_vals;
@@ -243,11 +241,8 @@ private:
     /** @brief Presence detection values for each drive */
     std::array<bool, nhp::NumE1sDrives> prsntL_vals;
 
-    /** @brief Amber LED status values for each drive */
-    std::array<bool, nhp::NumE1sDrives> amberLED_vals;
-
-    /** @brief Blue LED status values for each drive */
-    std::array<bool, nhp::NumE1sDrives> blueLED_vals;
+    /** @brief PCIE PERST# values for each drive */
+    std::array<bool, nhp::NumE1sDrives> perstL_vals;
 };
 
 }  // namespace nv::ahs

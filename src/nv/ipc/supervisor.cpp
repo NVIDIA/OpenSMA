@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -67,15 +67,18 @@ void Supervisor::startup([[maybe_unused]] int         argc,
     // create the unittesting task if we are unittesting.
     this->argc = argc;
     this->argv = argv;
-    ut::Task::make();
+    ut::Task::make(argc, argv);
 #else
 // mcu coverage build
 #ifdef NV_COVERAGE
     // if NV_COVERAGE is defined and not debug signed, halt the system
-    auto key_version = fw_parser::get_image_signing_key_version(
-        fw_parser::ParsingFwType::ActiveSlot);
-    if (!key_version || *key_version != 0) {
-        inst().on_exit(-1);
+    // only core0 is allowed to read the key version since it is placed in secure memory zone
+    if (nv::ipc::get_current_core() == nv::ipc::CoreId::Core0) {
+        auto key_version = fw_parser::mcu::get_image_signing_key_version(
+            fw_parser::mcu::ParsingFwType::ActiveSlot);
+        if (!key_version || *key_version != 0) {
+            inst().on_exit(-1);
+        }
     }
 #endif
 #endif
@@ -93,6 +96,13 @@ void Supervisor::startup([[maybe_unused]] int         argc,
     for (int i = 0; i < static_cast<int>(ipc::QueueId::End); i++) {
         ipc::Queue::make(static_cast<ipc::QueueId>(i));
     }
+
+// Only create mutex on Core0
+#if defined(CPU_MCXN547VDF_cm33_core0) || defined(CPU_MCXN556SCDF_cm33_core0)
+    for (int i = 0; i < static_cast<int>(ipc::MutexId::End); i++) {
+        ipc::Mutex::make(static_cast<ipc::MutexId>(i));
+    }
+#endif
 
     for (int id = 0; auto& task : _tasks) {
         if (task == nullptr) {
@@ -148,6 +158,12 @@ Queue* Supervisor::memory_for(QueueId id)
 {
     auto idx = common::to_underlying(id);
     return &_queues.at(idx);
+}
+
+Mutex* Supervisor::memory_for(MutexId id)
+{
+    auto idx = common::to_underlying(id);
+    return &_mutexes.at(idx);
 }
 
 StreamBuffer*

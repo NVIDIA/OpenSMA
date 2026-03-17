@@ -70,6 +70,12 @@ struct ChassisInfo
                                                                 // NUL-terminated)
 };
 
+struct BoardInfo
+{
+    static constexpr size_t MaxBoardNameLen = 64;
+    uint8_t                 serial[MaxBoardNameLen];
+};
+
 /**
  * @brief Get chassis info (serial + custom fields) in one call.
  *        API uses fixed-size buffers, no dynamic allocation.
@@ -81,4 +87,14 @@ struct ChassisInfo
  */
 Status get_chassis_info(nv::i2c::Port port, uint8_t eeprom_addr, ChassisInfo& out);
 
+/**
+ * @brief Get board info (serial number) in one call.
+ *        API uses fixed-size buffers, no dynamic allocation.
+ *
+ * @param port I2C port
+ * @param eeprom_addr EEPROM I2C address (typically 0x50-0x57)
+ * @param out [OUT] Populated board info structure
+ * @return Status::FruSuccess on success, other Status values on failure
+ */
+Status get_board_info(nv::i2c::Port port, uint8_t eeprom_addr, BoardInfo& out);
 }  // namespace nv::fru

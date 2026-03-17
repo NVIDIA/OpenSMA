@@ -30,11 +30,11 @@ STACK_SIZE = DEFINED(__stack_size__) ? __stack_size__ : 0x0C00;
 /* Specify the memory areas */
 MEMORY
 {
-  m_interrupts          (RX)  : ORIGIN = 0x00000400, LENGTH = 0x000002B0 /* start after core0 */
-  m_header              (RW)  : ORIGIN = 0x000006B0, LENGTH = 0x00000150 // 336
-  m_text                (RX)  : ORIGIN = 0x00000800, LENGTH = 0x0005B800
+  m_interrupts          (RX)  : ORIGIN = 0x04000000, LENGTH = 0x000002B0 /* start from RAMX */
+  m_header              (RW)  : ORIGIN = 0x040002B0, LENGTH = 0x00000150 // 336
+  m_text                (RX)  : ORIGIN = 0x04000400, LENGTH = 0x00017C00
   m_data                (RW)  : ORIGIN = 0x20002400, LENGTH = 0x0005DC00
-  m_sramx               (RW)  : ORIGIN = 0x14000000, LENGTH = 0x00018000
+  m_sramx               (RW)  : ORIGIN = 0x04000000, LENGTH = 0x00018000
 }
 
 /* Define output sections */

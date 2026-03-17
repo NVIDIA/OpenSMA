@@ -16,11 +16,18 @@
  * limitations under the License.
  */
 #include "app/pdk-mctp-app-router-plat.h"
+#include "pdk-mctp-platforms-config.h"
+#include "pdk/cmn/log/log.h"
 
 namespace pdk::mctp::platforms {
 
 uint8_t get_cur_eid(const RoutingTable& routing_table, Packet::InterfaceType interface)
 {
+    if (interface >= static_cast<uint16_t>(Interface::UsEnd)) {
+        pdk::cmn::log::here().info("MCTP invalid interface index: %d\n", interface);
+        return routing_table.ec.cur_eid.at(
+            static_cast<Packet::InterfaceType>(DefaultInterface));
+    }
     return routing_table.ec.cur_eid.at(interface);
 }
 

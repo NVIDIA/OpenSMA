@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <variant>
 
 #include "nv/common/system.h"
 #include "nv/gpio/common.h"
@@ -34,15 +35,19 @@
 #include "nv/mctp/debug.h"
 #include "nv/mctp/enums.h"
 #include "nv/mctp/interface.h"
+#include "nv/mctp/nsm_event.h"
+#include "nv/mctp/nsm.h"
 #include "nv/mctp/nsm_type_5.h"
 #include "nv/mctp/task.h"
 #include "nv/mctp/vendor.h"
 #include "nv/nv.h"
 #include "nv/pldm/task.h"
+#include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
 #include "nv/spdm/task.h"
 #include "nv/spi/task.h"
 #include "nv/usb/task.h"
 #include "nv/watchdog/runtime.h"
+#include "nv/i2c/smb_direct.h"
 #include "sys/ipc/driver.h"
 
 using namespace nv::mctp;
@@ -127,6 +132,10 @@ void Driver::init()
                 case static_cast<uint16_t>(Client::DsI2c1):
                 case static_cast<uint16_t>(Client::DsI2c2):
                 case static_cast<uint16_t>(Client::DsI2c3):
+                case static_cast<uint16_t>(Client::DsI2c4):
+                case static_cast<uint16_t>(Client::DsI2c5):
+                case static_cast<uint16_t>(Client::DsI2c6):
+                case static_cast<uint16_t>(Client::DsI2c7):
                 case static_cast<uint16_t>(Client::DsI3c0):
                 case static_cast<uint16_t>(Client::DsI3c1):
                 case static_cast<uint16_t>(Client::Spi0):
@@ -163,92 +172,42 @@ void Driver::init()
                     nsm_type5::on_nsm_t5_fatal_fault_ei(Cmd.data1);
                     break;
                 case static_cast<uint16_t>(CmdCode::ProtocolReset): on_protocol_reset(); break;
-                case static_cast<uint16_t>(CmdCode::NsmEventCmd):
-                    on_receive_event(Cmd.data1, Cmd.data2);
+                case static_cast<uint16_t>(CmdCode::NsmEventCmd)  : {
+                    // Pass data3 array directly to on_receive_event
+                    on_receive_event(Cmd.data1, Cmd.data2, Cmd.data3);
                     break;
+                }
+                case static_cast<uint16_t>(CmdCode::SmbusCacheRefresh): {
+                    // Refresh SMBus Direct cache in MCTP task context to avoid cross-task
+                    // races.
+                    auto cache_span = nv::smb_telemetry::SmbDirect::get_cache();
+                    if (!cache_span.empty()) {
+                        nv::smb_telemetry::SmbDirect::refresh_cache(
+                            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+                            std::span<uint8_t>(const_cast<uint8_t*>(cache_span.data()),
+                                               cache_span.size()));
+                    }
+                    break;
+                }
                 default: break;
             }
         }
     }
 }
 
-void Driver::on_type0_event(uint8_t eventId, NsmEventMsg& nsm_event_msg)
+void Driver::on_receive_event(uint8_t nsmType, uint8_t eventId, MctpCmdData3 eventInfo)
 {
-    nsm_event_msg.event_id = eventId;
-}
-
-void Driver::on_receive_event(uint8_t nsmType, uint8_t eventId)
-{
-    // Validate nsmType before casting to enum
-    if (nsmType >= static_cast<uint8_t>(NsmMsgType::Reserved)) {
-        nv::error("Invalid NSM message type: %u\n", nsmType);
-        return;
-    }
-
-    const auto nsm_msg_type = static_cast<NsmMsgType>(nsmType);
-    const auto event_id     = static_cast<uint8_t>(eventId);
-
-    // Event not enable
-    if (!_nsm.is_event_source_enable(nsm_msg_type, event_id)) {
-        nv::info("event not enable\n");
-        return;
-    }
-
-    // The global event generation setting is not PUSH
-    if (!_nsm.is_global_event_setting_push()) {
-        return;
-    }
-
-    nv::info("on_receive_event: msgType %d, eventId %d\n",
-             static_cast<uint8_t>(nsm_msg_type),
-             event_id);
-
+    Client client{};
     Packet event_msg{};
 
-    const EventLog event_log{};
-
-    // Fill event message header, keep event_log all zeros and will fill in the event handling
-    // below.
-    _nsm.fill_event_msg(event_log, event_msg);
-
-    auto& nsm_event_msg = NsmEventMsg::from(event_msg);
-
-    // Fill event id, data size and payload
-    switch (nsm_msg_type) {
-        case NsmMsgType::DeviceCapabilityDiscovery:
-            on_type0_event(event_id, nsm_event_msg);
-            break;
-        default:
-            return;
-            break;
-            // case NsmMsgType::Firmware :
-            // on_type6_event(static_cast<NsmFwEvent>(eventMctpCmd.eventId)); break;
+    // Prepare event message using nsm_event module
+    // The deserialization logic is handled inside PrepareEventMessage
+    if (nsm_event::PrepareEventMessage(nsmType, eventId, eventInfo, _nsm, client, event_msg)) {
+        // TODO: Enhance the error handling of forward() that may lose the event to USB_Tx queue
+        nv::info("Forward event message to client: %d\n", static_cast<uint8_t>(client));
+        nv::logger::info(nv::logger::Event::NsmEventRequest, {static_cast<uint8_t>(client)});
+        forward(client, event_msg);
     }
-
-    // Check for overflow when adding data_size to packet_length
-    const auto current_packet_length = event_msg.priv.packet_length;
-    const auto data_size             = nsm_event_msg.data_size;
-    if (current_packet_length > UINT16_MAX - data_size) {
-        return;
-    }
-    // coverity[cert_int30_c_violation] - Safe to add since we checked for overflow above
-    event_msg.priv.packet_length = static_cast<uint16_t>(current_packet_length + data_size);
-
-    const bool ackEnable = _nsm.is_event_ack_enable(nsm_msg_type, event_id);
-
-    // Copy to the event message cache if ack is enabled
-    if (ackEnable) {
-        auto status = _nsm.cache_event_msg(event_msg);
-        if (!status) {
-            nv::error("Failed to cache event message - no available slots\n");
-            // TODO: Add MCU flash log for this error.
-        }
-    }
-
-    auto client = static_cast<Client>(event_msg.priv.packet_interface);
-
-    // TODO: Enhance the error handling of forward() that may lose the event to USB_Tx queue
-    forward(client, event_msg);
 }
 
 void Driver::on_receive(Client client)
@@ -291,6 +250,22 @@ void Driver::on_receive(Client client)
     auto&   mctp_rx  = is_multi ? multi_rx : rx;
     auto    msg_type = Control::PktReq::from(mctp_rx).msg_type;
     Packet& tx       = from(_mctp_tx_buf);
+
+    if (get_task().ep_stall_detected()) {
+        bool allow = false;
+        if (msg_type == MsgType::VendorPci) {
+            const auto& nrx = NsmPktReq::from(mctp_rx);
+            if (nrx.nv_msg_type == NsmMsgType::DeviceConfiguration) {
+                allow = true;
+            }
+        }
+        if (!allow) {
+            if (is_multi == true) {
+                _composer.clear();
+            }
+            return;
+        }
+    }
 
     switch (msg_type) {
         case MsgType::Control: {
@@ -347,49 +322,61 @@ void Driver::on_receive(Client client)
 void Driver::forward([[maybe_unused]] Client client, const Packet& tx)
 {
     // dump_packet(tx, Constants::BufferSize);
+    bool is_forwarded = true;
 
     if (client == Client::UsI2c || client == Client::DsI2c0 || client == Client::DsI2c1
-        || client == Client::DsI2c2 || client == Client::DsI2c3) {
+        || client == Client::DsI2c2 || client == Client::DsI2c3 || client == Client::DsI2c4
+        || client == Client::DsI2c5 || client == Client::DsI2c6 || client == Client::DsI2c7) {
         auto status = nv::i2c::Task::tx(tx);
         if (status != nv::i2c::Task::Status::Ok) {
-            return;
+            is_forwarded = false;
         }
     }
     else if (client == Client::Spi0 || client == Client::Spi1 || client == Client::Spi2) {
         if constexpr (nv::ipc::Spi_Available) {
             auto status = nv::spi::Task::tx(tx);
             if (status != nv::spi::Task::Status::Ok) {
-                return;
+                is_forwarded = false;
             }
         }
     }
     else if (client == Client::DsI3c0 || client == Client::DsI3c1) {
         auto status = nv::i3c::Task::tx(tx);
         if (status != nv::i3c::Task::Status::Ok) {
-            return;
+            is_forwarded = false;
         }
     }
     else if (client == Client::UsUsb) {
         auto item   = ipc::Queue::Item(std::bit_cast<uint8_t*>(&tx), Constants::BufferSize);
         auto status = usb::Task::usb_tx(item);
         if (status != usb::Status::Ok) {
-            return;
+            is_forwarded = false;
         }
     }
     else if (client == Client::Pldm) {
-        auto status = nv::pldm::Task::pldm_tx(tx);
-        if (status != nv::pldm::Status::Ok) {
-            return;
+        // Drop PLDM Type 5 (Firmware Update) when hang is detected
+        if (tx.msg[2] == NV_PLDM_TYPE_FIRMWARE_UPDATE && get_task().pldm_t5_hang_detected()) {
+            is_forwarded = false;
+        }
+        else {
+            auto status = nv::pldm::Task::pldm_tx(tx);
+            if (status != nv::pldm::Status::Ok) {
+                is_forwarded = false;
+            }
         }
     }
     else if (client == Client::Spdm) {
         // send message from ap to spdm library.
         auto status = nv::spdm::Task::spdm_tx(tx);
         if (status != nv::spdm::Status::Ok) {
-            return;
+            is_forwarded = false;
         }
     }
     else {
+        return;
+    }
+    if (!is_forwarded) {
+        nv::logger::info(nv::logger::Event::MctpForwardFail, {static_cast<uint8_t>(client)});
         return;
     }
 }
@@ -427,6 +414,9 @@ void Driver::on_receive_application(nv::ipc::Queue& queue, ipc::Queue::Item& rx_
 {
     auto status = queue.recv(rx_item, 100ms);
     if (status != ipc::Queue::Status::Ok) {
+        return;
+    }
+    if (get_task().ep_stall_detected()) {
         return;
     }
     on_forward_message(rx_item);
@@ -541,7 +531,11 @@ void Driver::on_enumerate_done()
             if (downstream_entry.client == mctp::Client::DsI2c0
                 || downstream_entry.client == mctp::Client::DsI2c1
                 || downstream_entry.client == mctp::Client::DsI2c2
-                || downstream_entry.client == mctp::Client::DsI2c3) {
+                || downstream_entry.client == mctp::Client::DsI2c3
+                || downstream_entry.client == mctp::Client::DsI2c4
+                || downstream_entry.client == mctp::Client::DsI2c5
+                || downstream_entry.client == mctp::Client::DsI2c6
+                || downstream_entry.client == mctp::Client::DsI2c7) {
                 // update routing table to io task
                 auto queue_status = _router_queue.send(
                     item,
@@ -588,7 +582,6 @@ void Driver::on_enumerate_done()
 
     // send discovery notify
     if (_is_send_notify) {
-        _is_send_notify = false;
         on_discovery_notify();
     }
 }
@@ -599,6 +592,9 @@ void Driver::on_discovery_notify()
     if (!is_enumeate) {
         return;
     }
+
+    // Clear flag only after confirming we can send
+    _is_send_notify = false;
 
     constexpr static uint8_t IsRespnse = false;
     constexpr static uint8_t MsgTag    = 0;
@@ -757,6 +753,9 @@ void Driver::on_type6_event(NsmFwEvent event)
 
 bool Driver::is_allow_bridge(const Packet& pkt)
 {
+    if (get_task().bridge_hang_detected()) {
+        return false;
+    }
     auto& ctl_pkt = mctp::Control::PktReq::from(pkt);
     // Check if it's the 1st packet, and is set_eid or routing info update command
     if ((ctl_pkt.som) && ctl_pkt.msg_type == mctp::MsgType::Control
@@ -814,6 +813,10 @@ void Driver::on_protocol_reset()
                 case static_cast<uint16_t>(Client::DsI2c1)   :
                 case static_cast<uint16_t>(Client::DsI2c2)   :
                 case static_cast<uint16_t>(Client::DsI2c3)   :
+                case static_cast<uint16_t>(Client::DsI2c4)   :
+                case static_cast<uint16_t>(Client::DsI2c5)   :
+                case static_cast<uint16_t>(Client::DsI2c6)   :
+                case static_cast<uint16_t>(Client::DsI2c7)   :
                 case static_cast<uint16_t>(Client::DsI3c0)   :
                 case static_cast<uint16_t>(Client::DsI3c1)   :
                 case static_cast<uint16_t>(Client::Spi0)     :
@@ -882,11 +885,17 @@ mctp::Status Driver::mctp_send(ipc::Queue::Item& item, ipc::QueueId id, Client c
     return Status::Ok;
 }
 
-mctp::Status Driver::mctp_send_cmd(CmdCode cmd, uint8_t data1, uint8_t data2, bool is_front)
+mctp::Status Driver::mctp_send_cmd(
+    CmdCode cmd, uint8_t data1, uint8_t data2, bool is_front, const MctpCmdData3& data3)
 {
-    const Command Cmd{.cmd = static_cast<uint16_t>(cmd), .data1 = data1, .data2 = data2};
-    auto          cmd_item  = ipc::Queue::Item(std::bit_cast<uint8_t*>(&Cmd), sizeof(Command));
-    auto&         cmd_queue = ipc::Queue::make(ipc::QueueId::MctpCmd);
+    // Create Command structure with data3
+    const Command Cmd{
+        .cmd = static_cast<uint16_t>(cmd), .data1 = data1, .data2 = data2, .data3 = data3};
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    auto  cmd_item = ipc::Queue::Item(const_cast<uint8_t*>(std::bit_cast<const uint8_t*>(&Cmd)),
+                                     sizeof(Command));
+    auto& cmd_queue = ipc::Queue::make(ipc::QueueId::MctpCmd);
 
     auto is_isr = ipc::Supervisor::is_in_isr();
 
@@ -903,14 +912,6 @@ mctp::Status Driver::mctp_send_cmd(CmdCode cmd, uint8_t data1, uint8_t data2, bo
     }
 
     return Status::Ok;
-}
-
-mctp::Status Driver::send_event_message(NsmMsgType msgType, uint8_t eventId)
-{
-    nv::info(
-        "send_event_message: msgType %d, eventId %d\n", static_cast<uint8_t>(msgType), eventId);
-
-    return mctp_send_cmd(CmdCode::NsmEventCmd, static_cast<uint8_t>(msgType), eventId);
 }
 
 mctp::Status Driver::mctp_send(ipc::Queue::Item& item, Client client)

@@ -16,11 +16,17 @@
  * limitations under the License.
  */
 #include "corepdk/modules/mctp-cpp/src/app/pdk-mctp-app-router-plat.h"
-
+#include "corepdk/platforms/mcxn236/mctp-cpp/src/pdk-mctp-platforms-config.h"
+#include "nv/logger/log.h"
 namespace pdk::mctp::platforms {
 
 uint8_t get_cur_eid(const RoutingTable& routing_table, Packet::InterfaceType interface)
 {
+    if (interface >= static_cast<uint16_t>(Interface::UsEnd)) {
+        nv::logger::info(nv::logger::Event::MctpInvalidInterfaceIndex, {interface});
+        return routing_table.ec.cur_eid.at(
+            static_cast<Packet::InterfaceType>(DefaultInterface));
+    }
     return routing_table.ec.cur_eid.at(interface);
 }
 

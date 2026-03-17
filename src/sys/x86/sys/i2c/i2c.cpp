@@ -33,7 +33,7 @@ void Driver::init()
     return;
 }
 
-void Driver::start()
+void Driver::start([[maybe_unused]] bool enable_target)
 {
     return;
 }
@@ -52,4 +52,18 @@ uint8_t Driver::address()
 bool Driver::get_status([[maybe_unused]] uint8_t address)
 {
     return true;
+}
+
+nv::i2c::I2cStatus Driver::i2c_read([[maybe_unused]] uint8_t            address,
+                                    [[maybe_unused]] std::span<uint8_t> buffer,
+                                    [[maybe_unused]] nv::i2c::I2cFlags  flags)
+{
+    return nv::i2c::I2cStatus::Ok;
+}
+
+nv::i2c::I2cStatus Driver::i2c_write([[maybe_unused]] uint8_t            address,
+                                     [[maybe_unused]] std::span<uint8_t> buffer,
+                                     [[maybe_unused]] nv::i2c::I2cFlags  flags)
+{
+    return nv::i2c::I2cStatus::Ok;
 }

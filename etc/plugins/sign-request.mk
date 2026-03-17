@@ -22,6 +22,7 @@ PROJECT_PLATFORM     := etc/platforms
 PLDMPKG_CFG          := $(PROJECT_PLATFORM)/pldmfw-cfg-mcu-fw.json
 PLDMPKG_RECOVERY_CFG := $(PROJECT_PLATFORM)/pldmfw-cfg-mcu-recovery-fw-$(PROJECT).json
 PLDMPKG              := libexec/tools/pldmfwpkg-gen.py
+ENABLE_PQC_SIGN      ?= false
 
 UBS_TARGET_BIN	      = $(UBS_TARGET:.elf=.bin)
 UBS_TARGET_SIGNED     = $(UBS_TARGET:.elf=_signed.bin)
@@ -49,10 +50,11 @@ endif
 
 SIGN_TYPE      ?= debug
 ifeq ($(CHIP), mcxn556)
-SIGN_JOB       = $(addprefix SMA_MCXN556_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:]))
+SIGN_JOB       = $(addprefix SMA_MCXN556$(if $(filter true,$(ENABLE_PQC_SIGN)),_PQC,)_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:]))
 else
 SIGN_JOB       = $(addprefix SMA_MCXN236_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:])_$(SIGN_KEYSET))
 endif
+
 SIGN_DESC	   = "MCU signing for dev testing"
 SIGN_MBI_REQ   = $(UBS_PATH_OUT)/request_id_mbi.json
 SIGN_SB_REQ   = $(UBS_PATH_OUT)/request_id_sb.json
@@ -91,6 +93,7 @@ else
 	$(eval SIGN_INPUT_FILE := $(UBS_TARGET_BIN))
 endif
 
+	$(ubs-build) "SIGN_JOB" "$(SIGN_JOB)"
 	$(ubs-build) "REQ MBI" "$(SIGN_MBI_REQ)"
 	# Generate request_id_mbi.json
 	$(NVSEC) $(SIGN_FLAG) $(SIGN_SSA) --request_id_file $(SIGN_MBI_REQ) --input_file $(SIGN_INPUT_FILE) --parameters_file $(SIGN_MBI_CFG)
@@ -101,6 +104,7 @@ sign-request-sb:
 		exit 1; \
 	fi
 
+	$(ubs-build) "SIGN_JOB" "$(SIGN_JOB)"
 	$(ubs-build) "REQ SB" "$(SIGN_SB_REQ)"
 	# Generate request_id_sb.json
 	cp $(UBS_TARGET_SIGNED) $(dir $(UBS_TARGET_SIGNED))signed_mbi.bin

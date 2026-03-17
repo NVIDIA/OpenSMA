@@ -42,6 +42,7 @@ public:
 protected:
     static void     init();
     static uint32_t read_ticks();
+    static uint32_t read_ticks_inline() { return CTIMER_GetTimerCountValue(SYS_CTIMER_CTIMER); }
     static uint32_t ticks_to_us(Ticks ticks);
 
     static Ticks get_current_ticks();

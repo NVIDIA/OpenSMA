@@ -1,0 +1,33 @@
+{
+    "PackageVersion": "mcxn236FwPkg-114.71.8192",
+    "FirmwareDevices": [
+        {
+            "UpdateOptions": [],
+            "ApplicableComponents": [
+                0
+            ],
+            "Descriptors": [
+                {
+                    "Type": "0x02",
+                    "Data": "E7A31C9F48B2D075C3FE6A41B09D57E2"
+                },
+                {
+                    "Type": "0xFFFF",
+                    "Title": "RECOVERY",
+                    "Data": "7265636f76657279"
+                }
+            ]
+        }
+    ],
+    "Components": [
+        {
+            "Classifier": "0xA",
+            "Identifier": "0xff02",
+            "Options": [
+                1
+            ],
+            "ActivationMethod": [],
+            "Version": "mcxn236Mcufw-114.71.8192"
+        }
+    ]
+}

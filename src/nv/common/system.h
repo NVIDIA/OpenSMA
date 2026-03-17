@@ -71,6 +71,12 @@ public:
     /// Get system task switch latency in ms
     uint32_t task_switch_latency();
 
+    /// Disable the cache.
+    void disable_cache();
+
+    /// Enable the cache.
+    void enable_cache();
+
     /// Abort the program, with an exit value if running on an emulator or unittesting.
     [[noreturn]] void abort(ExitValue i);
 

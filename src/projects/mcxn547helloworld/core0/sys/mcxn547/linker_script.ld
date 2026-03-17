@@ -250,6 +250,7 @@ SECTIONS
     *middleware/mbedtls/port/els/cbc_mac_alt.c.o(.bss*)
     *devices/MCXN547/drivers/fsl_i3c.c.o(.bss*)
     *devices/MCXN547/drivers/fsl_i3c_edma.c.o(.bss*)
+    *devices/MCXN547/drivers/fsl_lpspi.c.o(.bss*)
     *(*_ZGVZN*)
     *(*s_debugConsole*)   /* WAR for not changing SDK*/
     . = ALIGN(32);

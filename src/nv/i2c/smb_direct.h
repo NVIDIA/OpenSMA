@@ -17,10 +17,17 @@
  */
 
 #pragma once
-#include <stdint.h>
-#include <span>
 
+#include <span>
+#include "nv/telemetry/smb_telemetry.h"
+
+// Backward compatibility: expose SMB telemetry types and functions under nv::i2c
 namespace nv::i2c {
-static constexpr uint8_t SmbDirectOffset = 0x50;
-bool                     on_smbus_direct(uint8_t offset, std::span<uint8_t> buffer);
+
+// SMBus Direct read handlers (implemented in smb_direct.cpp)
+bool on_smbus_direct(uint8_t offset, std::span<uint8_t> buffer);
+bool vr_on_smbus_direct(uint8_t                  offset,
+                        std::span<uint8_t>       buffer,
+                        std::span<const uint8_t> cache);
+
 }  // namespace nv::i2c

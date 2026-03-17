@@ -39,6 +39,10 @@ enum class Interface : uint16_t
     Spi0   = 11,
     Spi1   = 12,
     Spi2   = 13,
+    DsI2c4 = 14,
+    DsI2c5 = 15,
+    DsI2c6 = 16,
+    DsI2c7 = 17,
     End,
 };
 
@@ -53,11 +57,37 @@ enum class Ccode : uint8_t
     ErrorUnsupportedMsgType      = 0x06,
     ErrorInsufficientSpace       = 0x80,  // Ccode for RoutInfoUpdate
     ErrorUpdateDbFail            = 0x81,
+    ErrorInvalidStateForCommand  = 0x80,  // ImageCopyControl (NSM T6)
+    ErrorInvalidRequestType      = 0x81,  // ImageCopyControl (NSM T6)
+    ErrorUnsupportedArgument     = 0x80,  // SetRotProperty   (NSM T6)
     ErrorEfuseUpdateFailed       = 0x86,
     ErrorIrreversibleConfDisable = 0x87,
     ErrorNonceMismatch           = 0x88,
     ErrorDebugTokenInstalled     = 0x89,
     ErrorPldmProcessing          = 0x8A,
+    ErrorI2CError                = 0x8B,
+};
+
+enum class Rcode : uint16_t
+{
+    Null                         = 0x00,
+    ErrorEfuseUpdateFailed       = 0x86,
+    ErrorIrreversibleConfDisable = 0x87,
+    ErrorNonceMismatch           = 0x88,
+    ErrorDebugTokenInstalled     = 0x89,
+    ErrorPldmProcessing          = 0x8A,
+    ErrorPengingActivation       = 0x8B,
+
+    // ImageCopyControl, SetRotProperty (NSM T6) related reason codes
+    PropertyNotSupported           = 0x100,
+    LifespanVolatileNotSupported   = 0x101,
+    LifespanPersistentNotSupported = 0x102,
+    NoBootComplete                 = 0x103,
+    UpdateInProgress               = 0x104,
+    ImageCopyInProgress            = 0x105,
+    ImageCopyCompleted             = 0x106,
+    FlashWearMitigation            = 0x107,
+    IncompleteComponentSet         = 0x108,
 };
 
 enum class VdmCmd : uint8_t
@@ -82,6 +112,7 @@ enum class VdmCmd : uint8_t
     RegTableAccess      = 0x84,
     ScanI2c             = 0x85,
     DownloadCoverage    = 0x86,
+    FanControl          = 0x87,
 };
 
 }  // namespace pdk::mctp::platforms

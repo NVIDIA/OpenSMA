@@ -19,6 +19,7 @@
 #include "nv/i2c/sensor.h"
 #include <stdint.h>
 
+// The Register map can be reused for Onsemi Nct72.
 namespace nv::i2c {
 
 /**
@@ -42,7 +43,6 @@ public:
         configurationWrite       = 0x09,  // Configuration register (write)
         LocalTempHighLimitWrite  = 0x0B,  // Local temperature high limit (write)
         RemoteTempHighLimitWrite = 0x0D,  // Remote temperature high limit (write)
-        LocalTempLow             = 0x15,  // Local temperature low byte
         RemoteThermLimit         = 0x19,  // Remote THERM limit (write/read)
         LocalThermLimit          = 0x20,  // Local THERM limit (write/read)
         ManufacturerId           = 0xFE,  // Manufacturer ID register

@@ -1,0 +1,91 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * @file mcu_internal_temp.h
+ * @brief MCU Internal Temperature Sensor Driver Header
+ *
+ * This driver provides a unified management interface for the MCU internal
+ * temperature sensor using LPADC channel 26. It replaces the old sys::sensor::Driver
+ * implementation and follows the volt_mon architecture.
+ *
+ * Architecture: Uses independent trigger (Trigger 1) with dedicated FIFO 1
+ * - Trigger 0: Leak detect / busbar sensors form a command chain → FIFO 0 (continuous)
+ * - Trigger 1: MCU temp sensor (CMD 15) → FIFO 1 (on-demand, independent)
+ * - Uses RAII guard to prevent conflicts with other ADC oneshot operations
+ * - Software-triggered conversion with hardware timer-based polling
+ */
+
+#pragma once
+
+#include <cstdint>
+
+#include "common.h"
+
+#include NV_IPC_CONFIG_H
+
+namespace nv {
+
+// Forward declaration - only volt_mon::init() may call module init()
+namespace volt_mon {
+void init(bool, bool, bool, bool);
+}
+
+namespace mcu_internal_temp {
+
+using nv::volt_mon::Status;
+
+/**
+ * @brief MCU internal temperature driver class
+ */
+class McuInternalTemp
+{
+    friend void volt_mon::init(bool, bool, bool, bool);
+
+public:
+    /**
+     * @brief Constructor
+     */
+    explicit McuInternalTemp();
+
+    /**
+     * @brief Get the instance of the MCU internal temperature driver
+     * @return The instance of the MCU internal temperature driver
+     */
+    static McuInternalTemp& inst();
+
+    /**
+     * @brief Get current temperature in Celsius
+     * @param temperature Output parameter for temperature in Celsius
+     * @return Status::Ok if successful, error code otherwise
+     */
+    Status get_temperature_celsius(float& temperature);
+
+private:
+    /**
+     * @brief Initialize the MCU internal temperature system
+     * @warning Only callable by volt_mon::init(). Direct calls will not start ADC scanning.
+     */
+    void init();
+
+    // Single MCU internal temperature sensor
+    nv::volt_mon::McuInternalTempSensor sensor;
+};
+
+}  // namespace mcu_internal_temp
+}  // namespace nv

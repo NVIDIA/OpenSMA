@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,6 +19,7 @@
 #include <array>
 #include <FreeRTOS.h>
 #include <queue.h>
+#include <semphr.h>
 #include <task.h>
 #include <timers.h>
 
@@ -76,6 +77,10 @@ struct Supervisor
     /// freertos static event struct storage
     std::array<StaticEventGroup_t, nv::common::to_underlying(nv::ipc::EventId::End)>
         static_events;
+
+    /// freertos static mutex struct storage
+    std::array<StaticSemaphore_t, nv::common::to_underlying(nv::ipc::MutexId::End)>
+        static_mutexes;
 
     /// freertos static timer struct storage
     std::array<StaticTimer_t, nv::common::to_underlying(nv::ipc::TimerId::End)> static_timers;

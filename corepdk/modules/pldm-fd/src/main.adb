@@ -15,8 +15,10 @@
 --  See the License for the specific language governing permissions and
 --  limitations under the License.
 --
-with Pdk.Cmn.Console.Plat; use Pdk.Cmn.Console.Plat;
+with Pdk.Cmn.Log; use Pdk.Cmn.Log;
+
 procedure Main is
+   Result : Status;
 begin
-   Print ("pldm-ada main()");
+   Result := Info ("pldm-ada main()");
 end Main;

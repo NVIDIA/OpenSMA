@@ -21,6 +21,7 @@
 
 #include "nv/common/preproc.h"
 
+#include NV_IPC_CONFIG_H
 #define SYS_SENSOR_LPADC_BASE ADC0
 #define SYS_SENSOR_VREF_BASE  VREF0
 

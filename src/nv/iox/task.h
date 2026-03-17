@@ -23,6 +23,7 @@
 
 #include "nv/iox/iox.h"
 #include "nv/i2c/common.h"
+#include "nv/mctp/nsm_type_5.h"
 
 #include NV_IPC_CONFIG_H
 
@@ -39,6 +40,7 @@ public:
     {
         I2cRequest = 6,
         VrGpioRequest,
+        GpioSpoofingUpdate,
     };
 
     struct [[gnu::packed]] Request
@@ -54,6 +56,19 @@ public:
         uint8_t ioxOper;
         uint8_t pinSize;
         uint8_t pinVals[DataSize - sizeof(ioxAddr) - sizeof(ioxOper) - sizeof(pinSize)];
+    };
+
+    struct [[gnu::packed]] GpioSpoofingUpdate
+    {
+        bool    spoofingActive;
+        uint8_t numEntries;
+        uint8_t reserved[2];
+        struct [[gnu::packed]] Entry
+        {
+            uint16_t gpioIndex;
+            uint8_t  activated;
+            uint8_t  reserved;
+        } entries[nv::mctp::MaxGPIOSpoofingEntries];
     };
 
     using Buffer = std::array<uint8_t, 2>;
@@ -77,11 +92,16 @@ public:
                                     std::span<const uint8_t> pins,
                                     std::span<const uint8_t> vals);
 
+    // GPIO spoofing state update from MCTP task
+    static bool send_gpio_spoofing_update(bool                           spoofingActive,
+                                          nv::mctp::GPIOSpoofingPayload& updateData);
+
 private:
     std::array<Iox, IoxNum> ioexp;
     nv::i2c::I2cHidBuffer   read_buffer{};
     void                    handle_i2c_request(std::span<uint8_t> buffer);
     void                    handle_vrgpio_request(std::span<uint8_t> buffer);
+    void                    handle_gpio_spoofing_update(std::span<uint8_t> buffer);
 };
 
 }  // namespace nv::iox

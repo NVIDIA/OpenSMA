@@ -54,6 +54,7 @@ public:
 
     static ImageIndex current_boot_index();
     static void       boot_init();
+    static void       set_stack_cookie();
     static void       hw_init();
     static void       disable_all_flexcomm_irq();
     static bool       set_image_bootable(ImageIndex slot, bool bootable);
@@ -67,6 +68,7 @@ public:
     static uint32_t   get_boot_reason();
     static uint32_t   get_auth_result();
     static uint32_t   get_fmc_status();
+    static uint32_t   get_fmc_jump_information();
     static uint64_t   get_fmc_ordinal_number();
     static uint32_t   get_TRNG_config();
     static void       clear_inactive_alias(ImageIndex inactive_index);

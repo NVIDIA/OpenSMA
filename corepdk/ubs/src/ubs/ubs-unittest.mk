@@ -34,6 +34,10 @@ endif
 
 # update SRCS
 UBS_SRCS += $(UBS_UNITTEST_SOURCES)
+# add in console module requirement
+UBS_SRCS += $(UBS_CMN_FLOWCONTROL) $(UBS_CMN_LOG)
+
+UBS_UNITTEST_EXTRA :=
 
 # locate all unittest files and add to SRCS 
 # this also creates GD_UBS_UNITTEST_CPP_COUNT
@@ -45,8 +49,11 @@ UBS_UNITTEST_ADA_SPECS := $(filter %.adb,$(UBS_UNITTEST_TEST_FILES))
 UBS_UNITTEST_ADA_SPECS := $(addprefix $(UBS_PATH_GEN)/, $(UBS_UNITTEST_ADA_SPECS:.adb=.ads))
 UBS_SRCS += $(UBS_UNITTEST_ADA_SPECS)
 
-# add in console module requirement
-UBS_SRCS += $(UBS_CMN_CONSOLE) $(UBS_CMN_CONSOLE_CPP) $(UBS_CMN_FLOWCONTROL)
+# ensure we use Os for unittesting
+UBS_UNITTEST_FLAGS += -Os
+UBS_CXX_FLAGS += $(UBS_UNITTEST_FLAGS)
+UBS_CX_FLAGS  += $(UBS_UNITTEST_FLAGS)
+UBS_ADA_FLAGS += $(UBS_UNITTEST_FLAGS)
 
 # -- global defines ---------------------------------------------------------------------------
 GD_UBS_UNITTEST := 1
@@ -75,7 +82,7 @@ unittest: | build
 	else \
 		echo "$(UBS_SRCS)" > $(UBS_PATH_GEN)/sources; \
 		echo "Step 1: running UBS_TARGET through filter"; \
-		$(UBS_TARGET) 2>&1 | $(UBS_UTS_FILTER) > $(UBS_PATH_GEN)/filtered.log; \
+		$(UBS_TARGET) | $(UBS_UTS_FILTER) > $(UBS_PATH_GEN)/filtered.log; \
 		echo "Step 2: converting filtered.log to junit.xml"; \
 		$(UBS_PATH_ROOT)/to-junit-xml.py --sources $(UBS_PATH_GEN)/sources \
 			$(UBS_PATH_REPORTS)/junit.xml < $(UBS_PATH_GEN)/filtered.log; \

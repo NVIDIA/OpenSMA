@@ -33,12 +33,15 @@ namespace nv::spi {
 
 enum FlashromCmdCode
 {
-    SPI_CMD_CONFIG       = 0x0,
-    SPI_CMD_READ         = 0x1,
-    SPI_CMD_WRITE        = 0x2,
-    SPI_CMD_WRITE_READ   = 0x3,
-    SPI_CMD_POSTED_WRITE = 0x4,
-    SPI_CMD_END          = 0xf
+    SPI_CMD_CONFIG       = 0x00,
+    SPI_CMD_READ         = 0x01,
+    SPI_CMD_WRITE        = 0x02,
+    SPI_CMD_WRITE_READ   = 0x03,
+    SPI_CMD_POSTED_WRITE = 0x04,
+    SPI_CMD_END          = 0x07,
+    // Needed for compatibility with Linux driver
+    // Flashrom NV_SMA_SPI ignores this byte in responses
+    SPI_CMD_SUCCESS_RSP = 0x80
 };
 
 struct [[gnu::packed]] FlashromMsgHdr
@@ -49,12 +52,12 @@ struct [[gnu::packed]] FlashromMsgHdr
     uint8_t len_msb;
 };
 
-inline FlashromMsgHdr* FlashromMsgHdr_from(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& arr)
+inline FlashromMsgHdr* FlashromMsgHdr_from(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& arr)
 {
     return reinterpret_cast<FlashromMsgHdr*>(arr.data());
 }
 
-inline uint8_t* FlashromMsgData_from(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& arr)
+inline uint8_t* FlashromMsgData_from(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& arr)
 {
     return arr.data() + sizeof(FlashromMsgHdr);
 }
@@ -80,7 +83,7 @@ public:
 
     Flashrom(sys::spi::EdmaDriver& driver);
 
-    void handle_tx(std::array<uint8_t, nv::ipc::UsbSpiMsgSize>& buffer);
+    void handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
     void bind(nv::spi::Flexcomm flexcomm,
               nv::ipc::EventId  event_id,
               uint8_t           cs0_port_id,
@@ -90,9 +93,12 @@ public:
     void init();
 
 private:
-    uint8_t _cs0_port_id{0};
-    uint8_t _cs0_pin_id{0};
-    uint8_t _cs1_port_id{0};
-    uint8_t _cs1_pin_id{0};
+    static constexpr uint32_t SPI_FREQ_18_75MHZ = 0x011E1A30;
+
+    uint8_t  _cs0_port_id{0};
+    uint8_t  _cs0_pin_id{0};
+    uint8_t  _cs1_port_id{0};
+    uint8_t  _cs1_pin_id{0};
+    uint32_t _spi_speed{SPI_FREQ_18_75MHZ};
 };
 }  // namespace nv::spi

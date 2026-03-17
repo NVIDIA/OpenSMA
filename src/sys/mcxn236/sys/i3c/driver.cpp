@@ -664,3 +664,52 @@ bool nv::i3c::Driver::gpu_query_i3c_mode(uint8_t address, bool& i3c)
     }
     return result;
 }
+
+bool nv::i3c::Driver::gpu_configure_cms1(uint8_t address)
+{
+    constexpr uint8_t  Command = 0x29;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    write_buffer[1] = 0x06;
+    write_buffer[2] = 0x01;
+    write_buffer[3] = 0x00;
+    write_buffer[4] = 0x00;
+    write_buffer[5] = 0x00;
+    write_buffer[6] = 0x00;
+    write_buffer[7] = 0x00;
+    auto status     = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 8),
+                      std::span<uint8_t>(read_buffer.data(), 0));
+    return status == nv::i2c::I2cStatus::Ok ? true : false;
+}
+
+bool nv::i3c::Driver::gpu_program_cms1(uint8_t address, std::span<uint8_t> buffer)
+{
+    constexpr uint8_t  Command = 0x2b;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    write_buffer[1] = static_cast<uint8_t>(buffer.size());
+    std::memcpy(write_buffer.data() + 2, buffer.data(), buffer.size());
+    auto status = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 2 + buffer.size()),
+                      std::span<uint8_t>(read_buffer.data(), 0));
+    return status == nv::i2c::I2cStatus::Ok ? true : false;
+}
+
+bool nv::i3c::Driver::gpu_read_cms1(uint8_t address, std::span<uint8_t> buffer)
+{
+    constexpr uint8_t  Command = 0x2b;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    auto status     = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 1),
+                      std::span<uint8_t>(read_buffer.data(), buffer.size() + 1));
+    if (status == nv::i2c::I2cStatus::Ok) {
+        std::memcpy(buffer.data(), read_buffer.data() + 1, buffer.size());
+        return true;
+    }
+    return false;
+}

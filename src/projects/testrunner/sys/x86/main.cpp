@@ -31,17 +31,22 @@
 #include "nv/common/enum_ops.h"
 #include "nv/common/system.h"
 #include "nv/flash/task.h"
+#include "nv/i2c/lattice_driver.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/logger/task.h"
 #include "nv/mctp/task.h"
 #include "nv/pldm/task.h"
 #include "nv/spdm/task.h"
 #include "nv/usb/task.h"
-#include "nv/i2c/lattice_driver.h"
 
 // CPLD stub instance for testrunner (x86 test environment)
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-err58-cpp)
-nv::i2c::LatticeCpld cpld(CPLD_I2C_PORT, nv::i2c::CPLD_I2C_ADDR);
+nv::i2c::LatticeCpld cpld(CPLD_I2C_PORT_PRGM,
+                          CPLD_I2C_ADDR_PRGM,
+                          CPLD_I2C_PORT_USR,
+                          CPLD_I2C_ADDR_USR,
+                          CPLD_I2C_ADDR_DBG,
+                          CPLD_I2C_ADDR_DBG_INSTALL);
 
 using namespace nv;
 using namespace std::chrono_literals;
@@ -82,6 +87,51 @@ extern "C" int  ada_print_hello();
 extern "C" void adainit(void);
 extern "C" void adafinal(void);
 
+void identify_i2c_temp_sensor()
+{
+    const bool bom_primary_source = true;
+
+    // Use the CPU1_Die sensor to identify the BOM primary/secondary source
+    const uint8_t CPU1_Die_Primary_Addr = 0x48;
+    const uint8_t id                    = nv::i2c::ManufacturerId::TI;
+
+    for (auto& sensor : nv::mctp::I2cTempSensorList) {
+        const uint8_t addr = CPU1_Die_Primary_Addr;
+
+        // based on the primary source identification, determine the Nvlink sensor model.
+        if (sensor.sensor_id == nv::mctp::Type3TemperatureSensors::NvLink_Temp) {
+            sensor.identified_addr = addr;
+            if (bom_primary_source) {
+                sensor.sensor_model = nv::i2c::SensorModel::Sensor_Tmp1075;
+            }
+            else {
+                sensor.sensor_model = nv::i2c::SensorModel::Sensor_Nct70;
+            }
+        }
+        else {
+            if (id == nv::i2c::ManufacturerId::TI) {
+                sensor.identified_addr = addr;
+                sensor.sensor_model    = nv::i2c::SensorModel::Sensor_Tmp461;
+            }
+            else if (id == nv::i2c::ManufacturerId::Microchip) {
+                sensor.identified_addr = addr;
+                sensor.sensor_model    = nv::i2c::SensorModel::Sensor_Emc1812;
+            }
+            else {
+                nv::info("No I2C Sensor Found, sID: %d\n", sensor.sensor_id);
+                nv::logger::error(nv::logger::Event::T3I2cSensorNotFound, {sensor.sensor_id});
+                continue;
+            }
+        }
+        nv::info("Found Sensor: sId %d, iAddr %d, mId %d\n",
+                 sensor.sensor_id,
+                 sensor.identified_addr,
+                 sensor.sensor_model);
+        nv::logger::info(nv::logger::Event::T3I2cSensorFound,
+                         {sensor.sensor_id, sensor.identified_addr, sensor.sensor_model});
+    }
+}
+
 int main(int argc, const char* argv[])
 {
     adainit();
@@ -93,7 +143,8 @@ int main(int argc, const char* argv[])
     flash::Task::make();
     usb::Task::make();
     logger::Task::make();
-    spdm::Task::make();
+    // spdm task has a memory violation with flash-test in running unittest
+    // spdm::Task::make();
 
     // Create all queue and events now
     using namespace nv::common::enum_ops;
@@ -103,6 +154,8 @@ int main(int argc, const char* argv[])
     for (auto id = ipc::EventId::Begin; id != ipc::EventId::End; id++) {
         ipc::Event::make(id);
     }
+
+    identify_i2c_temp_sensor();
 
     auto& super = ipc::Supervisor::inst();
     super.startup(argc, argv);

@@ -22,7 +22,8 @@
 #include <cstddef>
 
 namespace sys::spdm {
-constexpr size_t FUSE_ARRAY_SIZE = 26;
+constexpr size_t        FUSE_ARRAY_SIZE = 26;
+std::array<uint8_t, 16> get_boot_rom_cmac_in_kernel();
 
 std::array<std::pair<uint32_t, uint32_t>, FUSE_ARRAY_SIZE> get_fuse_index_mask_pair();
 

@@ -22,7 +22,7 @@ include $(UBS_PATH_ROOT)/ubs-cmn.mk
 # -- required ----------------------------------------------------------------------------------
 
 # a list of all the files that are to be compiled
-SOURCES := $(UBS_CMN_CONSOLE) $(UBS_CMN_CONSOLE_CPP)
+SOURCES := $(UBS_CMN_LOG)
 
 # the main entry point file, can be a .c .cpp or .adb
 MAIN    := $(UBS_PATH_SRC)/main.adb
@@ -72,6 +72,13 @@ LINK_FLAGS_rel	:=
 # - They are evaluated as python strings, so the following with be the equilvalent of 
 #   -DEXAMPLE_NUMBER=4080
 GD_EXAMPLE_NUMBER := 16 * 0xff
+
+# -- Global Variable Section Placement (PDK.25) ------------------------------------------------
+# Override base section for all cmn modules:
+# GD_PDK_CMN_GLOBAL := ".retention_ram"
+#
+# Override specific module section:
+# GD_PDK_CMN_LOG_GLOBAL := ".dma_accessible"
 
 # -DEXAMPLE_STRING="build 16 * 0xff"
 GD_EXAMPLE_STRING := "build $(GD_EXAMPLE_NUMBER)"

@@ -78,10 +78,10 @@ is
       --     Ada.Unchecked_Conversion (Source => String_64_Buffer,
       --                               Target => Arr_64_Buffer);
    begin
-
       null;
       --  Print_Msg (Msg  => Uc_Str_To_Array (Msg (Msg'First .. Msg'First + 63)),
       --             Data => data);
+      --  Print_Msg (Data => data);
 
    end Pldm_Hook_Debug;
 
@@ -467,7 +467,8 @@ is
       if Is_Valid = 1
       then
 
-         Parse_Header (Current_fw_offset => Current_fw_offset,
+         Parse_Header (Component_Id     => Component_Id,
+                        Current_fw_offset => Current_fw_offset,
                         Transfer_size     => Transfer_size,
                         Buffer    => Data,
                         Metadata => Metadata,
@@ -511,8 +512,7 @@ is
                    Fw_State     => Fw_State,
                    Is_Valid => Is_Valid);
 
-      if Is_Valid = 1 and then
-         Component_Id = Mcu_Component_Id
+      if Is_Valid = 1
       then
          --  get version info from metadata
          Get_FW_Info_From_Metadata
@@ -527,11 +527,19 @@ is
                            Build    => Local_Build,
                            Stamp    => Local_Stamp);
 
-         Get_Pending_Stamp (Stamp => Inactive_Stamp);
+         if Component_Id = Mcu_Component_Id
+         then
+            --  get inactive stamp for mcu
+            Get_Pending_Stamp (Stamp => Inactive_Stamp);
+         else
+            --  get inactive stamp for ap
+            Get_Ap_Pending_Stamp (Stamp => Inactive_Stamp);
+         end if;
 
-         --  check apsku id at rel build
+         --  check apsku id at rel build for mcu
+         --  check apsku id for other ap
          --  rel = 0, dev = 1, dbg = 2
-         if Build_Mode = 0 and then
+         if (Build_Mode = 0 or Component_Id /= Mcu_Component_Id) and then
             Ap_Sku_Id /= 0
          then
             if Ap_Sku_Id /= Local_Ap_Sku_Id
@@ -783,6 +791,13 @@ is
    begin
       Info := DEFAULT_LIMITED_RATE_INFO;
    end Pldm_Hook_Get_Limited_Rate_Info;
+
+   function Pldm_Hook_Get_Write_Fail_Retry
+     (Comp_Id : NvU16) return NvU8
+   is
+   begin
+      return Get_Write_Fail_Retry (Comp_Id => Comp_Id);
+   end Pldm_Hook_Get_Write_Fail_Retry;
 
 end Pdk.Pldm.Hook.Plat;
 

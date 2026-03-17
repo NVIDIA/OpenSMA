@@ -57,6 +57,9 @@ static_assert(NV_VA_SIZE(1, 2, 3, 4) == 4);
 /* shared variable with initial */
 #define NV_SHARED_DATA __attribute__((section(SHARED_DATA_STR(__LINE__))))
 
+/* SRAMX function */
+#define NV_SRAMX_CODE __attribute__((section("sramx_code")))
+
 /* system call used to enter kernel mode */
 #define NV_SYS_CALL                                                                            \
     __attribute__((naked)) __attribute__((section("system_calls")))                            \
@@ -72,6 +75,7 @@ static_assert(NV_VA_SIZE(1, 2, 3, 4) == 4);
 #define NV_TASK_DATA
 #define NV_SHARED_BSS
 #define NV_SHARED_DATA
+#define NV_SRAMX_CODE
 #define NV_SYS_CALL
 #define NV_FORCE_INLINE
 #define NV_PRIVILEGED_FUNCTION

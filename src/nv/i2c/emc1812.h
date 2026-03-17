@@ -33,14 +33,12 @@ public:
     enum Register : uint8_t
     {
         LocalTempHigh       = 0x00,  // Local temperature high byte
-        LocalTempLow        = 0x29,  // Local temperature low byte
         RemoteTempHigh      = 0x01,  // Remote temperature high byte
-        RemoteTempLow       = 0x10,  // Remote temperature low byte
-        LocalTempHighLimit  = 0x05,  // Local temperature high limit
-        LocalTempLowLimit   = 0x06,  // Local temperature low limit
-        RemoteTempHighLimit = 0x07,  // Remote temperature high limit
-        RemoteTempLowLimit  = 0x08,  // Remote temperature low limit
         Status              = 0x02,  // Status register
+        LocalTempHighLimit  = 0x05,  // Local temperature high limit
+        RemoteTempHighLimit = 0x07,  // Remote temperature high limit
+        Ext1ThermalLimit    = 0x19,  // External 1 thermal limit
+        LocalThermalLimit   = 0x20,  // Local thermal limit
         ManufacturerId      = 0xFE,  // Manufacturer ID register
     };
 
@@ -66,8 +64,11 @@ public:
     I2cStatus get_local_high_temp(int8_t& temp_integer);
 
     /**
-     * Alert Threshold Functions
+     * Get remote temperature in Celsius (integer)
+     * @param temp_integer Reference to store the temperature value
+     * @return I2cStatus indicating success or failure
      */
+    I2cStatus get_remote_high_temp(int8_t& temp_integer);
 
     /**
      * Set local temperature alert threshold (high limit only)
@@ -82,5 +83,51 @@ public:
      * @return I2cStatus indicating success or failure
      */
     I2cStatus get_local_high_alert_threshold(int8_t& threshold);
+
+    /**
+     * Set remote temperature alert threshold (high limit only)
+     * @param threshold Temperature threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus set_remote_high_alert_threshold(int8_t threshold);
+
+    /**
+     * Get current remote temperature alert threshold (high limit only)
+     * @param threshold Reference to store the threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus get_remote_high_alert_threshold(int8_t& threshold);
+
+    /**
+     * Thermal Limit Functions
+     */
+
+    /**
+     * Set local thermal limit
+     * @param threshold Temperature threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus set_local_thermal_limit(int8_t threshold);
+
+    /**
+     * Get current local thermal limit
+     * @param threshold Reference to store the threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus get_local_thermal_limit(int8_t& threshold);
+
+    /**
+     * Set external 1 thermal limit
+     * @param threshold Temperature threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus set_ext1_thermal_limit(int8_t threshold);
+
+    /**
+     * Get current external 1 thermal limit
+     * @param threshold Reference to store the threshold in Celsius (int8_t)
+     * @return I2cStatus indicating success or failure
+     */
+    I2cStatus get_ext1_thermal_limit(int8_t& threshold);
 };
 }  // namespace nv::i2c

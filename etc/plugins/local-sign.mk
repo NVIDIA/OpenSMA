@@ -68,7 +68,7 @@ ifeq ($(STREAMBOOT), 1)
 
 	# Generate PLDM fwpkg for mcu binary fw
 	$(ubs-build) "FWPKG" "$(UBS_STREAMBOOT_TARGET_FWPKG)"
-	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_STREAMBOOT_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --out $(UBS_STREAMBOOT_TARGET_FWPKG)
+	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_STREAMBOOT_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --compstamp "${COMP_STAMP}" --out $(UBS_STREAMBOOT_TARGET_FWPKG)
 else
 	# Use regular files for signing
 	if ! (cd $(SIGN_EXEC_PATH) && python3 $(SIGN_EXEC) --env Dummy --inputFile $(abspath $(UBS_TARGET_BIN)) --resultFile $(abspath $(UBS_TARGET_SIGNED)) --jobType $(JOB_TYPE) --parameters $(abspath $(SIGN_MBI_CFG)) && cd -); then \
@@ -86,7 +86,7 @@ else
 
 	# Generate PLDM fwpkg for mcu binary fw
 	$(ubs-build) "FWPKG" "$(UBS_TARGET_FWPKG)"
-	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --out $(UBS_TARGET_FWPKG)
+	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --compstamp "${COMP_STAMP}" --out $(UBS_TARGET_FWPKG)
 endif
 
 .NOTPARALLEL: local-sign

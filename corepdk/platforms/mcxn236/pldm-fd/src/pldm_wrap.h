@@ -110,6 +110,10 @@ constexpr size_t NV_PLDM_32_TRANSFER_SIZE = NV_PLDM_RESERVE_HEADER_SIZE
 #define NV_PLDM_VERIFY_CC_KEY_FAIL        0x94
 #define NV_PLDM_VERIFY_CC_IMAGE_AUTH_FAIL 0x95
 
+// CPLD metadata offset
+#define NV_PLDM_CPLD_FW_VERSION_OFFSET 16
+#define NV_PLDM_CPLD_SKU_ID_OFFSET     916
+
 //  base
 struct [[gnu::packed]] PldmCapability
 {
@@ -229,7 +233,7 @@ struct PldmContextRecord
     NvU32                   dl_send_time;           //  request fw data time
     NvU32                   dl_m0_time;             //  transfer 4k time
     NvU32                   dl_m1_time;             //  erase/program 4k time
-    NvU8                    trasnfer_fail_cc;       //  record fail cc during download state
+    NvU8                    transfer_fail_cc;       //  record fail cc during download state
     NvU8                    verify_fail_cc;         //  record fail cc for verify
     NvU8                    current_rate;           //  current rate
     NvU8                    limited_rate;  //  limited rate 16 => 8 => 4 => 2 => 2 => 2 ...
@@ -239,7 +243,8 @@ struct PldmContextRecord
     bool             is_metadata_check_done;  // record if finish check the first dl chunk
     PldmfwDataBuffer fw_data_buffer;          //  buffer to store the received fw data
     NvU8  metadata_version_info[NV_PLDM_METADATA_VERSION_INFO_RESERVED_SIZE];  //  metadata
-    NvU32 auth_request_id;  //  authentication request id
+    NvU32 auth_request_id;   //  authentication request id
+    NvU8  write_fail_retry;  //  write fail retry count
 };
 
 struct PldmBaseContextRecord

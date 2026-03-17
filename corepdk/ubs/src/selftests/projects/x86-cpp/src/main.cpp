@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "pdk/cmn/console_cpp/pdk-cmn-console.h"
+#include "pdk/cmn/log/log.h"
 
 extern "C" void adainit();
 
@@ -23,11 +23,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[])
 {
     adainit();
 
-    pdk::cmn::console::info("info message from cpp");
-    pdk::cmn::console::debug("debug message from cpp");
-    pdk::cmn::console::warning("warning message from cpp");
-    pdk::cmn::console::error("error message from cpp");
-    pdk::cmn::console::fatal("fatal message from cpp");
+    pdk::cmn::log::here().info("info message from cpp");
+    pdk::cmn::log::here().warn("warn message from cpp");
+    pdk::cmn::log::here().debug("debug message from cpp");
+    pdk::cmn::log::here().error("error message from cpp");
+    pdk::cmn::log::here().fatal("fatal message from cpp");
 
     return 0;
 }

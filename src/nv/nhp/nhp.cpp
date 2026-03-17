@@ -27,7 +27,6 @@ namespace nv::nhp {
 
 NHP::NHP(const NhpConfig& config)
 : i2c_bus(config.i2c_bus)
-, i2c_driver_config(sys::i2c::I2CSlaveDriver::Config{config.i2c_bus, i2c_callback, {}, this})
 , i2c_driver()
 , interrupt_l_port(config.interrupt_port)
 , interrupt_l_pin(config.interrupt_pin)
@@ -40,16 +39,17 @@ NHP::NHP(const NhpConfig& config)
 , pgood_vals{}
 {
     // initialize the i2c driver configuration
-    static_assert((NumE1sDrives + 1) <= sys::i2c::I2CSlaveDriver::NumI2cTargetAddresses,
+    static_assert((NumE1sDrives + 1) <= sys::i2c::NumI2cTargetAddresses,
                   "NumE1sDrives + 1 is greater than NumI2cTargetAddresses");
-    i2c_driver_config.target_addresses.fill(0);
-    i2c_driver_config.target_addresses.at(0) = InterruptAggregatorAddress;
+    std::array<uint8_t, sys::i2c::NumI2cTargetAddresses> target_addresses{};
+    target_addresses.fill(0);
+    target_addresses.at(0) = InterruptAggregatorAddress;
     for (uint8_t gpioIndex = 0; gpioIndex < NumE1sDrives; gpioIndex++) {
-        i2c_driver_config.target_addresses.at(gpioIndex) = E1sGpioExpanderAddress + gpioIndex;
+        target_addresses.at(gpioIndex) = E1sGpioExpanderAddress + gpioIndex;
     }
 
     // Initialize the I2C driver
-    i2c_driver = sys::i2c::I2CSlaveDriver(i2c_driver_config);
+    i2c_driver.bind(i2c_bus, target_addresses, this);
 
     pgood_vals.fill(false);
     const auto status = nv::gpio::Driver::init_pin(interrupt_l_port,
@@ -91,7 +91,6 @@ NHP::NHP(const NhpConfig& config)
 
 NHP::NHP()
 : i2c_bus()
-, i2c_driver_config()
 , i2c_driver()
 , interrupt_l_port()
 , interrupt_l_pin()
@@ -138,12 +137,12 @@ void NHP::adc_interrupt([[maybe_unused]] sys::adc::AdcPeripheral peripheral,
     }
 }
 
-void NHP::i2c_callback(uint8_t&                                                   address,
-                       bool                                                       is_read,
-                       std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& buffer,
-                       size_t&                                                    data_size,
-                       void* this_task_instance,
-                       bool  new_transaction)
+void NHP::i2c_callback(uint8_t&                                           address,
+                       bool                                               is_read,
+                       std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& buffer,
+                       size_t&                                            data_size,
+                       void*                                              this_task_instance,
+                       bool                                               new_transaction)
 {
     // nv::info("i2c callback r/w:%d addr:%x\n", is_read, address);
     if (is_read) {
@@ -156,10 +155,10 @@ void NHP::i2c_callback(uint8_t&                                                 
         static_cast<NHP*>(this_task_instance)->i2c_write(address, buffer, data_size);
     }
 }
-void NHP::i2c_read(uint8_t&                                                   address,
-                   std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& tx_buffer,
-                   size_t&                                                    tx_data_size,
-                   bool                                                       new_transaction)
+void NHP::i2c_read(uint8_t&                                           address,
+                   std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& tx_buffer,
+                   size_t&                                            tx_data_size,
+                   bool                                               new_transaction)
 {
     uint8_t reg_output  = 0;
     uint8_t drive_index = NumE1sDrives;
@@ -184,9 +183,9 @@ void NHP::i2c_read(uint8_t&                                                   ad
         tx_data_size    = 1;
     }
 }
-void NHP::i2c_write(uint8_t&                                                   address,
-                    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& rx_buffer,
-                    size_t&                                                    rx_data_size)
+void NHP::i2c_write(uint8_t&                                           address,
+                    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& rx_buffer,
+                    size_t&                                            rx_data_size)
 {
     uint8_t drive_index = 0;
 

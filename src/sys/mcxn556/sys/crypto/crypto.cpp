@@ -23,6 +23,7 @@
 #include "sys/common/utils.h"
 #include "sys/crypto/crypto.h"
 #include "mpu_syscall_numbers.h"
+#include "nv/debugtoken/debugtoken.h"
 
 namespace sys::crypto {
 
@@ -156,9 +157,7 @@ authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwTyp
         return CryptoStatus::FailCfpaAccess;
     }
 
-    // [TODO] Currently disable the security fw version check
     // check security fw version between fw and device
-#ifdef CPU_MCXN547VDF
     auto svn_on_firmware = nv::fw_parser::mcu::get_security_version(InputParseingFwType);
     if (!svn_on_firmware) {
         return CryptoStatus::FailParsingFirmware;
@@ -166,21 +165,26 @@ authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwTyp
     if ((*svn_on_firmware) < secure_fw_version) {
         return CryptoStatus::FailSecurityVersionRollBack;
     }
-#endif
 
-    // [TODO] Currently disable the image key revoke check
     // check image key revoke between fw and device
-#ifdef CPU_MCXN547VDF
     auto image_key_version_on_firmware = nv::fw_parser::mcu::get_image_signing_key_version(
         InputParseingFwType);
     if (!image_key_version_on_firmware) {
         return CryptoStatus::FailParsingFirmware;
     }
+
+    // check debugfw of token status is installed
+    // if debugfw of token status is installed, set image key version to 0 as debug key is not
+    // revoked
+    auto debugfw_token_status = nv::debugtoken::check_debug_token_subtype_enabled(
+        nv::debugtoken::Type::FlashDebugFw, nv::debugtoken::DebugTokenSubtypeMcuFw);
+    if (debugfw_token_status == nv::debugtoken::TokenErrorCode::NoErrorCode) {
+        image_key_revoke = 0;
+    }
+
     if ((*image_key_version_on_firmware) < image_key_revoke) {
         return CryptoStatus::FailImageSigningKeyRevoke;
     }
-#endif
-
     // start prepare NBOOT_ImgAuthenticateEcdsa parameter.
     constexpr static uint32_t SocLiefcycleCfgMask    = 0xFF;
     constexpr static uint32_t SocLiefcycleUpperMask  = 0xFFFF0000;

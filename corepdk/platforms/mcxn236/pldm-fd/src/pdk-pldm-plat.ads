@@ -91,12 +91,29 @@ is
        convention   => CPP, 
        external_name => "ada_populate_stamp";
 
+   procedure Populate_Ap_Stamp (Major    : NvU16;
+                                Minor    : NvU8;
+                                Patch    : NvU16;
+                                Build    : NvU16;
+                                Stamp    : out NvU32)
+     with
+       export       => True, 
+       convention   => CPP, 
+       external_name => "ada_populate_ap_stamp";
+
    procedure Populate_Version_String (Major          : NvU16;
                                       Minor          : NvU8;
                                       Patch          : NvU16;
                                       Build          : NvU16;
                                       Version_String : out Array_Version_String;
                                       Length         : out NvU8);
+
+   procedure Populate_Ap_Version_String (Major          : NvU16;
+                                         Minor          : NvU8;
+                                         Patch          : NvU16;
+                                         Build          : NvU16;
+                                         Version_String : out Array_Version_String;
+                                         Length         : out NvU8);
 
    procedure Get_Active_Stamp (Stamp : out NvU32);
 

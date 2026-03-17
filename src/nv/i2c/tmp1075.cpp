@@ -18,6 +18,8 @@
 #include "nv/i2c/tmp1075.h"
 #include "nv/nv.h"
 
+// TMP1075 is similar to NCT75 Register Map.
+
 using namespace nv::i2c;
 
 Tmp1075::Tmp1075(Port port, uint8_t address, nv::telemetry::TelemId item)

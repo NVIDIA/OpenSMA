@@ -20,23 +20,54 @@
 #include <bit>
 #include <climits>
 #include <cstring>
+#include <chrono>
 
+#include "nv/i2c/common.h"
 #include "nv/i2c/helper.h"
+#include "nv/i2c/error_injection.h"
+#include "nv/i2c/eeprom_cache.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/driver.h"
 #include "nv/nv.h"
 #include "nv/usb/task.h"
 #include "nv/i2c/sensor.h"
+#include "nv/volt_mon/mcu_internal_temp.h"
 #include "sys/sensor/sensor.h"
 #include "nv/i3c/task.h"
 #include "nv/watchdog/runtime.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "sys/i2c/utils.h"
 #include "nv/i2c/recovery.h"
+#include "sys/i2c/loopback.h"
+#include "nv/mctp/selftest.h"
+#include "nv/lstp/lstp_router.h"
 
 #include NV_IPC_CONFIG_H
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-dcl37-c,cert-dcl51-cpp)
+extern nv::mctp::SelfTest::I2cLoopbackTestResultStruct loopback_result;
 
 using namespace nv::i2c;
+
+namespace {
+
+// Can be evaluated at compile time when given a constexpr client,
+// but is also fine for normal runtime use.
+constexpr bool is_target_client(nv::mctp::Client client)
+{
+    if (client == nv::mctp::Client::UsI2c) {
+        return true;
+    }
+
+    for (const auto& ds : nv::ipc::DownStreamInfos) {
+        if (ds.client == client) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+}  // namespace
 
 void Task::make(Config config)
 {
@@ -86,20 +117,45 @@ Task::Task(Config config) noexcept
         case mctp::Client::DsI2c1: _oob_bus = nv::perf_mon::OobBus::DsI2c1; break;
         case mctp::Client::DsI2c2: _oob_bus = nv::perf_mon::OobBus::DsI2c2; break;
         case mctp::Client::DsI2c3: _oob_bus = nv::perf_mon::OobBus::DsI2c3; break;
+        case mctp::Client::DsI2c4: _oob_bus = nv::perf_mon::OobBus::DsI2c4; break;
+        case mctp::Client::DsI2c5: _oob_bus = nv::perf_mon::OobBus::DsI2c5; break;
+        case mctp::Client::DsI2c6: _oob_bus = nv::perf_mon::OobBus::DsI2c6; break;
+        case mctp::Client::DsI2c7: _oob_bus = nv::perf_mon::OobBus::DsI2c7; break;
         default                  : break;
     }
     nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
 
-    // upstream I2C handles to get sensor data
-    if (_port == i2c::Port::Zero && ipc::SensorUpdateMs) {
+    // SMBus Direct cache refresh timer (if configured)
+    // New VR Telemetry cache refresh timer
+    if (_port == i2c::SmbusDirectPort && i2c::SmbusCacheRefreshMs > 0) {
+        _timer = ipc::Timer::make(nv::ipc::TimerId::SmbusCacheRefresh,
+                                  std::chrono::microseconds(i2c::SmbusCacheRefreshMs),
+                                  refresh_smbus_cache);
+    }
+    else if (_port == i2c::Port::Zero && ipc::SensorUpdateMs) {
         _timer = ipc::Timer::make(nv::ipc::TimerId::SmbSensor,
                                   std::chrono::microseconds(ipc::SensorUpdateMs),
                                   update_sensor);
+    }
+    else if constexpr (nv::ipc::EnableEepromBridge) {
+        if (_port == nv::ipc::EepromDstPort && ipc::EepromUpdateTimerUs) {
+            // EEPROM port: periodic timer to sync dirty cache pages
+            _timer = ipc::Timer::make(nv::ipc::TimerId::EepromUpdate,
+                                      std::chrono::microseconds(ipc::EepromUpdateTimerUs),
+                                      eeprom_update);
+        }
     }
     else if (ipc::UseI2cApStatusTimer && config.timer_id != ipc::TimerId::End) {
         _timer = ipc::Timer::make(config.timer_id,
                                   std::chrono::microseconds(ipc::CheckApStatusTimerUs),
                                   check_ap_status);
+    }
+
+    if (config.repeated_start_timer_id != ipc::TimerId::End) {
+        _repeated_start_timer = ipc::Timer::make(config.repeated_start_timer_id,
+                                                 RepeatedStartTimeoutMs,
+                                                 repeated_start_timeout,
+                                                 false);
     }
 }
 
@@ -114,6 +170,10 @@ Task::Status Task::tx(const nv::mctp::Packet& packet, uint16_t additional_info)
         case static_cast<uint8_t>(nv::mctp::Client::DsI2c1): queue_id = QueueId::I2c2; break;
         case static_cast<uint8_t>(nv::mctp::Client::DsI2c2): queue_id = QueueId::I2c3; break;
         case static_cast<uint8_t>(nv::mctp::Client::DsI2c3): queue_id = QueueId::I2c4; break;
+        case static_cast<uint8_t>(nv::mctp::Client::DsI2c4): queue_id = QueueId::I2c5; break;
+        case static_cast<uint8_t>(nv::mctp::Client::DsI2c5): queue_id = QueueId::I2c6; break;
+        case static_cast<uint8_t>(nv::mctp::Client::DsI2c6): queue_id = QueueId::I2c7; break;
+        case static_cast<uint8_t>(nv::mctp::Client::DsI2c7): queue_id = QueueId::I2c8; break;
     }
     if (queue_id == QueueId::End) {
         nv::info("invalid interface (%d)\n", packet.priv.packet_interface);
@@ -150,6 +210,10 @@ Task::Status Task::update_routing_table(mctp::Client client)
         case nv::mctp::Client::DsI2c1: queue_id = QueueId::I2c2; break;
         case nv::mctp::Client::DsI2c2: queue_id = QueueId::I2c3; break;
         case nv::mctp::Client::DsI2c3: queue_id = QueueId::I2c4; break;
+        case nv::mctp::Client::DsI2c4: queue_id = QueueId::I2c5; break;
+        case nv::mctp::Client::DsI2c5: queue_id = QueueId::I2c6; break;
+        case nv::mctp::Client::DsI2c6: queue_id = QueueId::I2c7; break;
+        case nv::mctp::Client::DsI2c7: queue_id = QueueId::I2c8; break;
         default                      : return Task::Status::InvalidInterface;
     }
     const Request RequestPkt{.type = RequestType::MctpUpdateRoutingTable};
@@ -176,6 +240,11 @@ Task::Status Task::wdt_notify(watchdog::TaskMonitorIndex taskId)
         case watchdog::TaskMonitorIndex::I2c2: queue_id = QueueId::I2c2; break;
         case watchdog::TaskMonitorIndex::I2c3: queue_id = QueueId::I2c3; break;
         case watchdog::TaskMonitorIndex::I2c4: queue_id = QueueId::I2c4; break;
+        case watchdog::TaskMonitorIndex::I2c5: queue_id = QueueId::I2c5; break;
+        case watchdog::TaskMonitorIndex::I2c6: queue_id = QueueId::I2c6; break;
+        case watchdog::TaskMonitorIndex::I2c7: queue_id = QueueId::I2c7; break;
+        case watchdog::TaskMonitorIndex::I2c8: queue_id = QueueId::I2c8; break;
+        case watchdog::TaskMonitorIndex::I2c9: queue_id = QueueId::I2c9; break;
         default                              : return Task::Status::InvalidInterface;
     }
     const Request RequestPkt{.type = RequestType::WdtEvent};
@@ -203,6 +272,10 @@ Task::Status Task::send_recovery_request(RecoveryCmd cmd, mctp::Client client)
         case nv::mctp::Client::DsI2c1: queue_id = QueueId::I2c2; break;
         case nv::mctp::Client::DsI2c2: queue_id = QueueId::I2c3; break;
         case nv::mctp::Client::DsI2c3: queue_id = QueueId::I2c4; break;
+        case nv::mctp::Client::DsI2c4: queue_id = QueueId::I2c5; break;
+        case nv::mctp::Client::DsI2c5: queue_id = QueueId::I2c6; break;
+        case nv::mctp::Client::DsI2c6: queue_id = QueueId::I2c7; break;
+        case nv::mctp::Client::DsI2c7: queue_id = QueueId::I2c8; break;
         default                      : return Task::Status::InvalidInterface;
     }
 
@@ -249,16 +322,102 @@ void Task::update_sensor(nv::ipc::Timer& timer)
     if (queue_status != Queue::Status::Ok) {};
 }
 
-void Task::start()
+void Task::refresh_smbus_cache(nv::ipc::Timer& timer)
 {
     using namespace nv::ipc;
-    _driver.start();
+    using namespace std::chrono_literals;
+    // Wake up MCTP task to refresh SMBus Direct cache in MCTP context.
+    // This avoids cross-task access to MCTP-owned objects (e.g. power sensor manager)
+    // from the I2C task, which can cause races or crashes during enumeration.
+    const nv::mctp::Driver::Command Cmd{
+        .cmd   = static_cast<uint16_t>(nv::mctp::Driver::CmdCode::SmbusCacheRefresh),
+        .data1 = 0,
+        .data2 = 0,
+        .data3 = {},
+    };
+    switch (timer.id()) {
+        case TimerId::SmbusCacheRefresh: break;
+        default                        : return;
+    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-const-cast)
+    auto item         = Queue::Item(const_cast<uint8_t*>(std::bit_cast<const uint8_t*>(&Cmd)),
+                            sizeof(Cmd));
+    auto queue_status = Queue::make(QueueId::MctpCmd).send(item, 0s);
+    if (queue_status != Queue::Status::Ok) {};
+}
+
+void Task::repeated_start_timeout(nv::ipc::Timer& timer)
+{
+    if constexpr (nv::lstp::EnableI2c) {
+        using namespace nv::ipc;
+        using namespace std::chrono_literals;
+
+        QueueId queue_id = QueueId::End;
+        for (const auto& [tid, qid] : I2cTimerInfos) {
+            if (tid == timer.id()) {
+                queue_id = qid;
+                break;
+            }
+        }
+        if (queue_id == QueueId::End) {
+            return;
+        }
+
+        Request request{};
+        request.type = RequestType::I2cRecovery;
+
+        I2cRecoveryRequest recovery{};
+        recovery.cmd    = RecoveryCmd::BusRecovery;
+        recovery.src_id = static_cast<uint8_t>(ipchandler::Id::Lstp);
+        std::memcpy(static_cast<void*>(request.data), &recovery, sizeof(I2cRecoveryRequest));
+
+        auto item         = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
+        auto queue_status = Queue::make(queue_id).send(item, 0s);
+        if (queue_status != Queue::Status::Ok) {}
+    }
+}
+
+void Task::eeprom_update(nv::ipc::Timer& timer)
+{
+    if constexpr (nv::ipc::EnableEepromBridge) {
+        using namespace nv::ipc;
+        using namespace std::chrono_literals;
+
+        if (timer.id() != TimerId::EepromUpdate) {
+            return;
+        }
+
+        const Request request{.type = RequestType::EepromUpdate};
+        auto          item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
+        (void)Queue::make(EepromI2cQueueId).send(item, 0s);
+    }
+}
+
+void Task::start()
+{
+    const bool enable_target = is_target_client(_client);
+    _driver.start(enable_target);
+
+    using namespace nv::ipc;
     Request request{};
     auto    item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
     if (_port == i2c::Port::Zero && _timer.id() != ipc::TimerId::End) {
-        set_tmp_sensor();
+        if (_timer.id() == ipc::TimerId::SmbSensor) {
+            set_tmp_sensor();
+        }
         _timer.start();
     }
+
+    // Initialize EEPROM cache directly for downstream EEPROM port
+    if constexpr (nv::ipc::EnableEepromBridge) {
+        if (_port == nv::ipc::EepromDstPort) {
+            eeprom_cache().load_from_eeprom();
+            if (_timer.id() != ipc::TimerId::End) {
+                _timer.start();
+            }
+        }
+    }
+
     nv::bootloader::Driver::set_task_booted(_boot_event);
     while (true) {
         auto status = _queue.recv(item);
@@ -280,21 +439,72 @@ void Task::start()
             case RequestType::I2cResponse           : handle_i2c_response(request.data); break;
             case RequestType::I2cRecovery           : handle_i2c_recovery(request.data); break;
             case RequestType::CheckApStatus         : handle_ap_status(APStatus::Querying); break;
+            case RequestType::I2cLoopbackTest       : handle_i2c_loopback_test(); break;
+            case RequestType::EepromUpdate          : handle_eeprom_update(); break;
         }
     }
+}
+
+void Task::stop_polling_timers()
+{
+    constexpr int32_t DefaultPollingTimeout = 10;
+    nv::ipc::Timer::make(nv::ipc::TimerId::SmbSensor,
+                         std::chrono::seconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+    nv::ipc::Timer::make(nv::ipc::TimerId::SmbusCacheRefresh,
+                         std::chrono::microseconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+    nv::ipc::Timer::make(nv::ipc::TimerId::Ap1Status,
+                         std::chrono::seconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+    nv::ipc::Timer::make(nv::ipc::TimerId::Ap2Status,
+                         std::chrono::seconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+    nv::ipc::Timer::make(nv::ipc::TimerId::Ap3Status,
+                         std::chrono::seconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+    nv::ipc::Timer::make(nv::ipc::TimerId::EepromUpdate,
+                         std::chrono::seconds(DefaultPollingTimeout),
+                         [](nv::ipc::Timer& timer) {})
+        .stop();
+}
+
+void Task::handle_i2c_loopback_test()
+{
+    // Execute I2C loopback test for this port
+    // This is called from the I2C task context
+    constexpr int MaxPort = 9;
+    // Stop I2C polling to avoid collisions with the loopback test
+    stop_polling_timers();
+    for (int i = 0; i <= MaxPort; i++) {
+        sys::i2c::LoopbackDriver loopback_driver(static_cast<nv::i2c::Port>(i));
+        loopback_driver.start_test();
+    }
+    loopback_result.IsRunning = 0;
 }
 
 void Task::handle_wdt_event()
 {
     watchdog::TaskMonitorIndex index{};
+    auto                       queue_id = _queue.id();
 
-    switch (_client) {
-        case mctp::Client::UsI2c : index = watchdog::TaskMonitorIndex::I2c0; break;
-        case mctp::Client::DsI2c0: index = watchdog::TaskMonitorIndex::I2c1; break;
-        case mctp::Client::DsI2c1: index = watchdog::TaskMonitorIndex::I2c2; break;
-        case mctp::Client::DsI2c2: index = watchdog::TaskMonitorIndex::I2c3; break;
-        case mctp::Client::DsI2c3: index = watchdog::TaskMonitorIndex::I2c4; break;
-        default                  : return;
+    switch (queue_id) {
+        case nv::ipc::QueueId::I2c0: index = watchdog::TaskMonitorIndex::I2c0; break;
+        case nv::ipc::QueueId::I2c1: index = watchdog::TaskMonitorIndex::I2c1; break;
+        case nv::ipc::QueueId::I2c2: index = watchdog::TaskMonitorIndex::I2c2; break;
+        case nv::ipc::QueueId::I2c3: index = watchdog::TaskMonitorIndex::I2c3; break;
+        case nv::ipc::QueueId::I2c4: index = watchdog::TaskMonitorIndex::I2c4; break;
+        case nv::ipc::QueueId::I2c5: index = watchdog::TaskMonitorIndex::I2c5; break;
+        case nv::ipc::QueueId::I2c6: index = watchdog::TaskMonitorIndex::I2c6; break;
+        case nv::ipc::QueueId::I2c7: index = watchdog::TaskMonitorIndex::I2c7; break;
+        case nv::ipc::QueueId::I2c8: index = watchdog::TaskMonitorIndex::I2c8; break;
+        case nv::ipc::QueueId::I2c9: index = watchdog::TaskMonitorIndex::I2c9; break;
+        default                    : return;
     }
 
     watchdog::Runtime::mark_task_alive(index);
@@ -385,7 +595,8 @@ void Task::handle_rx(std::span<uint8_t> buffer)
     auto             result = process_rx_packet(buffer, packet, command_code);
     if (result) {
         // reset status timer since AP proved connectivity with successful receive
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status) {
+        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
+            || _timer.id() == ipc::TimerId::Ap3Status) {
             _timer.reset();
         }
         forward(packet, command_code);
@@ -410,8 +621,8 @@ void Task::handle_tx(std::span<uint8_t> buffer, uint16_t additional_info)
         auto result = transmit(packet);
         if (result) {
             // reset status timer since AP proved connectivity with successful transmit
-            if (_timer.id() == ipc::TimerId::Ap1Status
-                || _timer.id() == ipc::TimerId::Ap2Status) {
+            if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
+                || _timer.id() == ipc::TimerId::Ap3Status) {
                 _timer.reset();
             }
         }
@@ -435,7 +646,18 @@ void Task::handle_update_sensor([[maybe_unused]] std::span<uint8_t> buffer)
     // TODO move to Telemetry task
     // InternalTemp
     float internal_temp_raw = 0;
-    auto  result            = sensor::Driver::get_current_temperature(internal_temp_raw);
+    constexpr auto
+         mcuTempCfg = nv::ipc::voltage_monitor_config::mcu_internal_temp_get_sensor_config();
+    bool result     = false;
+    if constexpr (mcuTempCfg.sensor != nv::volt_mon::Sensor::Invalid) {
+        result = (nv::mcu_internal_temp::McuInternalTemp::inst().get_temperature_celsius(
+                      internal_temp_raw)
+                  == nv::volt_mon::Status::Ok);
+    }
+    else {
+        result = sys::sensor::Driver::get_current_temperature(internal_temp_raw);
+    }
+
     if (result) {
         Cache::inst().set_cache(TelemId::InternalTemp,
                                 static_cast<uint32_t>(internal_temp_raw));
@@ -463,7 +685,8 @@ void Task::handle_update_routing_table()
         // routing table events come from upstream enumueration, update status if checking for
         // AP status; update status if I2C is not running the timer or if AP is up and not
         // enumerated
-        if ((_timer.id() != ipc::TimerId::Ap1Status && _timer.id() != ipc::TimerId::Ap2Status)
+        if ((_timer.id() != ipc::TimerId::Ap1Status && _timer.id() != ipc::TimerId::Ap2Status
+             && _timer.id() != ipc::TimerId::Ap3Status)
             || _ap_status == APStatus::ApUpNotEnumerated || _ap_status == APStatus::Querying) {
             auto  myep    = nv::mctp::Control::get_routing_index(_client);
             auto& myentry = _routing_table.at(myep);
@@ -479,27 +702,214 @@ void Task::handle_update_routing_table()
     }
 }
 
-I2cStatus
-Task::i2c_cmd(uint8_t address, std::span<uint8_t> write_buffer, std::span<uint8_t> read_buffer)
+I2cStatus Task::wait_for_i2c_completion()
 {
-    //  If both write and read are requested, use write-read operation
-    if (write_buffer.size() > 0 && read_buffer.size() > 0) {
-        return sys::i2c::i2c_write_read(_port, address, write_buffer, read_buffer);
+    using namespace std::chrono_literals;
+    auto event = _event.wait(CtrlWaitEvents, true, false, 500ms);
+
+    switch (event.value()) {
+        case Task::Event::CtrlDone   : return I2cStatus::Ok;
+        case Task::Event::CtrlBusBusy: return I2cStatus::Busy;
+        case Task::Event::CtrlNak    : return I2cStatus::Nak;
+        case Task::Event::CtrlArbLost: return I2cStatus::ArbLost;
+        default                      : return I2cStatus::Error;
+    }
+    return I2cStatus::Error;
+}
+
+I2cStatus Task::i2c_read_recvlen_wrapper(uint8_t            address,
+                                         std::span<uint8_t> read_buffer,
+                                         I2cFlags           flags,
+                                         size_t&            read_len)
+{
+    // Getting FIFO error and immediate STOP on the data portion
+    // WAR: Fetch the max for SMBus Block Read (33 bytes) and trim the response (CP2112-like)
+    if (read_buffer.size() < MaxSMBusBlockReadLength) {
+        nv::error("read buffer size is too small for SMBus Block Read\n");
+        return I2cStatus::Error;
     }
 
-    // Write only operation
-    if (write_buffer.size() > 0) {
-        return sys::i2c::i2c_write(_port, address, write_buffer);
+    auto item   = read_buffer.subspan(0, MaxSMBusBlockReadLength);
+    auto status = _driver.i2c_read(address, item, (flags & ~nv::i2c::I2cFlags::RecvLen));
+    if (status != I2cStatus::Ok) {
+        return status;
     }
 
-    // Read only operation
-    if (read_buffer.size() > 0) {
-        return sys::i2c::i2c_read(_port, address, read_buffer);
+    status = wait_for_i2c_completion();
+
+    if (read_buffer[0] > SmbusBlockReadLength) {
+        status = I2cStatus::Error;
     }
 
+    if (status == I2cStatus::Ok) {
+        read_len = read_buffer[0] + 1;
+    }
+
+    return status;
+}
+
+I2cStatus Task::i2c_cmd(uint8_t            address,
+                        std::span<uint8_t> write_buffer,
+                        std::span<uint8_t> read_buffer,
+                        I2cFlags           flags,
+                        size_t&            read_len)
+{
+    // Check if error injection is enabled for this port (I2C protocol)
+    if constexpr (nv::ipc::EnableI2CErrorInjection) {
+        if (nv::i2c::should_inject_error(
+                _port, address, 0, static_cast<uint8_t>(nv::i2c::ProtocolType::I2c))) {
+            return nv::i2c::get_injected_error_status(
+                _port, static_cast<uint8_t>(nv::i2c::ProtocolType::I2c));
+        }
+    }
+
+    if constexpr (nv::lstp::EnableI2c) {  // Non-blocking I2C implementation
+        if (_repeated_start_timer.id() != ipc::TimerId::End) {
+            _repeated_start_timer.stop();
+        }
+
+        _event.clear(CtrlWaitEvents);
+
+        if (flags & nv::i2c::I2cFlags::RecvLen) {
+            return i2c_read_recvlen_wrapper(address, read_buffer, flags, read_len);
+        }
+
+        //  If both write and read are requested, use write-read operation
+        if (write_buffer.size() > 0 && read_buffer.size() > 0) {
+            // Note: There is significant delay for events to wake up task (around 100us)
+            // Blocking approach has negligable delay
+            // return sys::i2c::i2c_write_read(_port, address, write_buffer, read_buffer);
+            auto status = _driver.i2c_write(address, write_buffer, nv::i2c::I2cFlags::NoStop);
+            if (status != I2cStatus::Ok) {
+                return status;
+            }
+            status = wait_for_i2c_completion();
+            _event.clear(CtrlWaitEvents);
+            if (status != I2cStatus::Ok) {
+                return status;
+            }
+
+            status = _driver.i2c_read(address, read_buffer);
+            if (status != I2cStatus::Ok) {
+                return status;
+            }
+            return wait_for_i2c_completion();
+        }
+
+        // Write only operation
+        if ((write_buffer.size() > 0) || (flags & nv::i2c::I2cFlags::QuickWrite)) {
+            auto status = _driver.i2c_write(address, write_buffer, flags);
+            if (status != I2cStatus::Ok) {
+                return status;
+            }
+            status = wait_for_i2c_completion();
+            if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
+                && _repeated_start_timer.id() != ipc::TimerId::End) {
+                _repeated_start_timer.reset();
+            }
+            return status;
+        }
+
+        // Read only operation
+        if ((read_buffer.size() > 0) || (flags & nv::i2c::I2cFlags::QuickRead)) {
+            auto status = _driver.i2c_read(address, read_buffer, flags);
+            if (status != I2cStatus::Ok) {
+                return status;
+            }
+            status = wait_for_i2c_completion();
+            if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
+                && _repeated_start_timer.id() != ipc::TimerId::End) {
+                _repeated_start_timer.reset();
+            }
+            return status;
+        }
+    }
+    else {  // Legacy Blocking I2C implementation
+        //  If both write and read are requested, use write-read operation
+        if (write_buffer.size() > 0 && read_buffer.size() > 0) {
+            return sys::i2c::i2c_write_read(_port, address, write_buffer, read_buffer);
+        }
+
+        // Write only operation
+        if (write_buffer.size() > 0) {
+            return sys::i2c::i2c_write(_port, address, write_buffer);
+        }
+
+        // Read only operation
+        if (read_buffer.size() > 0) {
+            return sys::i2c::i2c_read(_port, address, read_buffer);
+        }
+    }
     return I2cStatus::Ok;
 }
 
+void Task::handle_eeprom_update()
+{
+    if constexpr (nv::ipc::EnableEepromBridge) {
+        if (_port == nv::ipc::EepromDstPort) {
+            auto& cache = eeprom_cache();
+            if (cache.has_dirty_pages()) {
+                cache.sync_one_page();
+            }
+        }
+    }
+}
+
+// Handle EEPROM request via cache
+// Note: Only called when EnableEepromBridge is true and address matches EepromDstAddress
+bool Task::handle_eeprom_cache_request(const I2cRequest&  request,
+                                       std::span<uint8_t> read_buffer,
+                                       size_t             write_len,
+                                       size_t             read_len)
+{
+    if (_port != nv::ipc::EepromDstPort) {
+        return false;
+    }
+    auto& cache = eeprom_cache();
+
+    // Handle write data (address bytes + optional data)
+    if (write_len > 0) {
+        if (cache.use_2byte_addr()) {
+            // 2-byte addressing
+            if (write_len >= 2) {
+                const uint16_t addr = (static_cast<uint16_t>(request.write_buffer[0]) << 8)
+                                    | request.write_buffer[1];
+                cache.set_addr_ptr(addr);
+                // Write data bytes (after 2-byte address)
+                for (size_t i = 2; i < write_len; i++) {
+                    cache.write(cache.get_addr_ptr(), request.write_buffer.at(i));
+                    cache.inc_addr_ptr();
+                }
+            }
+            else if (write_len == 1) {
+                cache.set_addr_ptr(request.write_buffer[0]);
+            }
+        }
+        else {
+            // 1-byte addressing
+            cache.set_addr_ptr(request.write_buffer[0]);
+            // Write data bytes (after 1-byte address)
+            for (size_t i = 1; i < write_len; i++) {
+                cache.write(cache.get_addr_ptr(), request.write_buffer.at(i));
+                cache.inc_addr_ptr();
+            }
+        }
+    }
+
+    // Handle read data
+    for (size_t i = 0; i < read_len; i++) {
+        read_buffer[i] = cache.read(cache.get_addr_ptr());
+        cache.inc_addr_ptr();
+    }
+
+    // Send response
+    std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
+    if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
+        usb::Task::to_usb(this->_ipchandler_id, read_len, item, I2cStatus::Ok);
+    }
+
+    return true;
+}
 void Task::handle_i2c_request(std::span<uint8_t> buffer)
 {
     nv::i2c::I2cHidBuffer read_buffer{};
@@ -508,14 +918,55 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
     std::memcpy(&request, buffer.data(), RequestSize);
     const size_t WriteLength = std::min(static_cast<size_t>(request.write_length),
                                         request.write_buffer.size());
-    const size_t ReadLength  = std::min(static_cast<size_t>(request.read_length),
-                                       read_buffer.size());
-    auto write_buffer_span   = std::span<uint8_t>(request.write_buffer.data(), WriteLength);
-    auto read_buffer_span    = std::span<uint8_t>(read_buffer.data(), ReadLength);
-    auto result              = i2c_cmd(request.address, write_buffer_span, read_buffer_span);
-    if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
-        std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
-        usb::Task::to_usb(this->_ipchandler_id, ReadLength, item, result);
+    size_t ReadLength = std::min(static_cast<size_t>(request.read_length), read_buffer.size());
+    auto   write_buffer_span = std::span<uint8_t>(request.write_buffer.data(), WriteLength);
+    auto   read_buffer_span  = std::span<uint8_t>(read_buffer.data(), ReadLength);
+
+    // Try EEPROM cache for USB requests only (sync requests must go to real EEPROM)
+    if constexpr (nv::ipc::EnableEepromBridge) {
+        if (request.address == nv::ipc::EepromDstAddress
+            && request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
+            const std::span<uint8_t> read_span(read_buffer.data(), read_buffer.size());
+            if (handle_eeprom_cache_request(request, read_span, WriteLength, ReadLength)) {
+                return;
+            }
+        }
+    }
+
+    // Normal I2C transaction
+    auto result = i2c_cmd(
+        request.address, write_buffer_span, read_buffer_span, request.flags, ReadLength);
+
+    std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
+
+    if constexpr (nv::ipc::EnableI2CErrorInjection) {
+        if (nv::i2c::should_inject_error(
+                _port, request.address, 0, static_cast<uint8_t>(nv::i2c::ProtocolType::I2c))) {
+            const auto index = nv::i2c::port_to_error_injection_index(
+                _port, static_cast<uint8_t>(nv::i2c::ProtocolType::I2c));
+            const auto& configs = nv::i2c::get_error_injection_configs();
+            if (index < configs.size() && configs.at(index).enabled) {
+                // Check if error type is UsbQueueFull or Timeout - both should drop the packet
+                if (configs.at(index).error_type
+                    == static_cast<uint8_t>(nv::i2c::ErrorInjectionType::UsbQueueFull)) {
+                    nv::info("USB queue full simulation - skipping to_usb call p:%d\n",
+                             (uint8_t)_port);
+                    return;
+                }
+            }
+        }
+    }
+
+    switch (request.src_id) {
+        case static_cast<uint8_t>(ipchandler::Id::Usb):
+            usb::Task::to_usb(this->_ipchandler_id, ReadLength, item, result);
+            break;
+        case static_cast<uint8_t>(ipchandler::Id::Lstp):
+            if constexpr (nv::lstp::EnableI2c) {
+                nv::lstp::LstpRouter::to_i2c(this->_ipchandler_id, ReadLength, item, result);
+            }
+            break;
+        default: break;
     }
 }
 
@@ -695,7 +1146,7 @@ bool Task::process_tx_packet(std::span<uint8_t> buffer,
     auto size = i2c_packet.i2c_hdr.byte_cnt + 3U;
     /// need 1 byte to fill PEC, the payload size should not equal the struct size
     if (size >= sizeof(i2c_packet)) {
-        nv::info("byte count field is invalid\n", mctp_packet.hdr.dst_eid);
+        nv::info("byte count field is invalid (dst_eid=%d)\n", mctp_packet.hdr.dst_eid);
         return false;
     }
     i2c_buffer[size] = crc8(std::span(i2c_buffer, i2c_buffer + size));
@@ -819,7 +1270,11 @@ void Task::forward(nv::mctp::Packet& packet, uint8_t command_code)
                 case nv::mctp::Client::DsI2c0:
                 case nv::mctp::Client::DsI2c1:
                 case nv::mctp::Client::DsI2c2:
-                case nv::mctp::Client::DsI2c3: {
+                case nv::mctp::Client::DsI2c3:
+                case nv::mctp::Client::DsI2c4:
+                case nv::mctp::Client::DsI2c5:
+                case nv::mctp::Client::DsI2c6:
+                case nv::mctp::Client::DsI2c7: {
                     auto status = nv::i2c::Task::tx(packet);
                     if (status != nv::i2c::Task::Status::Ok) {
                         logger::error(
@@ -858,15 +1313,13 @@ bool Task::transmit(const I2cPacket& packet)
     /// add 3 byte for Address, CMD, count fields and add 1 byte for "PEC" field
     auto size   = packet.i2c_hdr.byte_cnt + 4U;
     auto buffer = std::span<uint8_t>(std::bit_cast<uint8_t*>(&packet), size);
-    auto wait   = Task::Event::CtrlDone | Task::Event::CtrlBusBusy | Task::Event::CtrlNak
-              | Task::Event::CtrlArbLost | Task::Event::CtrlError;
-    auto error = Error::Ok;
-    _event.clear(wait);
+    auto error  = Error::Ok;
+    _event.clear(CtrlWaitEvents);
     for (auto i = 0; i < Retry; i++) {
         if (!_driver.write(buffer)) {
             set_event(Task::Event::CtrlBusBusy);
         }
-        auto event = _event.wait(wait, true, false, 500ms);
+        auto event = _event.wait(CtrlWaitEvents, true, false, 500ms);
         if (event.value() & Task::Event::CtrlDone) {
             error = Error::Ok;
             break;
@@ -917,9 +1370,76 @@ void Task::handle_error(Error reason)
 bool Task::to_i2c(ipchandler::Id    src_id,
                   uint8_t           address,
                   ipchandler::Id    i2c_ipchandler_id,
-                  uint8_t           write_length,
+                  uint16_t          write_length,
                   uint16_t          read_length,
+                  I2cFlags          flags,
                   ipc::Queue::Item& item)
+{
+    // Validate lengths against buffer limits
+    if (write_length > I2cBufferSize) {
+        return false;
+    }
+    if (read_length > I2cBufferSize) {
+        return false;
+    }
+
+    // Check for queue full error injection
+    if constexpr (nv::ipc::EnableI2CErrorInjection) {
+        if (nv::i2c::should_inject_error(i2c_ipchandler_id,
+                                         address,
+                                         0,
+                                         static_cast<uint8_t>(nv::i2c::ProtocolType::I2c))) {
+            const Port port  = nv::i2c::ipchandler_to_error_injection_port(i2c_ipchandler_id);
+            const auto index = nv::i2c::port_to_error_injection_index(
+                port, static_cast<uint8_t>(nv::i2c::ProtocolType::I2c));
+            const auto& configs = nv::i2c::get_error_injection_configs();
+            if (index < configs.size()
+                && configs.at(index).error_type
+                       == static_cast<uint8_t>(nv::i2c::ErrorInjectionType::QueueFull)) {
+                nv::info("I2C queue full error injected for port %d\n", static_cast<int>(port));
+                return false;  // Simulate queue full by returning false
+            }
+        }
+    }
+
+    // Create request
+    Task::Request request{};
+    request.type = Task::RequestType::I2cRequest;
+
+    // Set up I2C request data
+    auto* i2c_request         = std::bit_cast<I2cRequest*>(static_cast<void*>(request.data));
+    i2c_request->address      = address;
+    i2c_request->write_length = write_length;
+    i2c_request->read_length  = read_length;
+    i2c_request->src_id       = static_cast<uint8_t>(src_id);
+    i2c_request->flags        = flags;
+
+    // Copy write data if any
+    if (write_length > 0) {
+        std::copy_n(item.begin(), write_length, i2c_request->write_buffer.begin());
+    }
+
+    // Create queue item with the full request size
+    auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
+                                             sizeof(Task::Request));
+
+    // Send to IPC handler
+    auto status = ipchandler::Driver::send(
+        src_id, i2c_ipchandler_id, request_item, sizeof(request), true);
+
+    if (status != ipchandler::Status::Success) {
+        return false;
+    }
+
+    return true;
+}
+
+bool Task::to_i2c_from_isr(ipchandler::Id    src_id,
+                           uint8_t           address,
+                           ipchandler::Id    i2c_ipchandler_id,
+                           uint8_t           write_length,
+                           uint16_t          read_length,
+                           ipc::Queue::Item& item)
 {
     // Create request
     Task::Request request{};
@@ -935,28 +1455,47 @@ bool Task::to_i2c(ipchandler::Id    src_id,
     // Copy write data if any
     if (write_length > 0) {
         if (write_length > i2c_request->write_buffer.size()) {
-            nv::info("Write length %d exceeds buffer size %d\n",
-                     write_length,
-                     i2c_request->write_buffer.size());
             return false;
         }
         std::copy_n(item.begin(), write_length, i2c_request->write_buffer.begin());
+    }
+
+    // Map ipchandler_id to queue_id
+    // coverity[UNUSED_VALUE] "tidy" complains no init value
+    nv::ipc::QueueId queue_id = nv::ipc::QueueId::End;
+    switch (i2c_ipchandler_id) {
+        case ipchandler::Id::I2c1: queue_id = nv::ipc::QueueId::I2c1; break;
+        case ipchandler::Id::I2c2: queue_id = nv::ipc::QueueId::I2c2; break;
+        case ipchandler::Id::I2c3: queue_id = nv::ipc::QueueId::I2c3; break;
+        case ipchandler::Id::I2c4: queue_id = nv::ipc::QueueId::I2c4; break;
+        case ipchandler::Id::I2c5: queue_id = nv::ipc::QueueId::I2c5; break;
+        case ipchandler::Id::I2c6: queue_id = nv::ipc::QueueId::I2c6; break;
+        case ipchandler::Id::I2c7: queue_id = nv::ipc::QueueId::I2c7; break;
+        case ipchandler::Id::I2c8: queue_id = nv::ipc::QueueId::I2c8; break;
+        case ipchandler::Id::I2c9: queue_id = nv::ipc::QueueId::I2c9; break;
+        default                  : return false;
     }
 
     // Create queue item with the full request size
     auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
                                              sizeof(Task::Request));
 
-    // Send to IPC handler
-    auto status = ipchandler::Driver::send(
-        src_id, i2c_ipchandler_id, request_item, sizeof(request), true);
+    // Send to queue using ISR-safe API
+    nv::ipc::Queue& queue  = nv::ipc::Queue::make(queue_id);
+    auto            status = queue.send_isr(request_item);
 
-    if (status != ipchandler::Status::Success) {
-        nv::info("Failed to send I2C request (%d)\n", status);
+    if (status != nv::ipc::Queue::Status::Ok) {
         return false;
     }
 
     return true;
+}
+
+void Task::request_i2c_loopback_test()
+{
+    const Task::Request request{.type = RequestType::I2cLoopbackTest};
+    auto item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
+    (void)nv::ipc::Queue::make(nv::ipc::QueueId::I2c0).send(item, std::chrono::seconds(0));
 }
 
 void Task::check_ap_status(nv::ipc::Timer& timer)
@@ -971,6 +1510,7 @@ void Task::check_ap_status(nv::ipc::Timer& timer)
         // projects
         case TimerId::Ap1Status: queue_id = QueueId::I2c1; break;
         case TimerId::Ap2Status: queue_id = QueueId::I2c2; break;
+        case TimerId::Ap3Status: queue_id = QueueId::I2c3; break;
         default                : return;
     }
     auto item         = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
@@ -1006,7 +1546,8 @@ void Task::handle_ap_status(APStatus set_status)
         // Set status
         status = set_status;
         // reset status timer since we just forced a status change
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status) {
+        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
+            || _timer.id() == ipc::TimerId::Ap3Status) {
             _timer.reset();
         }
     }
@@ -1020,7 +1561,8 @@ void Task::handle_ap_status(APStatus set_status)
                       static_cast<uint8_t>(status)});
 
         // update mctp driver with status for enumeration
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status) {
+        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
+            || _timer.id() == ipc::TimerId::Ap3Status) {
             if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
                 nv::mctp::Driver::endpoint_status_change(
                     myep, (status == APStatus::ApUpNotEnumerated));

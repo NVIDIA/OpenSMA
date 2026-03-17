@@ -108,6 +108,8 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
     auto& hid_report = hid_from(rx_buffer);
 
     if (hid_report.report_id == ReportId::DataReadReq) {
+        _queue.reset();
+
         auto& data_read_pkt = hid_10_from(rx_buffer);
 
         const uint8_t SlaveAddr                  = data_read_pkt.slave_addr >> 1u;
@@ -161,12 +163,15 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
                               ipchandler_id,
                               0,
                               read_length,
+                              i2c::I2cFlags::NoFlag,
                               buffer_span);
         }
         _state = State::Read;
     }
 
     if (hid_report.report_id == ReportId::DataWriteReadReq) {
+        _queue.reset();
+
         auto& data_read_write_pkt = hid_11_from(rx_buffer);
 
         const uint8_t TarAddrLen                 = data_read_write_pkt.tar_addr_len;
@@ -200,7 +205,7 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
                                             mapping_slave_addr,
                                             ipchandler_id,
                                             TarAddrLen,
-                                            data_read_write_pkt.length_l,
+                                            read_length,
                                             span_item);
             }
         }
@@ -218,6 +223,7 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
                               ipchandler_id,
                               TarAddrLen,
                               read_length,
+                              i2c::I2cFlags::NoFlag,
                               span_item);
         }
         _state = State::Read;
@@ -229,6 +235,8 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
     }
 
     if (hid_report.report_id == ReportId::DataWrite) {
+        _queue.reset();
+
         auto& data_write_pkt = hid_14_from(rx_buffer);
 
         const uint8_t SlaveAddr                  = data_write_pkt.slave_addr >> 1u;
@@ -264,8 +272,13 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
                 ipchandler::Id::Usb, mapping_slave_addr, ipchandler_id, Length, 0, span_item);
         }
         else {
-            i2c::Task::to_i2c(
-                ipchandler::Id::Usb, mapping_slave_addr, ipchandler_id, Length, 0, span_item);
+            i2c::Task::to_i2c(ipchandler::Id::Usb,
+                              mapping_slave_addr,
+                              ipchandler_id,
+                              Length,
+                              0,
+                              i2c::I2cFlags::NoFlag,
+                              span_item);
         }
 
         _state = State::Write;

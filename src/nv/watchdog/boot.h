@@ -46,6 +46,11 @@ public:
     static uint8_t  get_runtime_flag(nv::bootloader::Driver::ImageIndex index);
     static nv::bootloader::Driver::ImageIndex get_target_boot_slot();
     static void set_target_boot_slot(nv::bootloader::Driver::ImageIndex index);
+
+    static bool               able_to_switch();
+    static void               increase_total_switch_time();
+    static void               reset_total_switch_time();
+    static constexpr uint32_t MaxSwitchTime = 6;
 #if 0
     static void clear_update();
     static bool is_update(nv::bootloader::Driver::ImageIndex index);

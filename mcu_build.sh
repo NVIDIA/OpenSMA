@@ -3,7 +3,7 @@
 # print the usage of the script
 for arg in "$@"; do
     if [[ "$arg" == "-h" || "$arg" == "--help" || "$arg" == "help" ]]; then
-        echo "Usage: $0 [PROJECT=project] [PLATFORM=platform] [BOARD=board] [MODE=mode] [SIGN_KEYSET=keyset] [VERSION=version] [STREAMBOOT=1] [RUN_LOCAL=1]"
+        echo "Usage: $0 [PROJECT=project] [PLATFORM=platform] [BOARD=board] [MODE=mode] [SIGN_KEYSET=keyset] [VERSION=version] [STREAMBOOT=1] [RUN_LOCAL=1] [BUILD_ONLY=1]"
         echo "PROJECT: project name (for example: pg540)"
         echo "PLATFORM: platform name (for example: mcxn236)"
         echo "BOARD: board name (for example: pg540)"
@@ -12,6 +12,7 @@ for arg in "$@"; do
         echo "VERSION: firmware version (for example: 02.0010.0000)"
         echo "STREAMBOOT: set to 1 to generate multi-binary files (for example: STREAMBOOT=1)"
         echo "RUN_LOCAL: set to 1 to execute local without docker (for example: RUN_LOCAL=1)"
+        echo "BUILD_ONLY: set to 1 to only build without signing and downloading (for example: BUILD_ONLY=1)"
         exit 0
     fi
 done
@@ -27,6 +28,7 @@ for ARG in "$@"; do
         CODE_GROUP_INDEX=*) CODE_GROUP_INDEX="${ARG#*=}" ;;
         STREAMBOOT=*) STREAMBOOT="${ARG#*=}" ;;
         RUN_LOCAL=*) RUN_LOCAL="${ARG#*=}" ;;
+        BUILD_ONLY=*) BUILD_ONLY="${ARG#*=}" ;;
         *) echo "Unknown argument: $ARG"; exit 1 ;;
     esac
 done
@@ -38,6 +40,7 @@ MODE="${MODE:-$MODE_ENV}"
 SIGN_KEYSET="${SIGN_KEYSET:-$SIGN_KEYSET_ENV}"
 VERSION="${VERSION:-$VERSION_ENV}"
 CODE_GROUP_INDEX="${CODE_GROUP_INDEX:-$CODE_GROUP_INDEX_ENV}"
+BUILD_ONLY="${BUILD_ONLY:-$BUILD_ONLY_ENV}"
 
 run_build_flow() {
     local platform="$1"
@@ -61,6 +64,10 @@ run_build_flow() {
 
     if [[ -n "$RUN_LOCAL" ]]; then
         env_vars+=(RUN_LOCAL="$RUN_LOCAL")
+    fi
+
+    if [[ -n "$BUILD_ONLY" ]]; then
+        env_vars+=(BUILD_ONLY="$BUILD_ONLY")
     fi
 
     env "${env_vars[@]}" ./mcu_build.sh || exit 1
@@ -132,7 +139,7 @@ if [[ "$PLATFORM" == "mcxn547-both" || "$PLATFORM" == "mcxn556-both" ]]; then
         local target_file="$1"
         cat > "$target_file" << 'EOF'
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -195,6 +202,7 @@ if [[ -n "$VERSION" ]]; then BUILD_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then BUILD_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
 if [[ -n "$STREAMBOOT" ]]; then BUILD_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then BUILD_CMD+=" run_local=$RUN_LOCAL"; fi
+if [[ "$BUILD_ONLY" == "1" ]]; then BUILD_CMD+=" BUILD_ONLY=1"; fi
 
 echo "Running: $BUILD_CMD"
 eval $BUILD_CMD
@@ -202,4 +210,171 @@ BUILD_EXIT_CODE=$?
 if [[ $BUILD_EXIT_CODE -ne 0 ]]; then
     echo "Build command failed with exit code $BUILD_EXIT_CODE. Exiting."
     exit $BUILD_EXIT_CODE
+fi
+
+# Generate multi-bin for streaming boot
+if [[ "$STREAMBOOT" == "1" ]]; then
+    MULTI_BIN_CMD="./ubs multi-bin"
+    if [[ -n "$PROJECT" ]]; then MULTI_BIN_CMD+=" PROJECT=$PROJECT"; fi
+    if [[ -n "$PLATFORM" ]]; then MULTI_BIN_CMD+=" PLATFORM=$PLATFORM"; fi
+    if [[ -n "$BOARD" ]]; then MULTI_BIN_CMD+=" BOARD=$BOARD"; fi
+    if [[ -n "$MODE" ]]; then MULTI_BIN_CMD+=" MODE=$MODE"; fi
+    if [[ -n "$SIGN_KEYSET" ]]; then MULTI_BIN_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
+    if [[ -n "$VERSION" ]]; then MULTI_BIN_CMD+=" VERSION=$VERSION"; fi
+    if [[ -n "$STREAMBOOT" ]]; then MULTI_BIN_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+    if [[ -n "$RUN_LOCAL" ]]; then MULTI_BIN_CMD+=" run_local=$RUN_LOCAL"; fi
+    if [[ "$BUILD_ONLY" == "1" ]]; then MULTI_BIN_CMD+=" BUILD_ONLY=1"; fi
+
+    echo "Running: $MULTI_BIN_CMD"
+    eval $MULTI_BIN_CMD
+    MULTI_BIN_EXIT_CODE=$?
+    if [[ $MULTI_BIN_EXIT_CODE -ne 0 ]]; then
+        echo "Multi bin command failed with exit code $MULTI_BIN_EXIT_CODE. Exiting."
+        exit $MULTI_BIN_EXIT_CODE
+    fi
+fi
+
+# skip signing and downloading if BUILD_ONLY is set
+if [[ "$BUILD_ONLY" == "1" ]]; then
+    echo "BUILD_ONLY=1 set, skipping signing and downloading steps."
+    exit 0
+fi
+
+if [[ "$PLATFORM" == "mcxn547-core1" || "$PLATFORM" == "mcxn556-core1" ]]; then
+    echo "Platform $PLATFORM is not supported for signing."
+    exit 0
+fi
+
+# Local signing
+# if SIGN_KEYSET starts with "local", then process local-signing.
+if [[ "$SIGN_KEYSET" == "local"* ]]; then
+    echo "SIGN_KEYSET set to 'local', process local-signing."
+    
+    LOCAL_SIGN_CMD="./ubs local-sign"
+    # if SIGN_KEYSET is "local-prod", add KEY_TYPE=PROD to the command
+    # if SIGN_KEYSET is "local" or "local-debug", add KEY_TYPE=DEBUG to the command
+    if [[ "$SIGN_KEYSET" == "local-prod" ]]; then
+        LOCAL_SIGN_CMD+=" KEY_TYPE=PROD"
+    elif [[ "$SIGN_KEYSET" == "local" || "$SIGN_KEYSET" == "local-debug" ]]; then
+        LOCAL_SIGN_CMD+=" KEY_TYPE=DEBUG"
+    else
+        echo "Unknown SIGN_KEYSET: $SIGN_KEYSET"
+        exit 1
+    fi
+    if [[ -n "$PROJECT" ]]; then LOCAL_SIGN_CMD+=" PROJECT=$PROJECT"; fi
+    if [[ -n "$PLATFORM" ]]; then LOCAL_SIGN_CMD+=" PLATFORM=$PLATFORM"; fi
+    if [[ -n "$BOARD" ]]; then LOCAL_SIGN_CMD+=" BOARD=$BOARD"; fi
+    if [[ -n "$MODE" ]]; then LOCAL_SIGN_CMD+=" MODE=$MODE"; fi
+    if [[ -n "$VERSION" ]]; then LOCAL_SIGN_CMD+=" VERSION=$VERSION"; fi
+    if [[ -n "$CODE_GROUP_INDEX" ]]; then LOCAL_SIGN_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+    if [[ -n "$STREAMBOOT" ]]; then LOCAL_SIGN_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+    if [[ -n "$RUN_LOCAL" ]]; then LOCAL_SIGN_CMD+=" run_local=$RUN_LOCAL"; fi
+    
+    # Add UBS_DOCKER argument for mcxn556 platforms
+    if [[ "$PLATFORM" == mcxn556* ]]; then
+        LOCAL_SIGN_CMD+=" UBS_DOCKER=gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs:556_latest"
+        echo "Assign UBS_DOCKER for mcxn556 platform local signing"
+    fi
+
+    echo "Running: $LOCAL_SIGN_CMD"
+    eval $LOCAL_SIGN_CMD
+    LOCAL_SIGN_EXIT_CODE=$?
+    if [[ $LOCAL_SIGN_EXIT_CODE -ne 0 ]]; then
+        echo "Local signing command failed with exit code $LOCAL_SIGN_EXIT_CODE. Exiting."
+        exit $LOCAL_SIGN_EXIT_CODE
+    fi
+    exit 0
+fi
+
+SIGN_REQ_MBI_CMD="./ubs sign-request-mbi"
+if [[ -n "$PROJECT" ]]; then SIGN_REQ_MBI_CMD+=" PROJECT=$PROJECT"; fi
+if [[ -n "$PLATFORM" ]]; then SIGN_REQ_MBI_CMD+=" PLATFORM=$PLATFORM"; fi
+if [[ -n "$BOARD" ]]; then SIGN_REQ_MBI_CMD+=" BOARD=$BOARD"; fi
+if [[ -n "$MODE" ]]; then SIGN_REQ_MBI_CMD+=" MODE=$MODE"; fi
+if [[ -n "$SIGN_KEYSET" ]]; then SIGN_REQ_MBI_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
+if [[ -n "$VERSION" ]]; then SIGN_REQ_MBI_CMD+=" VERSION=$VERSION"; fi
+if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_REQ_MBI_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$STREAMBOOT" ]]; then SIGN_REQ_MBI_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+if [[ -n "$RUN_LOCAL" ]]; then SIGN_REQ_MBI_CMD+=" run_local=$RUN_LOCAL"; fi
+
+echo "Running: $SIGN_REQ_MBI_CMD"
+eval $SIGN_REQ_MBI_CMD
+SIGN_REQ_EXIT_CODE=$?
+if [[ $SIGN_REQ_EXIT_CODE -ne 0 ]]; then
+    echo "Sign request command failed with exit code $SIGN_REQ_EXIT_CODE. Exiting."
+    exit $SIGN_REQ_EXIT_CODE
+fi
+
+SIGN_DL_MBI_CMD="./ubs sign-download-mbi"
+if [[ -n "$PROJECT" ]]; then SIGN_DL_MBI_CMD+=" PROJECT=$PROJECT"; fi
+if [[ -n "$PLATFORM" ]]; then SIGN_DL_MBI_CMD+=" PLATFORM=$PLATFORM"; fi
+if [[ -n "$BOARD" ]]; then SIGN_DL_MBI_CMD+=" BOARD=$BOARD"; fi
+if [[ -n "$MODE" ]]; then SIGN_DL_MBI_CMD+=" MODE=$MODE"; fi
+if [[ -n "$VERSION" ]]; then SIGN_DL_MBI_CMD+=" VERSION=$VERSION"; fi
+if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_DL_MBI_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$STREAMBOOT" ]]; then SIGN_DL_MBI_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+if [[ -n "$RUN_LOCAL" ]]; then SIGN_DL_MBI_CMD+=" run_local=$RUN_LOCAL"; fi
+
+echo "Running: $SIGN_DL_MBI_CMD"
+eval $SIGN_DL_MBI_CMD
+SIGN_DL_MBI_EXIT_CODE=$?
+if [[ $SIGN_DL_MBI_EXIT_CODE -ne 0 ]]; then
+    echo "Sign download mbi command failed with exit code $SIGN_DL_MBI_EXIT_CODE. Exiting."
+    exit $SIGN_DL_MBI_EXIT_CODE
+fi
+
+SIGN_REQ_SB_CMD="./ubs sign-request-sb"
+if [[ -n "$PROJECT" ]]; then SIGN_REQ_SB_CMD+=" PROJECT=$PROJECT"; fi
+if [[ -n "$PLATFORM" ]]; then SIGN_REQ_SB_CMD+=" PLATFORM=$PLATFORM"; fi
+if [[ -n "$BOARD" ]]; then SIGN_REQ_SB_CMD+=" BOARD=$BOARD"; fi
+if [[ -n "$MODE" ]]; then SIGN_REQ_SB_CMD+=" MODE=$MODE"; fi
+if [[ -n "$SIGN_KEYSET" ]]; then SIGN_REQ_SB_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
+if [[ -n "$VERSION" ]]; then SIGN_REQ_SB_CMD+=" VERSION=$VERSION"; fi
+if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_REQ_SB_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$STREAMBOOT" ]]; then SIGN_REQ_SB_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+if [[ -n "$RUN_LOCAL" ]]; then SIGN_REQ_SB_CMD+=" run_local=$RUN_LOCAL"; fi
+
+echo "Running: $SIGN_REQ_SB_CMD"
+eval $SIGN_REQ_SB_CMD
+SIGN_REQ_SB_EXIT_CODE=$?
+if [[ $SIGN_REQ_SB_EXIT_CODE -ne 0 ]]; then
+    echo "Sign request sb command failed with exit code $SIGN_REQ_SB_EXIT_CODE. Exiting."
+    exit $SIGN_REQ_SB_EXIT_CODE
+fi
+
+SIGN_DL_SB_CMD="./ubs sign-download-sb"
+if [[ -n "$PROJECT" ]]; then SIGN_DL_SB_CMD+=" PROJECT=$PROJECT"; fi
+if [[ -n "$PLATFORM" ]]; then SIGN_DL_SB_CMD+=" PLATFORM=$PLATFORM"; fi
+if [[ -n "$BOARD" ]]; then SIGN_DL_SB_CMD+=" BOARD=$BOARD"; fi
+if [[ -n "$MODE" ]]; then SIGN_DL_SB_CMD+=" MODE=$MODE"; fi
+if [[ -n "$VERSION" ]]; then SIGN_DL_SB_CMD+=" VERSION=$VERSION"; fi
+if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_DL_SB_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$STREAMBOOT" ]]; then SIGN_DL_SB_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
+if [[ -n "$RUN_LOCAL" ]]; then SIGN_DL_SB_CMD+=" run_local=$RUN_LOCAL"; fi
+
+echo "Running: $SIGN_DL_SB_CMD"
+eval $SIGN_DL_SB_CMD
+SIGN_DL_SB_EXIT_CODE=$?
+if [[ $SIGN_DL_SB_EXIT_CODE -ne 0 ]]; then
+    echo "Sign download sb command failed with exit code $SIGN_DL_SB_EXIT_CODE. Exiting."
+    exit $SIGN_DL_SB_EXIT_CODE
+fi
+
+# Generate configuration file JSON
+if [[ -n "$PROJECT" ]]; then
+    echo "Generating project configuration file JSON..."
+
+    # Determine build directory based on PROJECT, PLATFORM, and MODE
+    BUILD_DIR="build/${PROJECT}-${PLATFORM}-${MODE}"
+
+    # Create build directory if it doesn't exist
+    mkdir -p "$BUILD_DIR"
+
+    # Generate JSON file in the build directory
+    python3 parse_config.py "$PROJECT" -o "${BUILD_DIR}/${PROJECT}_config.json"
+    if [[ $? -eq 0 ]]; then
+        echo "Configuration file generated successfully: ${BUILD_DIR}/${PROJECT}_config.json"
+    else
+        echo "Warning: Failed to generate configuration file"
+    fi
 fi

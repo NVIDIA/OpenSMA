@@ -16,7 +16,9 @@
  * limitations under the License.
  */
 #pragma once
+#include <array>
 #include <bit>
+#include <variant>
 
 #include "corepdk/modules/mctp-cpp/src/app/pdk-mctp-app-validator.h"
 
@@ -72,36 +74,33 @@ public:
         NsmT5FatalFaultEI,
         ProtocolReset,
         NsmEventCmd,
+        SmbusCacheRefresh,
         End,
     };
 
+    using MctpCmdData3 = std::array<uint8_t, 8>;
     struct Command
     {
-        uint16_t cmd;
-        uint8_t  data1;
-        uint8_t  data2;
-    };
-    struct [[gnu::packed]] NsmEventMctpCmd
-    {
-        CmdCode    cmdCode;
-        NsmMsgType nsmType;
-        uint8_t    eventId;
+        uint16_t     cmd;
+        uint8_t      data1;
+        uint8_t      data2;
+        MctpCmdData3 data3;
     };
 
 protected:
-    void               on_receive(Client client);                     ///< Receive from client
-    void               forward(Client client, const Packet& tx);      ///< Forward to client
-    void               dump_packet(const Packet& pkt, uint32_t len);  ///< Dump packet to UART
-    void               on_forward_message(ipc::Queue::Item& rx_item);
-    void               on_receive_application(nv::ipc::Queue& queue, ipc::Queue::Item& rx_item);
-    void               on_enumerate();
-    void               on_enumerate_done();
-    void               on_discovery_notify();
-    void               on_type6_event(NsmFwEvent event);
-    void               on_type0_event(uint8_t eventId, NsmEventMsg& nsm_event_msg);
-    void               on_receive_event(uint8_t nsmType, uint8_t eventId);
-    void               on_endpint_status_change(uint8_t end_point, uint8_t status);
-    void               on_wdt_event();
+    void on_receive(Client client);                     ///< Receive from client
+    void forward(Client client, const Packet& tx);      ///< Forward to client
+    void dump_packet(const Packet& pkt, uint32_t len);  ///< Dump packet to UART
+    void on_forward_message(ipc::Queue::Item& rx_item);
+    void on_receive_application(nv::ipc::Queue& queue, ipc::Queue::Item& rx_item);
+    void on_enumerate();
+    void on_enumerate_done();
+    void on_discovery_notify();
+    void on_type6_event(NsmFwEvent event);
+    void on_receive_event(uint8_t nsmType, uint8_t eventId, MctpCmdData3 eventInfo);
+    void on_endpint_status_change(uint8_t end_point, uint8_t status);
+    void on_wdt_event();
+
     ipc::Queue::Status on_receive_queue(nv::ipc::Queue&           queue,
                                         ipc::Queue::Item&         item,
                                         std::chrono::microseconds timeout);
@@ -136,9 +135,11 @@ protected:
 public:  // static api section
     static Status mctp_send(ipc::Queue::Item& item, ipc::QueueId id, Client client);
     static Status mctp_send(ipc::Queue::Item& item, Client client);
-    static Status
-    mctp_send_cmd(CmdCode cmd, uint8_t data1 = 0, uint8_t data2 = 0, bool is_front = false);
-    static Status send_event_message(NsmMsgType msgType, uint8_t eventId);
+    static Status mctp_send_cmd(CmdCode             cmd,
+                                uint8_t             data1    = 0,
+                                uint8_t             data2    = 0,
+                                bool                is_front = false,
+                                const MctpCmdData3& data3    = {});
     static Status mctp_send_from_pldm(ipc::Queue::Item& item);
     static Status mctp_send_from_spdm(ipc::Queue::Item& item);
     static Status mctp_send_from_us_usb_4k(ipc::Queue::Item& item);

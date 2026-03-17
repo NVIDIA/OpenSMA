@@ -73,26 +73,26 @@ public:
     void adc_interrupt(sys::adc::AdcPeripheral peripheral, uint8_t driveIndex, uint16_t value);
 
     // callback for i2c slave driver - do not use
-    static void i2c_callback(uint8_t&                                                   address,
-                             bool                                                       is_read,
-                             std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& buffer,
-                             size_t& data_size,
-                             void*   this_task_instance,
-                             bool    new_transaction);
+    static void i2c_callback(uint8_t&                                           address,
+                             bool                                               is_read,
+                             std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& buffer,
+                             size_t&                                            data_size,
+                             void* this_task_instance,
+                             bool  new_transaction);
 
 private:
     // Helper Functions
     // ---------------------------------------------
     // reads from PCA9555
-    void i2c_write(uint8_t&                                                   address,
-                   std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& rx_buffer,
-                   size_t&                                                    rx_data_size);
+    void i2c_write(uint8_t&                                           address,
+                   std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& rx_buffer,
+                   size_t&                                            rx_data_size);
 
     // reads from PCA9555
-    void i2c_read(uint8_t&                                                   address,
-                  std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& tx_buffer,
-                  size_t&                                                    tx_data_size,
-                  bool                                                       new_transaction);
+    void i2c_read(uint8_t&                                           address,
+                  std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& tx_buffer,
+                  size_t&                                            tx_data_size,
+                  bool                                               new_transaction);
 
     // helper function that pushes the interrupt expander pin value to the output pin
     void push_interrupt_expander_pin();
@@ -135,10 +135,9 @@ private:
 
     // Member Variables
     // ---------------------------------------------
-    // i2c driver config
-    nv::i2c::Port                    i2c_bus;
-    sys::i2c::I2CSlaveDriver::Config i2c_driver_config;
-    sys::i2c::I2CSlaveDriver         i2c_driver;
+    // i2c driver
+    nv::i2c::Port                 i2c_bus;
+    sys::i2c::I2CSlaveDriver<NHP> i2c_driver;
 
     // nhp interrupt pin
     nv::gpio::GpioPort interrupt_l_port;

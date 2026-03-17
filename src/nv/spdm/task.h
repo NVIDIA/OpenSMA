@@ -96,6 +96,7 @@ public:
         spdm_engine_context{};
 
     // for cache the certificate chain
+    uint8_t                        certificate_chain_slot_mask = 0;
     CertificateChain               certificate_chain_slot_0{};
     measurement::MeasurementCacheT measurement_cache{};
 

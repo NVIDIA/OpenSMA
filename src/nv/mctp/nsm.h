@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,18 +20,24 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <span>
 
 #include "mbedtls/ctr_drbg.h"
 
 #include "nv/gpio/driver.h"
+#include "nv/i2c/powersensor/device_manager.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/mctp/constants.h"
 #include "nv/mctp/control.h"
 #include "nv/mctp/enums.h"
 #include "nv/mctp/interface.h"
+#include "nv/mctp/nsm_event.h"
+#include "nv/mctp/nsm_msg_bitmask.h"
+#include "nv/mctp/nsm_type_2.h"
 #include "nv/mctp/nsm_type_3.h"
 #include "nv/mctp/nsm_type_4.h"
 #include "nv/mctp/nsm_type_5.h"
+#include "nv/mctp/nsm_type_ff.h"
 #include "sys/common/error-inject.h"
 
 // Forward declarations to reduce compile size
@@ -44,15 +50,14 @@ enum class TokenErrorCode : uint16_t;
 namespace nv::mctp {
 
 constexpr uint16_t NvMctpPciVendorId             = 0xDE10;  // MCTP header is big endian
-constexpr uint8_t  NvMctpSupportedNum            = 32;
-constexpr uint8_t  NvMctpEventSupportedNum       = 8;
 constexpr uint16_t NvMctpFwComponentClass        = 0x000A;
 constexpr uint8_t  NvMctpDeviceMcuId             = 0x05;
 constexpr uint32_t NvMctpIrreversibleCtrlTimeout = 24000;
 constexpr size_t   NvMctpNsmNonceSize            = 8;
 constexpr size_t   NvMctpVersionLength           = 17;
 constexpr uint8_t  NvPldmMcuComponentIdPrefix    = 0xFF;
-constexpr uint8_t  TelemetryCount                = 25;
+constexpr uint8_t  TelemetryCount                = 29;
+constexpr uint8_t  SlotSegmentTelemetryCount     = 9;
 constexpr uint32_t ByteShift1                    = 8;
 constexpr uint32_t ByteShift2                    = 16;
 constexpr uint32_t ByteShift3                    = 24;
@@ -70,8 +75,8 @@ constexpr size_t power_of_two(size_t input_len)
 
 struct [[gnu::packed]] NvMsgTypeWithEventBitmask
 {
-    NsmMsgType                                   nv_msg_type;
-    std::array<uint8_t, NvMctpEventSupportedNum> bitmask;
+    NsmMsgType                                            nv_msg_type;
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> bitmask;
 };
 
 struct [[gnu::packed]] EventSubscription
@@ -109,9 +114,9 @@ struct [[gnu::packed]] FwCompIds
     uint8_t    component_count;
     FwCompInfo components[N];
 
-    constexpr FwCompIds(std::initializer_list<FwCompInfo> init_list) : component_count(N)
+    constexpr FwCompIds(std::array<FwCompInfo, N> init_array) : component_count(N)
     {
-        std::copy(init_list.begin(), init_list.end(), components);
+        std::copy(init_array.begin(), init_array.end(), components);
     }
 };
 
@@ -182,6 +187,44 @@ struct [[gnu::packed]] QuerySvnResp
     uint16_t pending_min_svn;
 };
 
+// setRotProperty Request data 6 bytes
+// - 2 byte: Component Classification
+// - 2 byte: Component Identifier
+// - 1 byte: Component Classification Index
+// - 1 byte: Property
+// - (TBD) MCU & CPLD do not support any property
+
+struct [[gnu::packed]] SetRotPropertyReq
+{
+    FwCompInfo               fw_comp_info;
+    NsmSetRotPropertyRequest property;
+};
+
+// ImageCopyControl Request data 7 bytes
+// - 1 byte: Request type
+// - 1 byte: Component Count
+// - 2 byte: Component Classification
+// - 2 byte: Component Identifier
+// - 1 byte: Component Classification Index
+// - MCU only support 1 component for now
+
+struct [[gnu::packed]] ImageCopyControlReq
+{
+    NsmImageCopyControlRequest request;
+    uint8_t                    component_count;
+    FwCompInfo                 fw_comp_info[];
+};
+
+// QueryImageCopyProgressResp Request data 2 bytes
+// - 1 byte: status
+// - 1 byte: progress
+
+struct [[gnu::packed]] QueryImageCopyProgressResp
+{
+    NsmImageCopyStatus status;
+    uint8_t            progress;
+};
+
 constexpr uint16_t GpioBytes = (nv::ipc::GpioNum + 7) / 8;
 
 struct [[gnu::packed]] Type0GetGpioReq
@@ -211,21 +254,78 @@ struct [[gnu::packed]] Type4GpioResp
     std::array<uint8_t, GpioBytes> gpio;  // 6 instances * (32 pins / 8 bits)
 };
 
+// Type4 Debug Token error response
+struct [[gnu::packed]] NsmPktRespType4Error : Header
+{
+    /* nvidia OEM binding */
+    MsgType msg_type;
+
+    uint16_t pci_vendor_id;
+
+    uint8_t instance_id : 5;
+    uint8_t rsvd0       : 1;
+    uint8_t d           : 1;
+    uint8_t rq          : 1;
+
+    uint8_t ocp_version : 3;
+    uint8_t ocp_type    : 4;
+    uint8_t ocp         : 1;
+
+    NsmMsgType nv_msg_type;
+
+    union CmdCode
+    {
+        NsmType4CmdCode type4_code;
+    } cmd_code;
+
+    Ccode    completion_code;
+    uint16_t error_code;  // TokenErrorCode directly after completion_code
+
+    static NsmPktRespType4Error& from(Packet& buf)
+    {
+        return *std::bit_cast<NsmPktRespType4Error*>(&buf.hdr);
+    }
+
+    static const NsmPktRespType4Error& from(const Packet& buf)
+    {
+        return *std::bit_cast<const NsmPktRespType4Error*>(&buf.hdr);
+    }
+
+    void set_type4_code(NsmType4CmdCode code) { cmd_code.type4_code = code; }
+};
+
 struct [[gnu::packed]] TelemetryMultiBytes
 {
     uint8_t  tag;
-    uint8_t  v              : 1;
+    uint8_t  v              : 1;  // defaults to 1
     uint8_t  encoded_length : 3;
     uint8_t  rsvd           : 3;
     uint8_t  b              : 1;
     uint16_t multi_bytes_length;
+
+    TelemetryMultiBytes(uint8_t id = 0)
+    : tag{id}
+    , v{1}
+    , encoded_length{0}
+    , rsvd{0}
+    , b{0}
+    , multi_bytes_length{0}
+    {
+        // Empty
+    }
+
+    /**
+     * @returns the total size of the structure
+     */
+    // coverity[routine_not_emitted]
+    uint16_t size() const { return sizeof(*this) + this->multi_bytes_length; }
 };
 
 template<size_t Sizes>  // coverity[entity_not_emitted]
 struct [[gnu::packed]] TelemetryRecord
 {
     uint8_t                    tag;
-    uint8_t                    v      : 1;
+    uint8_t                    v      : 1;  // defaults to 1
     uint8_t                    length : 3;
     uint8_t                    rsvd   : 3;
     uint8_t                    b      : 1;  // length format
@@ -236,7 +336,7 @@ struct [[gnu::packed]] TelemetryRecord
      * @param id
      */
     // coverity[routine_not_emitted]
-    TelemetryRecord(uint8_t id = 0) : tag{id}, v{0}, length{0}, rsvd{0}, b{0}, data{0}
+    TelemetryRecord(uint8_t id = 0) : tag{id}, v{1}, length{0}, rsvd{0}, b{0}, data{0}
     {
         set_length(sizeof(data));
     }
@@ -259,10 +359,15 @@ struct [[gnu::packed]] TelemetryRecord
     }
 
     /**
+     * Useful for generic pointers regardless Data size
      * @returns the total size of the structure
      */
     // coverity[routine_not_emitted]
-    uint16_t size() const { return sizeof(*this); }
+    uint16_t size() const
+    {
+        return sizeof(*this) - sizeof(this->data)
+             + power_of_two(static_cast<size_t>(this->length));
+    }
 
     /**
      * @brief setValue() - Sets the @a value in TelemetryRecord::data
@@ -274,7 +379,7 @@ struct [[gnu::packed]] TelemetryRecord
      * @return true if sizes match and it was possible to copy data
      */
     template<typename DataValue>  // coverity[routine_not_emitted]
-    bool setValue(const DataValue& value)
+    bool setValue(const DataValue& value, const bool valid = true)
     {
         if (sizeof(DataValue) != Sizes) {
             this->v = 0;
@@ -288,14 +393,14 @@ struct [[gnu::packed]] TelemetryRecord
         else {
             std::memcpy(&this->data[0], &value, sizeof(DataValue));
         }
-        this->v = 1;
+        this->setValid(valid);
         return true;
     }
 
     template<typename DataValue>  // coverity[routine_not_emitted]
-    bool populate(const uint8_t tag, const DataValue& value)
+    bool populate(const uint8_t tag, const DataValue& value, const bool valid = true)
     {
-        bool ret = setValue(value);
+        bool ret = setValue(value, valid);
         if (ret) {
             this->tag = tag;
         }
@@ -330,7 +435,7 @@ struct [[gnu::packed]] TelemetryRecord
      * @return true if the struct was created as size of uint64_t
      */
     // coverity[routine_not_emitted]
-    bool setTimeStampValue()
+    bool setTimeStampValue(const bool valid = true)
     {
         if (sizeof(uint64_t) != Sizes) {
             this->v = 0;
@@ -338,8 +443,11 @@ struct [[gnu::packed]] TelemetryRecord
         }
         // TODO change to the 64 bits timestamp when Glacier team done that API
         uint64_t timestamp = sys::ipc::get_os_ticks();
-        return setValue(timestamp);
+        return setValue(timestamp, valid);
     }
+
+    /** @brief Changes the v flag true=1, false=0 */
+    void setValid(const bool valid) { this->v = (valid == true) ? 1 : 0; }
 
     /**
      *
@@ -349,6 +457,10 @@ struct [[gnu::packed]] TelemetryRecord
     const void* record() const { return this; }
 };
 
+using TelemetryRecordType        = TelemetryRecord<sizeof(uint8_t)>;
+using TelemetryRecordPointer     = TelemetryRecordType*;
+using TelemetryMultiBytesPointer = TelemetryMultiBytes*;
+
 /**
  * @brief Builds an array of TelemetryRecord structs
  *        - Sizes availabe are:
@@ -357,7 +469,7 @@ struct [[gnu::packed]] TelemetryRecord
  *          -# @sa addRecordNvU32() => TelemetryRecord<4>
  *          -# @sa addRecordNvU64() => TelemetryRecord<8>
  *          -# @sa addTimestampRecord() => TelemetryRecord<8>
- *          -# @sa addRecorVariableArray(N <= 128) => TelemetryRecord<N>
+ *          -# @sa addRecordVariableArray(N <= 128) => TelemetryRecord<N>
  */
 class TelemetryRecordArray
 {
@@ -404,34 +516,34 @@ public:
     }
 
     template<typename DataValue>
-    bool addRecordNvU8(uint8_t tag, const DataValue& value)
+    bool addRecordNvU8(uint8_t tag, const DataValue& value, const bool valid = true)
     {
         TelemetryRecord<sizeof(uint8_t)> telemetry;
-        return telemetry.populate(tag, value)
+        return telemetry.populate(tag, value, valid)
             && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
     }
 
     template<typename DataValue>
-    bool addRecordNvU16(uint8_t tag, const DataValue& value)
+    bool addRecordNvU16(uint8_t tag, const DataValue& value, const bool valid = true)
     {
         TelemetryRecord<sizeof(uint16_t)> telemetry;
-        return telemetry.populate(tag, value)
+        return telemetry.populate(tag, value, valid)
             && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
     }
 
     template<typename DataValue>
-    bool addRecordNvU32(uint8_t tag, const DataValue& value)
+    bool addRecordNvU32(uint8_t tag, const DataValue& value, const bool valid = true)
     {
         TelemetryRecord<sizeof(uint32_t)> telemetry;
-        return telemetry.populate(tag, value)
+        return telemetry.populate(tag, value, valid)
             && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
     }
 
     template<typename DataValue>
-    bool addRecordNvU64(uint8_t tag, const DataValue& value)
+    bool addRecordNvU64(uint8_t tag, const DataValue& value, const bool valid = true)
     {
         TelemetryRecord<sizeof(uint64_t)> telemetry;
-        return telemetry.populate(tag, value)
+        return telemetry.populate(tag, value, valid)
             && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
     }
 
@@ -443,7 +555,10 @@ public:
     }
 
     template<typename DataValue>
-    bool addRecorVariableArray(uint8_t tag, const uint16_t array_size, const DataValue& value)
+    bool addRecordVariableArray(uint8_t          tag,
+                                const uint16_t   array_size,
+                                const DataValue& value,
+                                const bool       valid = true)
     {
         // b111 = 7 then max TelemetryRecord = 2**7 = 128
         constexpr uint16_t MaxArraySizeUsingThreeBits = 128;
@@ -453,6 +568,7 @@ public:
 
         TelemetryRecord<1> telemetry(tag);
         telemetry.set_length(array_size);
+        uint8_t validated = (valid == true) ? 1 : 0;
 
         // adjust array_size in case it is not a power of two, length is already correct
         // coverity[cert_int31_c_violation]
@@ -461,31 +577,35 @@ public:
 
         bool ret = false;
         if (encoded_size_power_of_two == array_size) {
-            telemetry.v = 1;
-            ret         = copy_into_data(telemetry.record(), telemetry.size() - 1)
-               && copy_into_data(&value, array_size);
+            telemetry.v = validated;
+            // copy only flags from telemetry, do not use telemetry.size() here
+            ret = copy_into_data(telemetry.record(), sizeof(telemetry) - 1)
+               && copy_into_data(&value, array_size) && ++_elements;
         }
         else {
             // create TelemetryMultiBytes
             TelemetryMultiBytes telemetry_multi_bytes{};
             telemetry_multi_bytes.tag                = tag;
             telemetry_multi_bytes.rsvd               = 0;
-            telemetry_multi_bytes.v                  = 1;
+            telemetry_multi_bytes.v                  = validated;
             telemetry_multi_bytes.b                  = 1;  // indicate it is multi byte
             telemetry_multi_bytes.encoded_length     = 0;
             telemetry_multi_bytes.multi_bytes_length = array_size;
             ret = copy_into_data(&telemetry_multi_bytes, sizeof(telemetry_multi_bytes))
-               && copy_into_data(&value, array_size);
+               && copy_into_data(&value, array_size) && ++_elements;
         }
         return ret;
     }
 
     template<typename DataValue>
-    bool addRecorVariableArray(uint8_t tag, const size_t array_size, const DataValue& value)
+    bool addRecordVariableArray(uint8_t          tag,
+                                const size_t     array_size,
+                                const DataValue& value,
+                                const bool       valid = true)
     {
         // coverity[cert_int31_c_violation]
         auto short_size = static_cast<uint16_t>(array_size);
-        return addRecorVariableArray(tag, short_size, value);
+        return addRecordVariableArray(tag, short_size, value, valid);
     }
 
     void rewind()
@@ -497,6 +617,37 @@ public:
     void*    data() const { return _data; }
     uint16_t arraySize() const { return _offset; }
     uint16_t elements() const { return _elements; }
+
+    TelemetryRecordPointer findTag(uint8_t tag)
+    {
+        void*    telemetry = _data;
+        uint16_t offset    = 0;
+        while (offset < _offset && telemetry != nullptr) {
+            auto ptTelemetryRecord = static_cast<TelemetryRecordPointer>(telemetry);
+            if (ptTelemetryRecord->tag == tag) {
+                return ptTelemetryRecord;
+            }
+            if (ptTelemetryRecord->b == 1) {
+                auto ptMultiBytesRecord  = static_cast<TelemetryMultiBytesPointer>(telemetry);
+                offset                  += ptMultiBytesRecord->size();
+            }
+            else {
+                offset += ptTelemetryRecord->size();
+            }
+            telemetry = (_data + offset);
+        }
+        return nullptr;
+    }
+
+    bool invalidateTelemetry(uint8_t tag)
+    {
+        auto telemetry = this->findTag(tag);
+        if (telemetry == nullptr) {
+            return false;
+        }
+        telemetry->setValid(false);
+        return true;
+    }
 
 protected:
     bool is_there_enough_space(uint16_t required_space)
@@ -555,35 +706,75 @@ public:
 
 struct [[gnu::packed]] RespAggregate
 {
-    TelemetryRecord<power_of_two(TagBackgroundCopyPolicyLen)> tag_back_ground_copy_policy;
-    TelemetryRecord<power_of_two(TagActiveFirmwareSlotLen)>   tag_active_firmware_slot;
-    TelemetryRecord<power_of_two(TagActiveKeySetLen)>         tag_active_key_set;
-    TelemetryRecord<power_of_two(TagMinSecurityVerNumLen)>    tag_min_security_ver_num;
-    TelemetryRecord<power_of_two(TagInbandUpdatePolicyLen)>   tag_inband_update_policy;
-    TelemetryRecord<power_of_two(TagBootStatusCodeLen)>       tag_boot_status_code;
-    TelemetryRecord<power_of_two(TagFirmwareSlotCountLen)>    tag_firmware_slot_count;
+    TelemetryRecord<power_of_two(RotTagLength::TagRedundancyPolicyPersistentLen)>
+        tag_redundancy_policy_persistent;
+    TelemetryRecord<power_of_two(RotTagLength::TagActiveFirmwareSlotLen)>
+                                                                    tag_active_firmware_slot;
+    TelemetryRecord<power_of_two(RotTagLength::TagActiveKeySetLen)> tag_active_key_set;
+    TelemetryRecord<power_of_two(RotTagLength::TagMinSecurityVerNumLen)>
+        tag_min_security_ver_num;
+    TelemetryRecord<power_of_two(RotTagLength::TagInbandUpdatePolicyPersistentLen)>
+        tag_inband_update_policy_persistent;
+    TelemetryRecord<power_of_two(RotTagLength::TagBootStatusCodeLen)> tag_boot_status_code;
+    TelemetryRecord<power_of_two(RotTagLength::TagRedundancyPolicyCurrentLen)>
+        tag_redundancy_policy_current;
+    TelemetryRecord<power_of_two(RotTagLength::TagInbandUpdatePolicyCurrentLen)>
+                                                               tag_inband_update_policy_current;
+    TelemetryRecord<power_of_two(RotTagLength::TagApSkuIdLen)> tag_ap_sku_id;
+    TelemetryRecord<power_of_two(RotTagLength::TagGlobalFailoverPolicyLen)>
+        tag_global_failover_policy;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareSlotCountLen)>
+        tag_firmware_slot_count;
 
     // slot 0
-    TelemetryRecord<power_of_two(TagFirmwareSlotIdLen)>     tag_firmware_slot_id_slot0;
-    TelemetryRecord<power_of_two(TagFirmwareVerStringLen)>  tag_firmware_ver_string_slot0;
-    TelemetryRecord<power_of_two(TagVerComparisonStampLen)> tag_ver_comparison_stamp_slot0;
-    TelemetryRecord<power_of_two(TagBuildTypeLen)>          tag_build_type_slot0;
-    TelemetryRecord<power_of_two(TagSigningTypeLen)>        tag_signing_type_slot0;
-    TelemetryRecord<power_of_two(TagWriteProtectStateLen)>  tag_write_protect_state_slot0;
-    TelemetryRecord<power_of_two(TagFirmwareStateLen)>      tag_firmware_state_slot0;
-    TelemetryRecord<power_of_two(TagSecurityVerNumLen)>     tag_security_ver_num_slot0;
-    TelemetryRecord<power_of_two(TagSigningKeyIndexLen)>    tag_signing_key_index_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareSlotIdLen)>
+        tag_firmware_slot_id_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareVerStringLen)>
+        tag_firmware_ver_string_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagVerComparisonStampLen)>
+                                                                 tag_ver_comparison_stamp_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagBuildTypeLen)> tag_build_type_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningTypeLen)> tag_signing_type_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagWriteProtectStateLen)>
+        tag_write_protect_state_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareStateLen)> tag_firmware_state_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagSecurityVerNumLen)>
+        tag_security_ver_num_slot0;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningKeyIndexLen)>
+        tag_signing_key_index_slot0;
 
     // slot 1
-    TelemetryRecord<power_of_two(TagFirmwareSlotIdLen)>     tag_firmware_slot_id_slot1;
-    TelemetryRecord<power_of_two(TagFirmwareVerStringLen)>  tag_firmware_ver_string_slot1;
-    TelemetryRecord<power_of_two(TagVerComparisonStampLen)> tag_ver_comparison_stamp_slot1;
-    TelemetryRecord<power_of_two(TagBuildTypeLen)>          tag_build_type_slot1;
-    TelemetryRecord<power_of_two(TagSigningTypeLen)>        tag_signing_type_slot1;
-    TelemetryRecord<power_of_two(TagWriteProtectStateLen)>  tag_write_protect_state_slot1;
-    TelemetryRecord<power_of_two(TagFirmwareStateLen)>      tag_firmware_state_slot1;
-    TelemetryRecord<power_of_two(TagSecurityVerNumLen)>     tag_security_ver_num_slot1;
-    TelemetryRecord<power_of_two(TagSigningKeyIndexLen)>    tag_signing_key_index_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareSlotIdLen)>
+        tag_firmware_slot_id_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareVerStringLen)>
+        tag_firmware_ver_string_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagVerComparisonStampLen)>
+                                                                 tag_ver_comparison_stamp_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagBuildTypeLen)> tag_build_type_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningTypeLen)> tag_signing_type_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagWriteProtectStateLen)>
+        tag_write_protect_state_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareStateLen)> tag_firmware_state_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagSecurityVerNumLen)>
+        tag_security_ver_num_slot1;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningKeyIndexLen)>
+        tag_signing_key_index_slot1;
+};
+
+struct [[gnu::packed]] SlotSpecificSegment
+{
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareSlotIdLen)> tag_firmware_slot_id;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareVerStringLen)>
+        tag_firmware_ver_string;
+    TelemetryRecord<power_of_two(RotTagLength::TagVerComparisonStampLen)>
+                                                                   tag_ver_comparison_stamp;
+    TelemetryRecord<power_of_two(RotTagLength::TagBuildTypeLen)>   tag_build_type;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningTypeLen)> tag_signing_type;
+    TelemetryRecord<power_of_two(RotTagLength::TagWriteProtectStateLen)>
+                                                                       tag_write_protect_state;
+    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareStateLen)>   tag_firmware_state;
+    TelemetryRecord<power_of_two(RotTagLength::TagSecurityVerNumLen)>  tag_security_ver_num;
+    TelemetryRecord<power_of_two(RotTagLength::TagSigningKeyIndexLen)> tag_signing_key_index;
 };
 
 // Request Mesage Header V1
@@ -607,12 +798,14 @@ struct [[gnu::packed]] NsmPktReq : Header
 
     union CmdCode
     {
-        NsmDcdCmdCode     dcd_code;
-        NsmFWCmdCode      fw_code;
-        NsmDevCfgCmdCode  devcfg_code;
-        NsmPlatEnvCmdCode plat_env_code;
-        NsmDevDiagCmdCode devdiag_code;
-        NsmType4CmdCode   type4_code;
+        NsmDcdCmdCode      dcd_code;
+        NsmFWCmdCode       fw_code;
+        NsmPciLinksCmdCode type2_code;
+        NsmDevCfgCmdCode   devcfg_code;
+        NsmPlatEnvCmdCode  plat_env_code;
+        NsmDevDiagCmdCode  devdiag_code;
+        NsmType4CmdCode    type4_code;
+        NsmTypeFFCmdCode   typeff_code;
     } cmd_code;
 
     uint8_t data_size;
@@ -649,6 +842,12 @@ struct [[gnu::packed]] NsmPktReq : Header
 
     NsmType4CmdCode get_type4_code() const { return cmd_code.type4_code; }
     void            set_type4_code(NsmType4CmdCode code) { cmd_code.type4_code = code; }
+
+    NsmPciLinksCmdCode get_pci_links_code() const { return cmd_code.type2_code; }
+    void set_pci_links_code(NsmPciLinksCmdCode code) { cmd_code.type2_code = code; }
+
+    NsmTypeFFCmdCode get_typeff_code() const { return cmd_code.typeff_code; }
+    void             set_typeff_code(NsmTypeFFCmdCode code) { cmd_code.typeff_code = code; }
 };
 
 // Request Mesage Header V2
@@ -722,11 +921,12 @@ struct [[gnu::packed]] NsmPktRespAggr : Header
 
     union CmdCode
     {
-        NsmDcdCmdCode     dcd_code;
-        NsmFWCmdCode      fw_code;
-        NsmDevCfgCmdCode  devcfg_code;
-        NsmPlatEnvCmdCode plat_env_code;
-        NsmDevDiagCmdCode devdiag_code;
+        NsmDcdCmdCode      dcd_code;
+        NsmFWCmdCode       fw_code;
+        NsmPciLinksCmdCode type2_code;
+        NsmDevCfgCmdCode   devcfg_code;
+        NsmPlatEnvCmdCode  plat_env_code;
+        NsmDevDiagCmdCode  devdiag_code;
     } cmd_code;
 
     Ccode    completion_code;
@@ -768,6 +968,9 @@ struct [[gnu::packed]] NsmPktRespAggr : Header
 
     NsmDevDiagCmdCode get_dev_diag_code() const { return cmd_code.devdiag_code; }
     void set_dev_diag_code(NsmDevDiagCmdCode code) { cmd_code.devdiag_code = code; }
+
+    NsmPciLinksCmdCode get_pci_links_code() const { return cmd_code.type2_code; }
+    void set_pci_links_code(NsmPciLinksCmdCode code) { cmd_code.type2_code = code; }
 };
 
 struct [[gnu::packed]] NsmPktResp : Header
@@ -790,12 +993,13 @@ struct [[gnu::packed]] NsmPktResp : Header
 
     union CmdCode
     {
-        NsmDcdCmdCode     dcd_code;
-        NsmFWCmdCode      fw_code;
-        NsmDevCfgCmdCode  devcfg_code;
-        NsmPlatEnvCmdCode plat_env_code;
-        NsmDevDiagCmdCode devdiag_code;
-        NsmType4CmdCode   type4_code;
+        NsmDcdCmdCode      dcd_code;
+        NsmFWCmdCode       fw_code;
+        NsmPciLinksCmdCode type2_code;
+        NsmDevCfgCmdCode   devcfg_code;
+        NsmPlatEnvCmdCode  plat_env_code;
+        NsmDevDiagCmdCode  devdiag_code;
+        NsmType4CmdCode    type4_code;
     } cmd_code;
 
     Ccode    completion_code;
@@ -834,6 +1038,80 @@ struct [[gnu::packed]] NsmPktResp : Header
 
     NsmType4CmdCode get_type4_code() const { return cmd_code.type4_code; }
     void            set_type4_code(NsmType4CmdCode code) { cmd_code.type4_code = code; }
+
+    NsmPciLinksCmdCode get_pci_links_code() const { return cmd_code.type2_code; }
+    void set_pci_links_code(NsmPciLinksCmdCode code) { cmd_code.type2_code = code; }
+};
+
+struct [[gnu::packed]] NsmPktRespV2 : Header
+{
+    /* nvidia OEM binding */
+    MsgType msg_type;
+
+    uint16_t pci_vendor_id;
+
+    uint8_t instance_id : 5;
+    uint8_t rsvd0       : 1;
+    uint8_t d           : 1;
+    uint8_t rq          : 1;
+
+    uint8_t ocp_version : 3;
+    uint8_t ocp_type    : 4;
+    uint8_t ocp         : 1;
+
+    NsmMsgType nv_msg_type;
+
+    union CmdCode
+    {
+        NsmDcdCmdCode      dcd_code;
+        NsmFWCmdCode       fw_code;
+        NsmPciLinksCmdCode type2_code;
+        NsmDevCfgCmdCode   devcfg_code;
+        NsmPlatEnvCmdCode  plat_env_code;
+        NsmDevDiagCmdCode  devdiag_code;
+        NsmType4CmdCode    type4_code;
+    } cmd_code;
+
+    Ccode completion_code;
+    Rcode reason_code;
+
+    static NsmPktRespV2& from(Packet& buf) { return *std::bit_cast<NsmPktRespV2*>(&buf.hdr); }
+
+    static const NsmPktRespV2& from(const Packet& buf)
+    {
+        return *std::bit_cast<const NsmPktRespV2*>(&buf.hdr);
+    }
+
+    static NsmPktRespV2& from(NsmPacket& buf)
+    {
+        return *std::bit_cast<NsmPktRespV2*>(&buf.hdr);
+    }
+
+    static const NsmPktRespV2& from(const NsmPacket& buf)
+    {
+        return *std::bit_cast<const NsmPktRespV2*>(&buf.hdr);
+    }
+
+    NsmDcdCmdCode get_dcd_code() const { return cmd_code.dcd_code; }
+    void          set_dcd_code(NsmDcdCmdCode code) { cmd_code.dcd_code = code; }
+
+    NsmFWCmdCode get_fw_code() const { return cmd_code.fw_code; }
+    void         set_fw_code(NsmFWCmdCode code) { cmd_code.fw_code = code; }
+
+    NsmDevCfgCmdCode get_dev_cfg_code() const { return cmd_code.devcfg_code; }
+    void             set_dev_cfg_code(NsmDevCfgCmdCode code) { cmd_code.devcfg_code = code; }
+
+    NsmPlatEnvCmdCode get_plat_env_code() const { return cmd_code.plat_env_code; }
+    void set_plat_env_code(NsmPlatEnvCmdCode code) { cmd_code.plat_env_code = code; }
+
+    NsmDevDiagCmdCode get_dev_diag_code() const { return cmd_code.devdiag_code; }
+    void set_dev_diag_code(NsmDevDiagCmdCode code) { cmd_code.devdiag_code = code; }
+
+    NsmType4CmdCode get_type4_code() const { return cmd_code.type4_code; }
+    void            set_type4_code(NsmType4CmdCode code) { cmd_code.type4_code = code; }
+
+    NsmPciLinksCmdCode get_pci_links_code() const { return cmd_code.type2_code; }
+    void set_pci_links_code(NsmPciLinksCmdCode code) { cmd_code.type2_code = code; }
 };
 
 /** Similar as the NsmPktRespAggr struct, but intented for dynamic payload
@@ -943,178 +1221,170 @@ struct [[gnu::packed]] NsmEventMsg : Header
     }
 };
 
-enum class NsmEventState : uint8_t
+// NSM Event related structures moved to nv/mctp/nsm_event.h
+
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_nv_meg_bitmask()
 {
-    available = 0,
-    pending   = 1,
-};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-struct [[gnu::packed]] NsmEventCache
-{
-    NsmEventState eventState;
-    uint8_t       rsvd[3];
-    Packet        eventMsg;
-};
+    // Common Message Types for all SMA variants:
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmMsgType::DeviceCapabilityDiscovery));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmMsgType::Firmware));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmMsgType::PlatformEnviromentals));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmMsgType::Diagnostics));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmMsgType::DeviceConfiguration));
 
-struct [[gnu::packed]] T0GpioEventPayload
-{
-    uint32_t timestampLo;  // nanoseconds
-    uint32_t timestampHi;  // nanoseconds
-    uint16_t gpio_event_num;
-
-    GpioSpoofingEntry gpio_event_entries[MaxGPIOSpoofingEntries];
-};
-
-constexpr std::array<uint8_t, NvMctpSupportedNum> gen_nv_meg_bitmask()
-{
-    std::array<uint8_t, NvMctpSupportedNum> bitmask = {0};
-
-    constexpr uint8_t bit_positions[] = {
-        static_cast<uint8_t>(NsmMsgType::DeviceCapabilityDiscovery),
-        static_cast<uint8_t>(NsmMsgType::Firmware)};
-
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
-    // if using NSM Type 3
-    if constexpr (nv::ipc::Enable_Nsm_type3) {
-        auto   pos              = static_cast<uint8_t>(NsmMsgType::PlatformEnviromentals);
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
-    // if using NSM Type 4 or debug token functionality is available
-    if constexpr (nv::ipc::Enable_Nsm_type4) {
-        uint8_t pos             = static_cast<uint8_t>(NsmMsgType::Diagnostics);
-        size_t  byte_index      = pos / 8;
-        size_t  bit_offset      = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-    else if constexpr (nv::ipc::DebugTokenEnabled) {
-        // Even when Enable_Nsm_type4 is false, enable Diagnostics message type for debug token
-        // commands
-        uint8_t pos             = static_cast<uint8_t>(NsmMsgType::Diagnostics);
-        size_t  byte_index      = pos / 8;
-        size_t  bit_offset      = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
-    // if using NSM Type 5
-    if constexpr (nv::ipc::Enable_Nsm_type5) {
-        uint8_t pos             = static_cast<uint8_t>(NsmMsgType::DeviceConfiguration);
-        size_t  byte_index      = pos / 8;
-        size_t  bit_offset      = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
+    config_nsm_types(bitmask);
     return bitmask;
 }
 
-constexpr std::array<uint8_t, NvMctpSupportedNum> gen_type0_code_bitmask()
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type0_code_bitmask()
 {
-    std::array<uint8_t, NvMctpSupportedNum> bitmask = {0};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-    constexpr uint8_t bit_positions[] = {
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdPing),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupNvMsgTypes),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupCmdCodes),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupEventSrcs),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetCurrentEventSrcs),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdSetCurrentEventSrcs),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdSetEventSubscription),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetEventSubscription),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdQueryDeviceIdentification),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdGetGpio),
-        static_cast<uint8_t>(NsmDcdCmdCode::DcdSetGpio)};
+    // Common commands for all SMA variants:
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdPing));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupNvMsgTypes));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupCmdCodes));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetSupEventSrcs));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetCurrentEventSrcs));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdSetCurrentEventSrcs));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdSetEventSubscription));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetEventSubscription));
+    nsm_msg::set_bit(bitmask,
+                     static_cast<uint8_t>(NsmDcdCmdCode::DcdQueryDeviceIdentification));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetGpio));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdSetGpio));
 
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
+    config_nsm_type0_cmd(bitmask);
     return bitmask;
 }
 
-constexpr std::array<uint8_t, NvMctpSupportedNum> gen_debug_token_code_bitmask()
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type2_code_bitmask()
 {
-    std::array<uint8_t, NvMctpSupportedNum> bitmask = {0};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-    constexpr uint8_t bit_positions[] = {static_cast<uint8_t>(NsmType4CmdCode::InstallToken),
-                                         static_cast<uint8_t>(NsmType4CmdCode::EraseToken),
-                                         static_cast<uint8_t>(NsmType4CmdCode::QueryToken),
-                                         static_cast<uint8_t>(NsmType4CmdCode::QueryDeviceIds)};
-
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
-
+    config_nsm_type2_cmd(bitmask);
     return bitmask;
 }
 
-constexpr std::array<uint8_t, NvMctpSupportedNum> gen_type6_code_bitmask()
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type3_code_bitmask()
 {
-    std::array<uint8_t, NvMctpSupportedNum> bitmask = {0};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-    constexpr uint8_t bit_positions[] = {static_cast<uint8_t>(NsmFWCmdCode::GetRotStateInfo),
-                                         static_cast<uint8_t>(NsmFWCmdCode::IrreversibleConf),
-                                         static_cast<uint8_t>(NsmFWCmdCode::QueryCodeAuthKey),
-                                         static_cast<uint8_t>(NsmFWCmdCode::UpdateCodeAuthKey),
-                                         static_cast<uint8_t>(NsmFWCmdCode::QuerySecVerNum),
-                                         static_cast<uint8_t>(NsmFWCmdCode::UpdateMinSecVerNum),
-                                         static_cast<uint8_t>(NsmFWCmdCode::QueryFwCompId)};
+    // Common commands for all SMA variants:
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::GetTemperatureReading));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::GetInventoryInformation));
 
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
+    // Selected Commands upon configuration:
+    if constexpr (mcuPowerSensorsSize > 0) {
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::GetCurrentPowerDraw));
+    }
+    if constexpr ((nv::mctp::I2cTempSensorSize + nv::i2c::power::HscDeviceCount
+                   + nv::i2c::power::HsccDeviceCount)
+                  > 0) {
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::SetThermalParameter));
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::GetThermalParameter));
+    }
+    if constexpr (nv::mctp::mcuVoltageSensorsSize > 0) {
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmPlatEnvCmdCode::GetVoltage));
+    }
+    if constexpr (nv::ipc::voltage_monitor_config::LeakDetectSensorNum > 0) {
+        nsm_msg::set_bit(bitmask,
+                         static_cast<uint8_t>(NsmPlatEnvCmdCode::GetLeakDetectionInfo));
+        nsm_msg::set_bit(bitmask,
+                         static_cast<uint8_t>(NsmPlatEnvCmdCode::SetLeakDetectionThresholds));
     }
 
+    config_nsm_type3_cmd(bitmask);
     return bitmask;
 }
 
-constexpr std::array<uint8_t, NvMctpEventSupportedNum> gen_type0_event_bitmask()
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type4_code_bitmask()
 {
-    std::array<uint8_t, NvMctpEventSupportedNum> bitmask = {0};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-    constexpr uint8_t bit_positions[] = {static_cast<uint8_t>(NsmDcdEvent::GpioEvent)};
+    // Common commands for all SMA variants:
+    nsm_msg::set_bit(bitmask,
+                     static_cast<uint8_t>(NsmDevDiagCmdCode::GetDeviceResetStatistics));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevDiagCmdCode::GetDeviceDiagnostics));
 
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
+    // Selected Commands upon configuration:
+    if constexpr (nv::i2c::power::HscDeviceCount + nv::i2c::power::HsccDeviceCount > 0) {
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevDiagCmdCode::GetDeviceHscAlert));
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevDiagCmdCode::ClearHscFaults));
     }
 
+    if constexpr (nv::ipc::DebugTokenEnabled) {
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmType4CmdCode::InstallToken));
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmType4CmdCode::EraseToken));
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmType4CmdCode::QueryToken));
+        nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmType4CmdCode::QueryDeviceIds));
+    }
+
+    config_nsm_type4_cmd(bitmask);
     return bitmask;
 }
 
-constexpr std::array<uint8_t, NvMctpEventSupportedNum> gen_type6_event_bitmask()
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type5_code_bitmask()
 {
-    std::array<uint8_t, NvMctpEventSupportedNum> bitmask = {0};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
 
-    constexpr uint8_t bit_positions[] = {
-        static_cast<uint8_t>(NsmFwEvent::RotStateInformationChangeEvent)};
+    // Common commands for all SMA variants:
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::SetErrorInjectionMode));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetErrorInjectionMode));
+    nsm_msg::set_bit(bitmask,
+                     static_cast<uint8_t>(NsmDevCfgCmdCode::GetSupportedErrorInjectionTypes));
+    nsm_msg::set_bit(bitmask,
+                     static_cast<uint8_t>(NsmDevCfgCmdCode::SetCurrentErrorInjectionTypes));
+    nsm_msg::set_bit(bitmask,
+                     static_cast<uint8_t>(NsmDevCfgCmdCode::GetCurrentErrorInjectionTypes));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetErrorInjectionPayload));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::SetErrorInjectionPayload));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::ActivateErrorInjection));
 
-    for (uint8_t pos : bit_positions) {
-        size_t byte_index       = pos / 8;
-        size_t bit_offset       = pos % 8;
-        bitmask.at(byte_index) |= static_cast<uint8_t>((1U << bit_offset) & UINT8_MAX);
-    }
+    config_nsm_type5_cmd(bitmask);
+    return bitmask;
+}
 
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type6_code_bitmask()
+{
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
+
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::GetRotStateInfo));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::IrreversibleConf));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::QueryCodeAuthKey));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::UpdateCodeAuthKey));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::QuerySecVerNum));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::UpdateMinSecVerNum));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::QueryFwCompId));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::SetRotProperty));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::ImageCopyControl));
+
+    config_nsm_type6_cmd(bitmask);
+    return bitmask;
+}
+
+constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_typeff_code_bitmask()
+{
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum> bitmask = {0};
+
+    config_nsm_typeff_cmd(bitmask);
+    return bitmask;
+}
+
+constexpr std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> gen_type6_event_bitmask()
+{
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> bitmask = {0};
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFwEvent::RotStateInformationChangeEvent));
     return bitmask;
 }
 
 static constexpr uint8_t
-count_events_in_bitmask(const std::array<uint8_t, NvMctpEventSupportedNum>& bitmask)
+count_events_in_bitmask(const std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum>& bitmask)
 {
     uint8_t count = 0;
-    for (size_t i = 0; i < NvMctpEventSupportedNum; ++i) {
+    for (size_t i = 0; i < nsm_msg::NvMctpEventSupportedNum; ++i) {
         // Count set bits using Brian Kernighan's algorithm
         uint8_t byte = bitmask[i];
         while (byte) {
@@ -1134,18 +1404,55 @@ class Nsm
 public:
     Nsm(Control& ctl) : _ctl(ctl) {}
     bool process(const Packet& rx, Packet& tx);
-    static constexpr std::array<uint8_t, NvMctpSupportedNum>
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
         SupNvMegType = gen_nv_meg_bitmask();
-    static constexpr std::array<uint8_t, NvMctpSupportedNum>
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
         SupType0Code = gen_type0_code_bitmask();
-    static constexpr std::array<uint8_t, NvMctpSupportedNum>
-        SupDebugTokenCode = gen_debug_token_code_bitmask();
-    static constexpr std::array<uint8_t, NvMctpSupportedNum>
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
+        SupType2Code = gen_type2_code_bitmask();
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
+        SupType3Code = gen_type3_code_bitmask();
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
+        SupType4Code = gen_type4_code_bitmask();
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
+        SupType5Code = gen_type5_code_bitmask();
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
         SupType6Code = gen_type6_code_bitmask();
-    static constexpr std::array<uint8_t, NvMctpEventSupportedNum>
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum>
+        SupTypeFFCode = gen_typeff_code_bitmask();
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum>
         SupType0Event = gen_type0_event_bitmask();
-    static constexpr std::array<uint8_t, NvMctpEventSupportedNum>
+    static constexpr std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum>
         SupType6Event = gen_type6_event_bitmask();
+
+    // Constexpr function helpers
+    static constexpr bool is_msg_set(mctp::NsmMsgType msg)
+    {
+        return nsm_msg::is_bit_set(SupNvMegType, static_cast<uint8_t>(msg));
+    }
+
+    template<typename MsgCmdCode>
+    static constexpr bool is_cmd_set(NsmMsgType msg, MsgCmdCode cmd)
+    {
+        switch (msg) {
+            case NsmMsgType::DeviceCapabilityDiscovery:
+                return nsm_msg::is_bit_set(SupType0Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::PciLinks:
+                return nsm_msg::is_bit_set(SupType2Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::PlatformEnviromentals:
+                return nsm_msg::is_bit_set(SupType3Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::Diagnostics:
+                return nsm_msg::is_bit_set(SupType4Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::DeviceConfiguration:
+                return nsm_msg::is_bit_set(SupType5Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::Firmware:
+                return nsm_msg::is_bit_set(SupType6Code, static_cast<uint8_t>(cmd));
+            case NsmMsgType::NvInternal:
+                return nsm_msg::is_bit_set(SupTypeFFCode, static_cast<uint8_t>(cmd));
+            default: break;
+        }
+        return false;
+    }
 
     // Constexpr variables to calculate the number of events for each type
     static constexpr uint8_t SupType0EventCount = count_events_in_bitmask(SupType0Event);
@@ -1173,6 +1480,12 @@ public:
                                     uint16_t                               patch,
                                     uint16_t                               build);
 
+    // GPIO Event Trigger
+    static void
+    GpioEventTrigger(nv::gpio::GpioPort port, uint32_t flag, GpioEventSource gpioSource);
+    static bool VirtualGpioEventTrigger(std::span<const uint8_t> vpins,
+                                        std::span<const uint8_t> vals);
+
     // Type 5 data accessors
     const GPIOSpoofingPayload& getGPIOSpoofingPayload() const
     {
@@ -1195,10 +1508,14 @@ protected:
     void on_dcd_get_gpio(const Packet& rx, Packet& tx);
     void on_dcd_set_gpio(const Packet& rx, Packet& tx);
     bool process_device_capability_discovery(const Packet& rx, Packet& tx);
+    // Type 2
+    bool process_pci_links(const Packet& rx, Packet& tx);
+    void on_pci_links_assert_pcie_fundamental_reset(const Packet& rx, Packet& tx);
     // Type 3
     bool process_platform_enviromentals(const Packet& rx, Packet& tx);
     void on_plat_env_getTemperatureReading(const Packet& rx, Packet& tx);
     void on_plat_env_getPowerDraw(const Packet& rx, Packet& tx);
+    void on_plat_env_getVoltage(const Packet& rx, Packet& tx);
     void on_plat_env_getInventoryInformation(const Packet& rx, Packet& tx);
     void on_plat_env_setThermalParameter(const Packet& rx, Packet& tx);
     void on_plat_env_getThermalParameter(const Packet& rx, Packet& tx);
@@ -1211,6 +1528,11 @@ protected:
     void on_dev_diag_bridge_port_recovery(const Packet& rx, Packet& tx);
     void on_dev_diag_read_gpio(const Packet& rx, Packet& tx);
     void on_dev_diag_set_gpio(const Packet& rx, Packet& tx);
+    void on_dev_diag_enable_disable_write_protection(const Packet& rx, Packet& tx);
+    void on_dev_diag_get_device_hsc_alert(const Packet& rx, Packet& tx);
+    void on_dev_diag_clear_hsc_faults(const Packet& rx, Packet& tx);
+    void on_dev_diag_get_cpld_register_table(const Packet& rx, Packet& tx);
+
     // Type 4 Debug Token
     bool process_debugtoken_diagnostics(const Packet& rx, Packet& tx);
     void on_install_token(const Packet& rx, Packet& tx);
@@ -1227,81 +1549,136 @@ protected:
     void on_dev_cfg_get_ErrorInjectionPayload(const Packet& rx, Packet& tx);
     void on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx);
     void on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx);
+    void on_dev_cfg_set_gpu_degrade_mode(const Packet& rx, Packet& tx);
+    void on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx);
+    bool is_gpio_spoofing_activate();
+    bool get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value);
+    bool get_gpi_spoofing_value(uint16_t gpio_index, uint8_t& pin_value);
+    void notifyIoxSpoofingState(bool spoofingActive);
+
+    void on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx);
+    void on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx);
+    void on_dev_cfg_get_device_mode_settings(const Packet& rx, Packet& tx);
+    void on_dev_cfg_get_supported_device_modes(const Packet& rx, Packet& tx);
+
+    Ccode handle_set_ncsi_mac(const uint8_t* data);
+    Ccode handle_get_ncsi_mac(NsmPktResp& ntx);
+
     // Type 6
     void get_rot_state_info(const Packet& rx, Packet& tx);
+    void get_ap_rot_state_info(const Packet& rx, Packet& tx, const uint16_t& component_id);
     void on_get_rot_state_info(const Packet& rx, Packet& tx);
     void query_auth_key(const Packet& rx, Packet& tx);
+    void query_ap_auth_key(const Packet& rx, Packet& tx);
     void on_query_auth_key(const Packet& rx, Packet& tx);
+    void on_set_rot_property(const Packet& rx, Packet& tx);
+    void query_image_copy_progress(const Packet& rx, Packet& tx);
+    void initiate_image_copy(const Packet&              rx,
+                             Packet&                    tx,
+                             const ImageCopyControlReq& image_copy_control_req);
+    void on_image_copy_control(const Packet& rx, Packet& tx);
     void update_auth_key(const Packet& rx, Packet& tx, const UpdateAuthKeyReq& update_struct);
+    void
+    update_ap_auth_key(const Packet& rx, Packet& tx, const UpdateAuthKeyReq& update_struct);
     void on_update_auth_key(const Packet& rx, Packet& tx);
     bool is_irreversible_ctrl_enabled();
     void disable_irreversible_ctrl();
     void on_ctrl_irreversible_conf(const Packet& rx, Packet& tx);
     void query_sec_ver_num(const Packet& rx, Packet& tx);
+    void query_ap_sec_ver_num(const Packet& rx, Packet& tx);
     void on_query_sec_ver_num(const Packet& rx, Packet& tx);
     void on_query_fw_comp_id(const Packet& rx, Packet& tx);
     void
     update_min_sec_ver_num(const Packet& rx, Packet& tx, const UpdateMinSvnReq& update_struct);
+    void update_ap_min_sec_ver_num(const Packet&          rx,
+                                   Packet&                tx,
+                                   const UpdateMinSvnReq& update_struct);
     void on_update_min_sec_ver_num(const Packet& rx, Packet& tx);
     bool process_firmware(const Packet& rx, Packet& tx);
+    // Type FF - NVIDIA Internal
+    void process_nv_internal(const Packet& rx, Packet& tx);
+    void on_nv_internal_getRackPowerSmoothingParam(const Packet& rx, Packet& tx);
+    void on_nv_internal_setRackPowerSmoothingParam(const Packet& rx, Packet& tx);
+    void on_nv_internal_getRackPowerSmoothingTestHook(const Packet& rx, Packet& tx);
+    void on_nv_internal_setRackPowerSmoothingTestHook(const Packet& rx, Packet& tx);
+    void on_nv_internal_getDebugTelemetry(const Packet& rx, Packet& tx);
+    void on_nv_internal_triggerAdcCalibration(const Packet& rx, Packet& tx);
+    void on_nv_internal_getAdcCalibrationResults(const Packet& rx, Packet& tx);
     // Misc
     void     fill_nsm_msg_header(const Packet& rx, Packet& tx) const;
     void     fill_error_packet(Ccode code, const Packet& rx, Packet& tx) const;
+    void     fill_error_packet_v2(Ccode         completion_code,
+                                  Rcode         reason_code,
+                                  const Packet& rx,
+                                  Packet&       tx) const;
     void     fill_packet_header(const Packet& rx, Packet& tx) const;
     void     fill_nsm_msg_header_aggr(const Packet& rx, Packet& tx) const;
     void     fill_error_packet_aggr(Ccode code, const Packet& rx, Packet& tx) const;
     void     fill_packet_header_aggr(const Packet& rx, Packet& tx) const;
-    bool     is_fw_comp_id_valid(const FwCompInfo& input_fw_comp_info);
+    bool     is_fw_comp_id_valid(const FwCompInfo& input_fw_comp_info, uint16_t component_id);
     bool     is_nonce_match(const Nonce& input_nonce);
     bool     is_input_length_valid(const Packet& rx, uint8_t size);
     Ccode    can_revoke_otp();
+    bool     can_initiate_image_copy(Ccode& completion_code, Rcode& reason_code);
+    void     get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
+                                   NsmRedundancyPolicy& redundancy_policy_current);
+    Ccode    can_revoke_ap_otp();
     bool     is_inactive_authenticate(uint8_t inactive_slot);
     bool     is_active_slot(uint8_t slot);
     uint8_t  get_inactive_fw_state();
+    uint8_t  get_ap_state();
     uint32_t array_to_u32(std::array<uint8_t, 4>& buffer);
-    uint8_t  get_actvie_slot();
+    uint8_t  get_active_slot();
+    uint8_t  get_inactive_slot();
     uint32_t convert_unary_to_key_index(uint32_t unary_value);
     bool     is_form_zeros_then_ones(uint32_t num);
     Ccode    convert_key_index_to_key_permission(uint16_t key_index, uint32_t& key_permission);
     Ccode    fill_key_index(uint8_t slot, uint16_t& key_index);
+    Ccode    fill_ap_key_index(uint16_t& key_index);
     Ccode    fill_fmc_key_index(uint16_t& key_index);
     Ccode    fill_key_permission(uint8_t slot, uint32_t& key_permission);
+    Ccode    fill_ap_key_permission(uint32_t& key_permission);
     Ccode    fill_fmc_key_permission(uint32_t& key_permission);
     Ccode    fill_fuse_key_permission(uint32_t& key_permission);
+    Ccode    fill_ap_fuse_key_permission(uint32_t& key_permission);
     Ccode    fill_sec_ver_num(uint8_t slot, uint32_t& rollback_protection);
+    Ccode    fill_ap_sec_ver_num(uint32_t& rollback_protection);
     Ccode    fill_fmc_sec_ver_num(uint32_t& rollback_protection);
     Ccode    fill_fuse_mini_sec_ver_num(uint32_t& rollback_protection);
+    Ccode    fill_ap_fuse_mini_sec_ver_num(uint32_t& rollback_protection);
     Ccode    revoke_rollback_protection(uint32_t rollback_protection);
+    Ccode    revoke_ap_rollback_protection(uint32_t rollback_protection);
     uint8_t  fill_signing_type(uint8_t index);
     void     fill_boot_status_code(std::array<uint8_t, 8>& input);
     Ccode    revoke_key_permission(uint32_t key_permission);
+    Ccode    revoke_ap_key_permission(uint32_t key_permission);
 
-    Control&                                     _ctl;
-    bool                                         irreversible_input_received  = false;
-    uint32_t                                     irreversible_last_time_stamp = 0;
-    Nonce                                        _nonce{};
-    std::array<uint8_t, NvMctpEventSupportedNum> type0_event_enable_bitmask{};
-    std::array<uint8_t, NvMctpEventSupportedNum> type6_event_enable_bitmask{};
+    Control&                                              _ctl;
+    bool                                                  irreversible_input_received  = false;
+    uint32_t                                              irreversible_last_time_stamp = 0;
+    Nonce                                                 _nonce{};
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> type0_event_enable_bitmask{};
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> type6_event_enable_bitmask{};
     // Event acknowledgement bitmasks
-    std::array<uint8_t, NvMctpEventSupportedNum> type6_event_ack_bitmask{};
-    std::array<uint8_t, NvMctpEventSupportedNum> type0_event_ack_bitmask{};
-    std::array<uint8_t, NvMctpSupportedNum>      log_nvmsg_event_bitmask{};
-    bool                                         log_event_subscription = false;
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> type6_event_ack_bitmask{};
+    std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> type0_event_ack_bitmask{};
+    std::array<uint8_t, nsm_msg::NvMctpSupportedNum>      log_nvmsg_event_bitmask{};
+    bool                                                  log_event_subscription = false;
     Packet            nsm_event_clients{};  // The rx from the set event subscribe command
     EventSubscription event_subscription{NsmGlobalEventSetting::EventNotSubscribe, 0};
     std::array<NsmEventCache, NsmEventNum> event_cache{};
 
     // Nsm constants, refer to nv/mctp/constants.h
-    constexpr static auto HeaderResponseSize = Constants::NsmHeaderResponseSize;
+    constexpr static auto HeaderResponseSize       = Constants::NsmHeaderResponseSize;
+    constexpr static auto HeaderReasonResponseSize = Constants::NsmHeaderReasonResponseSize;
     constexpr static auto
         AggregateHeaderResponseSize           = Constants::NsmAggregateHeaderResponseSize;
     constexpr static auto HeaderRequestSize   = Constants::NsmHeaderRequestSize;
     constexpr static auto HeaderRequestSizeV2 = Constants::NsmHeaderRequestSizeV2;
     constexpr static auto HeaderEventMsgSize  = Constants::NsmHeaderEventMsgSize;
+    constexpr static auto Type4ResponseSize   = Constants::NsmType4ResponseSize;
 
-    NsmPlatformEnviromentalsPersistentData type3_data;
-    NsmDevDiagPersistentData               type4_data;
-    NsmDevCfgPersistentData                type5_data;
+    NsmDevCfgPersistentData type5_data;
 };
 
 }  // namespace nv::mctp

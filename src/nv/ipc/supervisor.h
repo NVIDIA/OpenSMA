@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,6 +20,7 @@
 
 #include "nv/common/utils.h"
 #include "nv/ipc/event.h"
+#include "nv/ipc/mutex.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/streambuffer.h"
 #include "nv/ipc/task.h"
@@ -38,11 +39,17 @@ class Supervisor
 , common::NonCopyable
 {
 public:
-    constexpr static auto NumTasks      = common::to_underlying(TaskId::End);
-    constexpr static auto NumEvents     = common::to_underlying(EventId::End);
-    constexpr static auto NumQueues     = common::to_underlying(QueueId::End);
-    constexpr static auto NumTimers     = common::to_underlying(TimerId::End);
-    constexpr static auto NumC2CBuffers = EnableDualCore ? 2 : 0;
+    constexpr static auto NumTasks  = common::to_underlying(TaskId::End);
+    constexpr static auto NumEvents = common::to_underlying(EventId::End);
+    constexpr static auto NumQueues = common::to_underlying(QueueId::End);
+    constexpr static auto NumTimers = common::to_underlying(TimerId::End);
+#if defined(CPU_MCXN547VDF_cm33_core0) || defined(CPU_MCXN556SCDF_cm33_core0)
+    constexpr static auto NumMutexes = common::to_underlying(MutexId::End);
+#else
+    // Set num mutexes to 0 for Core1 (no mutexes on Core1)
+    constexpr static auto NumMutexes = 0;
+#endif
+    constexpr static auto                          NumC2CBuffers = EnableDualCore ? 2 : 0;
     static std::array<StreamBuffer, NumC2CBuffers> _c2c_buffers;
     /// storage for static c2c buffer
     static std::array<uint8_t, sys::ipc::calc_static_c2c_buf_size()> _static_c2c_buffer;
@@ -79,6 +86,9 @@ public:
     /// Retrieve uninitialized queue memory storage.
     Queue* memory_for(QueueId id);
 
+    /// Retrieve uninitialized mutex memory storage.
+    Mutex* memory_for(MutexId id);
+
     /// Retrieve uninitialized stream buffer memory storage.
     StreamBuffer*
     memory_for(StreamBuffer::IdType id, uint32_t base_addr, bool direct_memory_access);
@@ -109,6 +119,7 @@ private:
 
     std::array<Event, NumEvents>                                 _events;
     std::array<Queue, NumQueues>                                 _queues;
+    std::array<Mutex, NumMutexes>                                _mutexes;
     std::array<Timer, NumTimers>                                 _timers;
     std::array<StreamBufferHandle_t, sys::ipc::NumStreamBuffers> _stream_buffer_handles;
 };

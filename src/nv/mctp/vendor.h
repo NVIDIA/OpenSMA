@@ -56,6 +56,8 @@ protected:
     void on_add_ext_timestamp(const Packet& rx, Packet& tx);
     void on_scan_i2c(const Packet& rx, Packet& tx) const;
     void on_download_coverage(const Packet& rx, Packet& tx) const;
+    void on_fan_control(const Packet& rx, Packet& tx) const;
+
     void action_background_copy(const Packet& rx, Packet& tx) const;
 
     [[no_unique_address]] reg_table::Hooks _regtable{};

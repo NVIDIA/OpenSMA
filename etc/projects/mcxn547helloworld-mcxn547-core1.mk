@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -125,6 +125,7 @@ SOURCES += \
 	$(PATH_SDK)/middleware/multicore/mcmgr/src/mcmgr.c \
 	$(PATH_SDK)/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c \
 	$(PATH_SYS)/sys/usb/usb_device_mctp.c \
+	$(PATH_SYS)/sys/usb/usb_device_spi.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/flash/src/fsl_flash.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/mem_interface/src/fsl_mem_interface.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/runbootloader/src/fsl_runbootloader.c \
@@ -134,10 +135,8 @@ SOURCES += \
 	$(PATH_SDK_DEVICE)/drivers/fsl_vref.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_wwdt.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi.c \
-	$(PATH_SDK_DEVICE)/drivers/romapi/nboot/src/fsl_nboot.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio_sgpio_target.c \
-	$(PATH_SDK_DEVICE)/drivers/fsl_flexio_sgpio_edma.c
+	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi_edma.c \
+	$(PATH_SDK_DEVICE)/drivers/romapi/nboot/src/fsl_nboot.c
 
 
 # -- CRYPTO flags ------------------------------------------------------------------------------

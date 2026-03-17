@@ -249,3 +249,10 @@ std::size_t Queue::available() const
         return 0;
     }
 }
+
+void Queue::reset()
+{
+    if (_can_direct_access) {
+        xQueueReset(_queue);
+    }
+}

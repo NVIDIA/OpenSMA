@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -21,7 +21,8 @@
 
 namespace nv::i2c {
 
-uint8_t crc8(std::span<uint8_t> data);
+uint8_t crc8(std::span<const uint8_t> data);
+uint8_t crc8(uint8_t crc, std::span<const uint8_t> data);
 void    dump(std::span<uint8_t> data);
 
 }  // namespace nv::i2c

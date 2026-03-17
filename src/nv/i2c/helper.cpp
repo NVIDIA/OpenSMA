@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -40,10 +40,19 @@ static const std::array<uint8_t, 256> LookupTable = {
     0xf3,
 };
 
-uint8_t nv::i2c::crc8(std::span<uint8_t> data)
+uint8_t nv::i2c::crc8(std::span<const uint8_t> data)
 {
     /// since HW doesn't support CRC8, use SW to calculate CRC8
     uint8_t crc = 0;
+    for (auto item : data) {
+        crc = LookupTable.at(crc ^ item);
+    }
+    return crc;
+}
+
+uint8_t nv::i2c::crc8(uint8_t crc, std::span<const uint8_t> data)
+{
+    /// since HW doesn't support CRC8, use SW to calculate CRC8
     for (auto item : data) {
         crc = LookupTable.at(crc ^ item);
     }

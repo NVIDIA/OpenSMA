@@ -18,9 +18,8 @@
 with Interfaces.C;             use Interfaces.C;
 with Interfaces.C.Extensions;  use Interfaces.C.Extensions;
 with Interfaces.C.Strings;     use Interfaces.C.Strings;
-with Pdk.Cmn.Console;
-with Pdk.Cmn.Console.Plat;
 with Pdk.Cmn.Flowcontrol.Plat; use Pdk.Cmn.Flowcontrol.Plat;
+with Pdk.Cmn.Log.Plat;
 
 package body Ubs.Unittest is
 
@@ -41,16 +40,16 @@ package body Ubs.Unittest is
    procedure On_Fail(Fatal: Boolean; Loc: String := Gnat.Source_Info.Source_Location) is
    begin
       if Fatal then
-         Console.Plat.Putchar('F');
+         Log.Plat.Putchar('F');
       else
-         Console.Plat.Putchar('W');
+         Log.Plat.Putchar('W');
       end if;
 
-      Console.Plat.Print(":" & Loc);
-      Console.Plat.Putchar(Character'Val(10));
+      Log.Plat.Print(":" & Loc);
+      Log.Plat.Putchar(Character'Val(10));
 
       if Fatal then
-         Console.Plat.Flush;
+         Log.Plat.Flush;
          Exit_Program(1);  -- keep it straight forward and just exit
       end if;
 
@@ -58,7 +57,7 @@ package body Ubs.Unittest is
 
    procedure On_Pass(Loc: String := Gnat.Source_Info.Source_Location) is
    begin
-      Console.Plat.Print("P:" & Loc);
-      Console.Plat.Putchar(Character'Val(10));
+      Log.Plat.Print("P:" & Loc);
+      Log.Plat.Putchar(Character'Val(10));
    end;
 end;

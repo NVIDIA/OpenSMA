@@ -26,7 +26,7 @@
 
 using namespace nv::watchdog;
 
-#define SYS_WATCHDOG_CDOG_INST CDOG0
+#define SYS_WATCHDOG_CDOG_INST CDOG1
 
 void Boot::init(uint32_t reset_ms)
 {
@@ -262,7 +262,7 @@ void Boot::update_boot_status()
 {
     auto       record           = std::bit_cast<BootFailedRecord>(read_sticky());
     const auto Srs              = nv::bootloader::Driver::get_boot_reason();
-    const bool WdtResetOccurred = (Srs & CMC_SRS_CDOG0_MASK) > 0;
+    const bool WdtResetOccurred = (Srs & CMC_SRS_CDOG1_MASK) > 0;
     if (WdtResetOccurred && record.prev_try_boot_slot > 0) {
         const uint8_t PrevSLot = record.prev_try_boot_slot - 1;
         if (PrevSLot == 0) {
@@ -538,4 +538,25 @@ void Boot::set_target_boot_slot(nv::bootloader::Driver::ImageIndex index)
         record.target_boot_slot = static_cast<uint8_t>(index) + 1;
     }
     write_sticky(std::bit_cast<uint32_t>(record));
+}
+
+void Boot::increase_total_switch_time()
+{
+    auto record            = std::bit_cast<BootFailedRecord>(read_sticky());
+    record.TotalSwitchTime = std::min<uint32_t>(Boot::MaxSwitchTime,
+                                                record.TotalSwitchTime + 1);
+    write_sticky(std::bit_cast<uint32_t>(record));
+}
+
+void Boot::reset_total_switch_time()
+{
+    auto record            = std::bit_cast<BootFailedRecord>(read_sticky());
+    record.TotalSwitchTime = 0;
+    write_sticky(std::bit_cast<uint32_t>(record));
+}
+
+bool Boot::able_to_switch()
+{
+    auto record = std::bit_cast<BootFailedRecord>(read_sticky());
+    return record.TotalSwitchTime < Boot::MaxSwitchTime;
 }

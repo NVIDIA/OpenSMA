@@ -118,7 +118,7 @@ void Task::get_interface_info(PldmContextRecord&   pldm_context,
     }
 }
 
-bool Task::is_background_copy_enabled()
+bool Task::is_background_copy_automatic()
 {
     flash::Data background_copy_policy{};
     flash::Data background_copy_policy_one_time{};
@@ -333,19 +333,47 @@ Task::Task()
             _event.clear(Task::PldmEventBits::BgStartBit);
 
             flash::Data update_state{};
-            const bool  is_bgcopy_enabled = is_background_copy_enabled();
-            auto        flash_status      = flash::Flash::get_data(flash::Key::PdsUpdateState,
+            flash::Data allow_bg_copy{};
+            const bool  is_bgcopy_automatic = is_background_copy_automatic();
+            auto        flash_status        = flash::Flash::get_data(flash::Key::PdsUpdateState,
                                                        update_state);
             if (flash_status != flash::Status::Ok) {
                 update_state = static_cast<flash::Data>(bootloader::Driver::State::Invalid);
             }
 
+            (void)flash::Flash::get_data(flash::Key::NpdsAllowInitBackgroundCopy,
+                                         allow_bg_copy);
+
+            nv::flash::ProgressPercent progress{};
+            flash_status = flash::Flash::background_copy_query(progress);
+
             if (update_state != static_cast<flash::Data>(bootloader::Driver::State::Stage)
                 && pldm_context.pldm_state == 0 &&  // idle
-                is_bgcopy_enabled) {
-                (void)_event.set(Task::PldmEventBits::BgInitBit);
+                ((is_bgcopy_automatic || allow_bg_copy == 1)
+                 && flash_status != flash::Status::BackgroundCopyInprogress)) {
+                nv::info("bg init\n");
+                // clean AllowInitBackgroundCopy
+                (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 0);
+
+                auto status = flash::Flash::background_copy_start();
+                nv::info("bg start 0x%x\n", status);
+
+                if (status == flash::Status::Ok) {
+                    pldm_context.is_backup_in_progress = true;
+
+                    // set inacitve non bootable, clear update status
+                    (void)bootloader::Driver::set_inactive_bootable(false);
+                    (void)flash::Flash::set_data(flash::Key::PdsUpdateState, 0);
+                    (void)flash::Flash::set_data(flash::Key::PdsUpdateSlot, 0);
+
+                    // start polling bg status
+                    auto event_status = _event.set(Task::PldmEventBits::BgEndBit);
+                    if (event_status != Event::Status::Ok) {
+                        nv::info("set event BgEndBit fail 0x%x\n", event_status);
+                    }
+                }
             }
-            else if (!is_bgcopy_enabled) {
+            else if (!is_bgcopy_automatic) {
                 nv::info("bg copy disabled\n");
                 (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 1);
             }
@@ -361,30 +389,6 @@ Task::Task()
 
                 // set inacitve bootable
                 bootloader::Driver::set_inactive_bootable(true);
-            }
-        }
-        if (event & Task::PldmEventBits::BgInitBit) {
-            _event.clear(Task::PldmEventBits::BgInitBit);
-            nv::info("bg init\n");
-            // clean AllowInitBackgroundCopy
-            (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 0);
-
-            auto status = flash::Flash::background_copy_start();
-            nv::info("bg start 0x%x\n", status);
-
-            if (status == flash::Status::Ok) {
-                pldm_context.is_backup_in_progress = true;
-
-                // set inacitve non bootable, clear update status
-                (void)bootloader::Driver::set_inactive_bootable(false);
-                (void)flash::Flash::set_data(flash::Key::PdsUpdateState, 0);
-                (void)flash::Flash::set_data(flash::Key::PdsUpdateSlot, 0);
-
-                // start polling bg status
-                auto event_status = _event.set(Task::PldmEventBits::BgEndBit);
-                if (event_status != Event::Status::Ok) {
-                    nv::info("set event BgEndBit fail 0x%x\n", event_status);
-                }
             }
         }
 
@@ -448,18 +452,6 @@ pldm::Status Task::pldm_bg_start()
 {
     ipc::Event& event        = Event::make(EventId::PldmTask);
     auto        event_status = event.set(Task::PldmEventBits::BgStartBit);
-
-    if (event_status != Event::Status::Ok) {
-        return nv::pldm::Status::EventSetFail;
-    }
-
-    return pldm::Status::Ok;
-}
-
-pldm::Status Task::pldm_bg_init()
-{
-    ipc::Event& event        = Event::make(EventId::PldmTask);
-    auto        event_status = event.set(Task::PldmEventBits::BgInitBit);
 
     if (event_status != Event::Status::Ok) {
         return nv::pldm::Status::EventSetFail;

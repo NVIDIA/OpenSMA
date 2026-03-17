@@ -17,6 +17,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <span>
 
@@ -29,19 +30,35 @@
 #include "nv/i2c/common.h"
 #include "nv/i2c/lattice_driver.h"
 #include "nv/i2c/port.h"
+#include "nv/logger/log.h"
 #include "nv/nv.h"
 #include "nv/ctimer/ctimer.h"
+
 #include NV_IPC_CONFIG_H
 
 using namespace nv::i2c;
+
+namespace {
+constexpr bool enable_cpld_uart_log = false;  // Set to false to disable all info logs
+}  // anonymous namespace
 
 // External declaration - cpld must be defined in project's main.cpp
 // If not defined and inst() is called, linker will report: "undefined reference to cpld"
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 extern LatticeCpld cpld;
 
-// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init,hicpp-member-init)
-LatticeCpld::LatticeCpld(Port port, uint8_t address) noexcept : _port(port), _address(address)
+LatticeCpld::LatticeCpld(Port    port_prgm,
+                         uint8_t address_prgm,
+                         Port    port_usr,
+                         uint8_t address_usr,
+                         uint8_t address_dbg,
+                         uint8_t address_dbg_install) noexcept
+: _port_prgm(port_prgm)
+, _address_prgm(address_prgm)
+, _port_usr(port_usr)
+, _address_usr(address_usr)
+, _address_dbg(address_dbg)
+, _address_dbg_install(address_dbg_install)
 {}
 
 LatticeCpld& LatticeCpld::inst()
@@ -49,29 +66,35 @@ LatticeCpld& LatticeCpld::inst()
     return cpld;
 }
 
-bool LatticeCpld::is_enabled()
+I2cStatus LatticeCpld::cpld_write(std::span<uint8_t> buffer, bool use_user, bool token_notify)
 {
-    return CPLD_I2C_PORT != Port::End;
-}
+    auto          port          = (use_user) ? _port_usr : _port_prgm;
+    const uint8_t address_debug = (token_notify) ? _address_dbg_install : _address_dbg;
+    const uint8_t address       = (use_user) ? address_debug : _address_prgm;
 
-I2cStatus LatticeCpld::cpld_write(std::span<uint8_t> buffer)
-{
-    auto status = sys::i2c::i2c_write(_port, _address, buffer);
+    auto status = sys::i2c::i2c_write(port, address, buffer);
 
     if (status != I2cStatus::Ok) {
-        nv::info("cpld_write failed: %d\n", status);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("cpld_write failed: %d\n", status);
+        }
     }
 
     return status;
 }
 
 I2cStatus LatticeCpld::cpld_write_read(std::span<uint8_t> write_buffer,
-                                       std::span<uint8_t> read_buffer)
+                                       std::span<uint8_t> read_buffer,
+                                       bool               use_user)
 {
-    auto status = sys::i2c::i2c_write_read(_port, _address, write_buffer, read_buffer);
+    auto          port    = (use_user) ? _port_usr : _port_prgm;
+    const uint8_t address = (use_user) ? _address_usr : _address_prgm;
+    auto          status  = sys::i2c::i2c_write_read(port, address, write_buffer, read_buffer);
 
     if (status != I2cStatus::Ok) {
-        nv::info("cpld_write_read failed: %d\n", status);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("cpld_write_read failed: %d\n", status);
+        }
     }
 
     return status;
@@ -88,7 +111,9 @@ I2cStatus LatticeCpld::cpld_write_retry(std::span<uint8_t> buffer)
             return ret;
         }
     }
-    nv::info("cpld_write_retry failed: %d\n", ret);
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("cpld_write_retry failed: %d\n", ret);
+    }
     return ret;
 }
 
@@ -104,16 +129,14 @@ I2cStatus LatticeCpld::cpld_write_wait(std::span<uint8_t> buffer, bool high_spee
     uint8_t       count = 0;
     const uint8_t retry = LatticeTiming::DEFAULT_RETRY_COUNT;
     // Check busy flag command
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t   busy_cmd[] = {LatticeCmd::CHECK_BUSY,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO};
-    I2cStatus ret        = I2cStatus::Error;
+    std::array<uint8_t, 4> busy_cmd = {LatticeCmd::CHECK_BUSY,
+                                       LatticeOperand::OP_ZERO,
+                                       LatticeOperand::OP_ZERO,
+                                       LatticeOperand::OP_ZERO};
+    I2cStatus              ret      = I2cStatus::Error;
     while (count < retry) {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,misc-const-correctness)
-        uint8_t buf[] = {0};
-        ret           = cpld_write_read(busy_cmd, buf);
+        std::array<uint8_t, 1> buf = {0};
+        ret                        = cpld_write_read(busy_cmd, buf);
 
         if (!(buf[0] & LatticeStatus::BUSY_FLAG)) {
             break;
@@ -133,13 +156,11 @@ I2cStatus LatticeCpld::cpld_write_wait(std::span<uint8_t> buffer, bool high_spee
     }
 
     // Read status register command
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t status_cmd[] = {LatticeCmd::READ_STATUS,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO};
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,misc-const-correctness)
-    uint8_t buf[LatticeBuffer::STATUS_BUFFER_SIZE] = {0};
+    std::array<uint8_t, 4> status_cmd                          = {LatticeCmd::READ_STATUS,
+                                                                  LatticeOperand::OP_ZERO,
+                                                                  LatticeOperand::OP_ZERO,
+                                                                  LatticeOperand::OP_ZERO};
+    std::array<uint8_t, LatticeBuffer::STATUS_BUFFER_SIZE> buf = {};
     if (auto ret = cpld_write_read(status_cmd, buf); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -149,14 +170,14 @@ I2cStatus LatticeCpld::cpld_write_wait(std::span<uint8_t> buffer, bool high_spee
 
 I2cStatus LatticeCpld::read_id()
 {
-    nv::info("read_id\n");
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::READ_DEVICE_ID,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO};
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t buf[LatticeBuffer::ID_BUFFER_SIZE] = {0};
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("read_id\n");
+    }
+    std::array<uint8_t, 4>                             cmd = {LatticeCmd::READ_DEVICE_ID,
+                                                              LatticeOperand::OP_ZERO,
+                                                              LatticeOperand::OP_ZERO,
+                                                              LatticeOperand::OP_ZERO};
+    std::array<uint8_t, LatticeBuffer::ID_BUFFER_SIZE> buf = {};
 
     if (auto ret = cpld_write_read(cmd, buf); ret != I2cStatus::Ok) {
         return ret;
@@ -164,40 +185,42 @@ I2cStatus LatticeCpld::read_id()
 
     // Sanity check if id is non-zero
     uint32_t device_id = 0;
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-    std::memcpy(&device_id, buf, sizeof(uint32_t));
+    std::memcpy(&device_id, buf.data(), sizeof(uint32_t));
 
-    nv::info("cpld id = 0x%x 0x%x 0x%x 0x%x\n", buf[0], buf[1], buf[2], buf[3], buf[4]);
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("cpld id = 0x%x 0x%x 0x%x 0x%x\n", buf[0], buf[1], buf[2], buf[3], buf[4]);
+    }
 
     return (device_id != 0) ? I2cStatus::Ok : I2cStatus::Error;
 }
 
 I2cStatus LatticeCpld::enter_transparent_mode()
 {
-    nv::info("enter_transparent_mode\n");
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::ENABLE_CONFIG_INTERFACE,
-                     LatticeOperand::ENABLE_CONFIG_OP1,
-                     LatticeOperand::ENABLE_CONFIG_OP2};
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("enter_transparent_mode\n");
+    }
+    std::array<uint8_t, 3> cmd = {LatticeCmd::ENABLE_CONFIG_INTERFACE,
+                                  LatticeOperand::ENABLE_CONFIG_OP1,
+                                  LatticeOperand::ENABLE_CONFIG_OP2};
     return cpld_write_wait(cmd, false);
 }
 
 I2cStatus LatticeCpld::exit_transparent_mode()
 {
-    nv::info("exit_transparent_mode\n");
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::DISABLE_CONFIG_INTERFACE,
-                     LatticeOperand::DISABLE_CONFIG_OP1,
-                     LatticeOperand::DISABLE_CONFIG_OP2};
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("exit_transparent_mode\n");
+    }
+    std::array<uint8_t, 3> cmd = {LatticeCmd::DISABLE_CONFIG_INTERFACE,
+                                  LatticeOperand::DISABLE_CONFIG_OP1,
+                                  LatticeOperand::DISABLE_CONFIG_OP2};
     if (auto ret = cpld_write(cmd); ret != I2cStatus::Ok) {
         return ret;
     }
 
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t bypass[] = {LatticeOperand::BYPASS_PATTERN,
-                        LatticeOperand::BYPASS_PATTERN,
-                        LatticeOperand::BYPASS_PATTERN,
-                        LatticeOperand::BYPASS_PATTERN};
+    std::array<uint8_t, 4> bypass = {LatticeOperand::BYPASS_PATTERN,
+                                     LatticeOperand::BYPASS_PATTERN,
+                                     LatticeOperand::BYPASS_PATTERN,
+                                     LatticeOperand::BYPASS_PATTERN};
     if (auto ret = cpld_write(bypass); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -207,23 +230,23 @@ I2cStatus LatticeCpld::exit_transparent_mode()
 
 I2cStatus LatticeCpld::erase()
 {
-    nv::info("erase flash\n");
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("erase flash\n");
+    }
     // Erase flash (with config)
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::ERASE_FLASH,
-                     LatticeOperand::ERASE_FLASH_OP1,
-                     LatticeOperand::ERASE_FLASH_OP2,
-                     LatticeOperand::ERASE_FLASH_OP3};
+    std::array<uint8_t, 4> cmd = {LatticeCmd::ERASE_FLASH,
+                                  LatticeOperand::ERASE_FLASH_OP1,
+                                  LatticeOperand::ERASE_FLASH_OP2,
+                                  LatticeOperand::ERASE_FLASH_OP3};
     if (auto ret = cpld_write_wait(cmd, false); ret != I2cStatus::Ok) {
         return ret;
     }
 
     // Reset address
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_reset[] = {LatticeCmd::RESET_CONFIG_ADDRESS,
-                           LatticeOperand::OP_ZERO,
-                           LatticeOperand::OP_ZERO,
-                           LatticeOperand::OP_ZERO};
+    std::array<uint8_t, 4> cmd_reset = {LatticeCmd::RESET_CONFIG_ADDRESS,
+                                        LatticeOperand::OP_ZERO,
+                                        LatticeOperand::OP_ZERO,
+                                        LatticeOperand::OP_ZERO};
     if (auto ret = cpld_write_wait(cmd_reset, false); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -233,8 +256,8 @@ I2cStatus LatticeCpld::erase()
 
 I2cStatus LatticeCpld::refresh()
 {
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::REFRESH, LatticeOperand::OP_ZERO, LatticeOperand::OP_ZERO};
+    std::array<uint8_t, 3> cmd = {
+        LatticeCmd::REFRESH, LatticeOperand::OP_ZERO, LatticeOperand::OP_ZERO};
     return cpld_write(cmd);
 }
 
@@ -253,15 +276,14 @@ I2cStatus LatticeCpld::set_address(uint32_t addr, bool is_UFM)
     // nv::info("addr_1 0x%x, addr_0 0x%x\n", addr_1, addr_0);
 
     // Set address command
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_set_page[] = {LatticeCmd::SET_ADDRESS,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              addr_1,
-                              addr_0};
+    std::array<uint8_t, 8> cmd_set_page = {LatticeCmd::SET_ADDRESS,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           addr_1,
+                                           addr_0};
 
     if (is_UFM) {
         cmd_set_page[4] = LatticeOperand::UFM_ADDR_PREFIX1;
@@ -274,18 +296,14 @@ I2cStatus LatticeCpld::set_address(uint32_t addr, bool is_UFM)
     return I2cStatus::Ok;
 }
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-I2cStatus LatticeCpld::send_chunk(uint8_t (&img_chunk)[LATTICE_CPLD_PAGE_SIZE],
-                                  size_t /*chunk_len*/)
+I2cStatus LatticeCpld::send_chunk(std::span<uint8_t> img_chunk, size_t /*chunk_len*/)
 {
     // Send page (program configuration flash page)
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[(LATTICE_CPLD_PAGE_SIZE + 4)] = {LatticeCmd::PROGRAM_PAGE,
-                                                 LatticeOperand::PAGE_OP1,
-                                                 LatticeOperand::PAGE_OP2,
-                                                 LatticeOperand::PAGE_OP3};
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-    std::memcpy(&cmd[4], img_chunk, LATTICE_CPLD_PAGE_SIZE);
+    std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE + 4> cmd = {LatticeCmd::PROGRAM_PAGE,
+                                                           LatticeOperand::PAGE_OP1,
+                                                           LatticeOperand::PAGE_OP2,
+                                                           LatticeOperand::PAGE_OP3};
+    std::memcpy(&cmd[4], img_chunk.data(), LATTICE_CPLD_PAGE_SIZE);
     if (auto ret = cpld_write_wait(cmd, true); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -294,12 +312,13 @@ I2cStatus LatticeCpld::send_chunk(uint8_t (&img_chunk)[LATTICE_CPLD_PAGE_SIZE],
 
 I2cStatus LatticeCpld::end_flash()
 {
-    nv::info("end_flash\n");
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_done[] = {LatticeCmd::PROGRAM_DONE,
-                          LatticeOperand::OP_ZERO,
-                          LatticeOperand::OP_ZERO,
-                          LatticeOperand::OP_ZERO};
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("end_flash\n");
+    }
+    std::array<uint8_t, 4> cmd_done = {LatticeCmd::PROGRAM_DONE,
+                                       LatticeOperand::OP_ZERO,
+                                       LatticeOperand::OP_ZERO,
+                                       LatticeOperand::OP_ZERO};
     if (auto ret = cpld_write_wait(cmd_done, true); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -309,13 +328,11 @@ I2cStatus LatticeCpld::end_flash()
 
 I2cStatus LatticeCpld::read_usercode()
 {
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::READ_USERCODE,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO};
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,misc-const-correctness)
-    uint8_t buf[LatticeBuffer::ID_BUFFER_SIZE] = {0};
+    std::array<uint8_t, 4>                             cmd = {LatticeCmd::READ_USERCODE,
+                                                              LatticeOperand::OP_ZERO,
+                                                              LatticeOperand::OP_ZERO,
+                                                              LatticeOperand::OP_ZERO};
+    std::array<uint8_t, LatticeBuffer::ID_BUFFER_SIZE> buf = {};
     if (auto ret = cpld_write_read(cmd, buf); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -332,30 +349,27 @@ I2cStatus LatticeCpld::begin_read(uint32_t addr)
     const uint8_t addr_0 = addr & LatticeMask::BYTE_MASK;
     const uint8_t addr_1 = (addr >> 8) & LatticeMask::ADDR_HIGH_MASK;
 
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_set_page[] = {LatticeCmd::SET_ADDRESS,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              addr_1,
-                              addr_0};
+    std::array<uint8_t, 8> cmd_set_page = {LatticeCmd::SET_ADDRESS,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           addr_1,
+                                           addr_0};
     if (auto ret = cpld_write_wait(cmd_set_page, true); ret != I2cStatus::Ok) {
         return ret;
     }
     return I2cStatus::Ok;
 }
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-I2cStatus LatticeCpld::read_chunk(uint8_t (&buf)[LATTICE_CPLD_PAGE_SIZE])
+I2cStatus LatticeCpld::read_chunk(std::span<uint8_t> buf)
 {
     // Read 16 bytes from cpld (read configuration flash page)
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_read_page[] = {LatticeCmd::READ_CONFIG_PAGE,
-                               LatticeOperand::PAGE_OP1,
-                               LatticeOperand::PAGE_OP2,
-                               LatticeOperand::PAGE_OP3};
+    std::array<uint8_t, 4> cmd_read_page = {LatticeCmd::READ_CONFIG_PAGE,
+                                            LatticeOperand::PAGE_OP1,
+                                            LatticeOperand::PAGE_OP2,
+                                            LatticeOperand::PAGE_OP3};
     if (auto ret = cpld_write_read(cmd_read_page, buf); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -371,30 +385,38 @@ I2cStatus LatticeCpld::write_offset(const uint8_t* buf, uint32_t addr, uint32_t 
 
     // Check alignment: both addr and len must be multiples of LATTICE_CPLD_PAGE_SIZE
     if ((addr % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("write_offset: addr 0x%x is not aligned to page size %u\n",
-                 addr,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("write_offset: addr 0x%x is not aligned to page size %u\n",
+                     addr,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
     if ((len % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("write_offset: len 0x%x is not aligned to page size %u\n",
-                 len,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("write_offset: len 0x%x is not aligned to page size %u\n",
+                     len,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
 
     const uint32_t loop_size = len / LATTICE_CPLD_PAGE_SIZE;
-    const uint32_t cpld_addr = addr / LATTICE_CPLD_PAGE_SIZE;
 
-    nv::info(
-        "write_offset: buffer 0x%x addr 0x%x len 0x%x page 0x%x\n", buf, addr, len, cpld_addr);
+    if constexpr (enable_cpld_uart_log) {
+        const uint32_t cpld_addr = addr / LATTICE_CPLD_PAGE_SIZE;
+        nv::info("write_offset: buffer 0x%x addr 0x%x len 0x%x page 0x%x\n",
+                 buf,
+                 addr,
+                 len,
+                 cpld_addr);
+    }
 
     set_address(addr, false);
 
     for (uint32_t i = 0; i < loop_size; i++) {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        uint8_t tmp_buf[LATTICE_CPLD_PAGE_SIZE] = {0};
-        std::memcpy(&tmp_buf[0], buf, LATTICE_CPLD_PAGE_SIZE);
+        std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE> tmp_buf = {};
+        std::memcpy(tmp_buf.data(), buf, LATTICE_CPLD_PAGE_SIZE);
 
         if (auto status = send_chunk(tmp_buf, LATTICE_CPLD_PAGE_SIZE);
             status != I2cStatus::Ok) {
@@ -402,6 +424,7 @@ I2cStatus LatticeCpld::write_offset(const uint8_t* buf, uint32_t addr, uint32_t 
         }
         buf += LATTICE_CPLD_PAGE_SIZE;
     }
+
     return I2cStatus::Ok;
 }
 
@@ -413,34 +436,42 @@ I2cStatus LatticeCpld::read_offset(uint8_t* buf, uint32_t addr, uint32_t len)
 
     // Check alignment: both addr and len must be multiples of LATTICE_CPLD_PAGE_SIZE
     if ((addr % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("read_offset: addr 0x%x is not aligned to page size %u\n",
-                 addr,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("read_offset: addr 0x%x is not aligned to page size %u\n",
+                     addr,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
     if ((len % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("read_offset: len 0x%x is not aligned to page size %u\n",
-                 len,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("read_offset: len 0x%x is not aligned to page size %u\n",
+                     len,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
 
     const uint32_t loop_size = len / LATTICE_CPLD_PAGE_SIZE;
-    const uint32_t cpld_addr = addr / LATTICE_CPLD_PAGE_SIZE;
 
-    nv::info(
-        "read_offset: buffer 0x%x addr 0x%x len 0x%x page 0x%x\n", buf, addr, len, cpld_addr);
+    if constexpr (enable_cpld_uart_log) {
+        const uint32_t cpld_addr = addr / LATTICE_CPLD_PAGE_SIZE;
+        nv::info("read_offset: buffer 0x%x addr 0x%x len 0x%x page 0x%x\n",
+                 buf,
+                 addr,
+                 len,
+                 cpld_addr);
+    }
 
     set_address(addr, false);
 
     for (uint32_t i = 0; i < loop_size; i++) {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        uint8_t tmp_buf[LATTICE_CPLD_PAGE_SIZE] = {0};
+        std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE> tmp_buf = {};
 
         if (auto status = read_chunk(tmp_buf); status != I2cStatus::Ok) {
             return status;
         }
-        std::memcpy(buf, &tmp_buf[0], LATTICE_CPLD_PAGE_SIZE);
+        std::memcpy(buf, tmp_buf.data(), LATTICE_CPLD_PAGE_SIZE);
 
         buf += LATTICE_CPLD_PAGE_SIZE;
     }
@@ -469,13 +500,14 @@ I2cStatus LatticeCpld::update_complete()
 // Erase UFM sector only
 I2cStatus LatticeCpld::erase_ufm()
 {
-    nv::info("erase_ufm\n");
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("erase_ufm\n");
+    }
     // Erase UFM sector only - LSC_ERASE_TAG
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::ERASE_UFM,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO};
+    std::array<uint8_t, 4> cmd = {LatticeCmd::ERASE_UFM,
+                                  LatticeOperand::OP_ZERO,
+                                  LatticeOperand::OP_ZERO,
+                                  LatticeOperand::OP_ZERO};
     if (auto ret = cpld_write_wait_ufm(cmd, false); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -487,11 +519,10 @@ I2cStatus LatticeCpld::erase_ufm()
 I2cStatus LatticeCpld::init_ufm_address()
 {
     // Reset UFM Address - LSC_INIT_ADDR_UFM
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[] = {LatticeCmd::INIT_UFM_ADDRESS,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO,
-                     LatticeOperand::OP_ZERO};
+    std::array<uint8_t, 4> cmd = {LatticeCmd::INIT_UFM_ADDRESS,
+                                  LatticeOperand::OP_ZERO,
+                                  LatticeOperand::OP_ZERO,
+                                  LatticeOperand::OP_ZERO};
     return cpld_write_wait_ufm(cmd, true);
 }
 
@@ -509,21 +540,19 @@ I2cStatus LatticeCpld::cpld_write_wait_ufm(std::span<uint8_t> buffer, bool high_
     const uint8_t retry = (high_speed) ? LatticeTiming::UFM_FAST_RETRY_COUNT
                                        : LatticeTiming::UFM_SLOW_RETRY_COUNT;
     // Poll Configuration Status Register as per datasheet Table 16.16
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t   status_cmd[] = {LatticeCmd::READ_STATUS,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO};
-    I2cStatus ret          = I2cStatus::Error;
+    std::array<uint8_t, 4> status_cmd = {LatticeCmd::READ_STATUS,
+                                         LatticeOperand::OP_ZERO,
+                                         LatticeOperand::OP_ZERO,
+                                         LatticeOperand::OP_ZERO};
+    I2cStatus              ret        = I2cStatus::Error;
 
     // Status register bit definitions (in buf[2]):
     // bit 12 (B): Busy Flag (1 = busy) - buf[2] bit 4 = 0x10
     // bit 13 (F): Fail Flag (1 = operation failed) - buf[2] bit 5 = 0x20
 
     while (count < retry) {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,misc-const-correctness)
-        uint8_t buf[LatticeBuffer::STATUS_BUFFER_SIZE] = {0};
-        ret                                            = cpld_write_read(status_cmd, buf);
+        std::array<uint8_t, LatticeBuffer::STATUS_BUFFER_SIZE> buf = {};
+        ret = cpld_write_read(status_cmd, buf);
 
         // Check Busy Flag (bit 12) in buf[2]
         if (!(buf[2] & LatticeStatus::UFM_BUSY_FLAG)) {
@@ -550,17 +579,14 @@ I2cStatus LatticeCpld::cpld_write_wait_ufm(std::span<uint8_t> buffer, bool high_
 
 // Write single UFM page (16 bytes)
 // Note: Address automatically increments after each write
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-I2cStatus LatticeCpld::write_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE])
+I2cStatus LatticeCpld::write_ufm_page(std::span<uint8_t> page_data)
 {
     // Write UFM Page Data - LSC_PROG_TAG
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd[(LATTICE_CPLD_PAGE_SIZE + 4)] = {LatticeCmd::PROGRAM_UFM_PAGE,
-                                                 LatticeOperand::PAGE_OP1,
-                                                 LatticeOperand::PAGE_OP2,
-                                                 LatticeOperand::PAGE_OP3};
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-    std::memcpy(&cmd[4], page_data, LATTICE_CPLD_PAGE_SIZE);
+    std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE + 4> cmd = {LatticeCmd::PROGRAM_UFM_PAGE,
+                                                           LatticeOperand::PAGE_OP1,
+                                                           LatticeOperand::PAGE_OP2,
+                                                           LatticeOperand::PAGE_OP3};
+    std::memcpy(&cmd[4], page_data.data(), LATTICE_CPLD_PAGE_SIZE);
     return cpld_write_wait_ufm(cmd, true);
 }
 
@@ -568,7 +594,9 @@ I2cStatus LatticeCpld::write_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZ
 I2cStatus
 LatticeCpld::write_ufm(const uint8_t* buffer, uint32_t size, uint32_t offset, bool is_erase)
 {
-    nv::info("write_ufm: buffer 0x%x size 0x%x offset 0x%x\n", buffer, size, offset);
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("write_ufm: buffer 0x%x size 0x%x offset 0x%x\n", buffer, size, offset);
+    }
 
     // Check for potential overflow: if size > (UINT32_MAX - LATTICE_CPLD_PAGE_SIZE + 1)
     if (size == 0) {
@@ -589,8 +617,7 @@ LatticeCpld::write_ufm(const uint8_t* buffer, uint32_t size, uint32_t offset, bo
 
     // Write each page
     for (uint32_t i = 0; i < num_pages; i++) {
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        uint8_t page_data[LATTICE_CPLD_PAGE_SIZE] = {0};
+        std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE> page_data = {};
 
         // Calculate bytes to copy for this page
         const size_t buffer_offset = i * LATTICE_CPLD_PAGE_SIZE;
@@ -602,32 +629,28 @@ LatticeCpld::write_ufm(const uint8_t* buffer, uint32_t size, uint32_t offset, bo
             continue;
         }
 
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-        std::memcpy(page_data, buffer + buffer_offset, bytes_to_copy);
+        std::memcpy(page_data.data(), buffer + buffer_offset, bytes_to_copy);
 
         // Write UFM page (address automatically increments)
         if (auto ret = write_ufm_page(page_data); ret != I2cStatus::Ok) {
             return ret;
         }
     }
+
     return I2cStatus::Ok;
 }
 
 // Read one UFM page at specified page offset (following Table 19.2)
 // page_offset: UFM page number to read (0-based)
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-I2cStatus LatticeCpld::read_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE],
-                                     uint32_t page_offset)
+I2cStatus LatticeCpld::read_ufm_page(std::span<uint8_t> page_data, uint32_t /*page_offset*/)
 {
     // Step 2: Poll Configuration Status Register
     // Repeat until Busy Flag not set, or wait 5 us if not polling
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t status_cmd[] = {LatticeCmd::READ_STATUS,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO,
-                            LatticeOperand::OP_ZERO};
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,misc-const-correctness)
-    uint8_t       status_buf[LatticeBuffer::STATUS_BUFFER_SIZE] = {0};
+    std::array<uint8_t, 4> status_cmd = {LatticeCmd::READ_STATUS,
+                                         LatticeOperand::OP_ZERO,
+                                         LatticeOperand::OP_ZERO,
+                                         LatticeOperand::OP_ZERO};
+    std::array<uint8_t, LatticeBuffer::STATUS_BUFFER_SIZE> status_buf = {};
     const uint8_t retry = LatticeTiming::DEFAULT_RETRY_COUNT;  // Maximum retry count
 
     for (uint8_t i = 0; i < retry; i++) {
@@ -651,29 +674,29 @@ I2cStatus LatticeCpld::read_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE
         }
     }
 
+    // Do not set UFM address here, it will be set in read_ufm
+#if 0
     // Step 3: Set UFM Address to specified page offset
     // Operand format: 40 00 00 [page_offset]
     const uint8_t addr_low  = page_offset & LatticeMask::ADDR_LOW_MASK;
     const uint8_t addr_high = (page_offset >> 8) & LatticeMask::ADDR_LOW_MASK;
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_set_addr[] = {LatticeCmd::SET_ADDRESS,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::OP_ZERO,
-                              LatticeOperand::UFM_ADDR_PREFIX1,
-                              LatticeOperand::UFM_ADDR_PREFIX2,
-                              addr_high,
-                              addr_low};
+    std::array<uint8_t, 8> cmd_set_addr = {LatticeCmd::SET_ADDRESS,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::OP_ZERO,
+                                           LatticeOperand::UFM_ADDR_PREFIX1,
+                                           LatticeOperand::UFM_ADDR_PREFIX2,
+                                           addr_high,
+                                           addr_low};
     if (auto ret = cpld_write_wait_ufm(cmd_set_addr, true); ret != I2cStatus::Ok) {
         return ret;
     }
-
+#endif
     // Step 4: Read one page UFM
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t cmd_read[] = {LatticeCmd::READ_UFM_PAGE,
-                          LatticeOperand::READ_UFM_OP1,
-                          LatticeOperand::READ_UFM_OP2,
-                          LatticeOperand::READ_UFM_OP3};
+    std::array<uint8_t, 4> cmd_read = {LatticeCmd::READ_UFM_PAGE,
+                                       LatticeOperand::READ_UFM_OP1,
+                                       LatticeOperand::READ_UFM_OP2,
+                                       LatticeOperand::READ_UFM_OP3};
     if (auto ret = cpld_write_read(cmd_read, page_data); ret != I2cStatus::Ok) {
         return ret;
     }
@@ -685,7 +708,9 @@ I2cStatus LatticeCpld::read_ufm_page(uint8_t (&page_data)[LATTICE_CPLD_PAGE_SIZE
 
 I2cStatus LatticeCpld::read_ufm(uint8_t* buffer, uint32_t size, uint32_t offset)
 {
-    nv::info("read_ufm: buffer 0x%x size 0x%x offset 0x%x\n", buffer, size, offset);
+    if constexpr (enable_cpld_uart_log) {
+        nv::info("read_ufm: buffer 0x%x size 0x%x offset 0x%x\n", buffer, size, offset);
+    }
 
     if (size == 0) {
         return I2cStatus::Ok;  // Nothing to read
@@ -693,20 +718,24 @@ I2cStatus LatticeCpld::read_ufm(uint8_t* buffer, uint32_t size, uint32_t offset)
 
     // Check alignment: both offset and size must be multiples of LATTICE_CPLD_PAGE_SIZE
     if ((offset % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("read_ufm: offset 0x%x is not aligned to page size %u\n",
-                 offset,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("read_ufm: offset 0x%x is not aligned to page size %u\n",
+                     offset,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
     if ((size % LATTICE_CPLD_PAGE_SIZE) != 0) {
-        nv::info("read_ufm: size 0x%x is not aligned to page size %u\n",
-                 size,
-                 LATTICE_CPLD_PAGE_SIZE);
+        if constexpr (enable_cpld_uart_log) {
+            nv::info("read_ufm: size 0x%x is not aligned to page size %u\n",
+                     size,
+                     LATTICE_CPLD_PAGE_SIZE);
+        }
         return I2cStatus::Error;
     }
 
-    // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-    uint8_t buf[LATTICE_CPLD_PAGE_SIZE] = {0};
+    set_address(offset, true);
+    std::array<uint8_t, LATTICE_CPLD_PAGE_SIZE> buf = {};
 
     for (size_t i = 0; i < size / LATTICE_CPLD_PAGE_SIZE; i++) {
         if (auto ret = read_ufm_page(buf, i + offset / LATTICE_CPLD_PAGE_SIZE);
@@ -714,8 +743,90 @@ I2cStatus LatticeCpld::read_ufm(uint8_t* buffer, uint32_t size, uint32_t offset)
             return ret;
         }
 
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
-        std::memcpy(buffer + i * LATTICE_CPLD_PAGE_SIZE, buf, LATTICE_CPLD_PAGE_SIZE);
+        std::memcpy(buffer + i * LATTICE_CPLD_PAGE_SIZE, buf.data(), LATTICE_CPLD_PAGE_SIZE);
+    }
+
+    return I2cStatus::Ok;
+}
+
+/**
+ * @brief Write debug notify bit to CPLD
+ * @param value    Value to write to the bit
+ * @return I2cStatus::Ok on success, error code otherwise
+ */
+I2cStatus LatticeCpld::write_debug_bit(uint8_t value)
+{
+    const uint8_t v = value & Cpld_User_Reg::MCU_UNLOCK_EN_MASK;
+
+    // Format: [register_address, data_byte]
+    std::array<uint8_t, 3> write_buf = {
+        Cpld_User_Reg::MCU_UNLOCK_EN_ADDR_LOWER, Cpld_User_Reg::MCU_UNLOCK_EN_ADDR_UPPER, v};
+
+    const I2cStatus status = cpld_write(write_buf, true, true);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+
+    return I2cStatus::Ok;
+}
+
+/**
+ * @brief Write a value to CPLD register table
+ * @param reg_addr Register address (0x00 - 0xFF)
+ * @param value    Value to write to the register
+ * @return I2cStatus::Ok on success, error code otherwise
+ */
+I2cStatus LatticeCpld::write_register_table(uint8_t reg_addr, uint8_t value)
+{
+    // Format: [register_address, data_byte]
+    std::array<uint8_t, 2> write_buf = {reg_addr, value};
+
+    const I2cStatus status = cpld_write(write_buf, true);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+
+    return I2cStatus::Ok;
+}
+
+/**
+ * @brief Read a value from CPLD register table
+ * @param reg_addr Register address (0x00 - 0xFF)
+ * @param value    Reference to store the read value
+ * @return I2cStatus::Ok on success, error code otherwise
+ */
+I2cStatus LatticeCpld::read_register_table(uint8_t reg_addr, uint8_t& value)
+{
+    // Write register address then read data
+    std::array<uint8_t, 1> write_buf = {reg_addr};
+    std::array<uint8_t, 1> read_buf  = {0};
+
+    const I2cStatus status = cpld_write_read(write_buf, read_buf, true);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+
+    value = read_buf[0];
+
+    return I2cStatus::Ok;
+}
+
+/**
+ * @brief Dump all values from CPLD register table
+ * @param buf    Buffer to return dump in
+ * @return I2cStatus::Ok on success, error code otherwise
+ */
+I2cStatus LatticeCpld::dump_cpld_registers(std::span<uint8_t> buf)
+{
+    if (buf.size() > Cpld_User_Reg::CPLD_USER_REG_SIZE) {
+        return I2cStatus::Error;
+    }
+
+    std::array<uint8_t, 1> write_buf = {Cpld_User_Reg::USR_REG_ADDR_START};
+
+    const I2cStatus status = cpld_write_read(write_buf, buf, true);
+    if (status != I2cStatus::Ok) {
+        return status;
     }
 
     return I2cStatus::Ok;

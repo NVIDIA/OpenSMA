@@ -57,6 +57,7 @@ public:
         Logger = 2,
         Mctp   = 3,
         I2c    = 4,
+        Lstp   = 4,
         Usb    = 5,
         Ipc    = 6,
         Timer  = configTIMER_TASK_PRIORITY,

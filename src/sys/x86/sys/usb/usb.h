@@ -48,6 +48,12 @@ public:
     bool    enable_spi_rx();
     void    recover_spi_endpoint();
 
+    // VCOM (UART bridge) stubs
+    static void  vcom_rearm_rx(void* handle, uint8_t* buffer);
+    static bool  vcom_send(void* handle, uint8_t* data, uint32_t length);
+    static void* get_vcom_handle();
+    static bool  is_vcom_ready();
+
 private:
 };
 

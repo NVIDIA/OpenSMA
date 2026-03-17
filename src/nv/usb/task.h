@@ -24,11 +24,15 @@
 #include "nv/mctp/interface.h"
 #include "nv/mctp/router.h"
 #include "nv/usb/hid_smb.h"
+#include "nv/lstp/lstp_router.h"
 #include "sys/ipc/event.h"
 #include "sys/usb/usb.h"
 #include "sys/usb/usb_device_descriptor.h"
 
 namespace nv::usb {
+
+// Magic value to indicate USB port reset in mailbox
+constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
 
 enum class Status
 {
@@ -53,10 +57,10 @@ public:
         UpdateRoutingTableBit = 6_bit,
         HidRxBit              = 7_bit,
         WdtEventBit           = 8_bit,
-        // Flashrom/SPI event bits (conditional)
-        SpiRxBit     = 9_bit,
-        SpiTxBit     = 10_bit,
-        SpiTxDoneBit = 11_bit,
+        // LSTP event bits (conditional)
+        LstpRxBit     = 9_bit,
+        LstpTxBit     = 10_bit,
+        LstpTxDoneBit = 11_bit,
     };
 
     static void        make();
@@ -70,13 +74,13 @@ public:
     void               check_tx_done_status(uint32_t);
     void               clear_queue();
 
-    // Flashrom/SPI methods (implementation conditional on EnableFlashrom)
-    void               clear_usb_spi_queue();
-    void               recover_spi_endpoint();
-    static usb::Status set_spi_rx_event();
-    static usb::Status set_spi_tx_done_event();
-    void               spi_receive();
-    uint8_t            spi_transmit();
+    // LSTP methods (implementation conditional on EnableLstp)
+    void               clear_usb_lstp_queue();
+    void               recover_lstp_endpoint();
+    static usb::Status set_lstp_rx_event();
+    static usb::Status set_lstp_tx_done_event();
+    void               lstp_receive();
+    uint8_t            lstp_transmit();
 
     [[noreturn]] void  main();
     void               mctp_receive();
@@ -114,22 +118,23 @@ protected:
         std::array<uint8_t, mctp::PktBufDataLen - sizeof(Header)> msg;
     };
 
-    HidSmb      _hid_smb;
-    ipc::Event& _event;
-    ipc::Queue& _tx;
-    Buffer      mctp_rx_buffer{};
-    Buffer      mctp_tx_buffer{};
-    HidBuffer   hid_rx_buffer{};
-    HidBuffer   hid_tx_buffer{};
-    HidBuffer   hid_ep0_buffer{};
+    HidSmb               _hid_smb;
+    nv::lstp::LstpRouter _lstp_router;
+    ipc::Event&          _event;
+    ipc::Queue&          _tx;
+    Buffer               mctp_rx_buffer{};
+    Buffer               mctp_tx_buffer{};
+    HidBuffer            hid_rx_buffer{};
+    HidBuffer            hid_tx_buffer{};
+    HidBuffer            hid_ep0_buffer{};
 
-    // Flashrom/SPI buffers - conditionally sized via UsbSpiMsgSize
-    // When EnableFlashrom = false: UsbSpiMsgSize = 1
-    // When EnableFlashrom = true: UsbSpiMsgSize = 512, uses full buffers
-    std::array<uint8_t, nv::ipc::UsbSpiMsgSize> spi_rx_buffer{};
-    std::array<uint8_t, nv::ipc::UsbSpiMsgSize> spi_tx_buffer{};
-    uint32_t                                    spi_rx_len{};
-    uint32_t                                    spi_tx_len{};
+    // LSTP buffers - conditionally sized via UsbLstpMsgSize
+    // When EnableLstp = false: UsbLstpMsgSize = 1
+    // When EnableLstp = true: UsbLstpMsgSize = 512, uses full buffers
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> lstp_rx_buffer{};
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> lstp_tx_buffer{};
+    uint32_t                                     lstp_rx_len{};
+    uint32_t                                     lstp_tx_len{};
 
     sys::usb::Driver _driver;
     RoutingTable     _routing_table{};
@@ -151,8 +156,8 @@ public:  // static api section
                               ipc::Queue::Item& item,
                               i2c::I2cStatus    result);
 
-    // Flashrom/SPI interface (implementation conditional on EnableFlashrom)
-    static usb::Status to_usbSpi(std::span<uint8_t>& data);
+    // LSTP interface (implementation conditional on EnableLstp)
+    static usb::Status to_usbLstp(std::span<uint8_t>& data);
 };
 
 }  // namespace nv::usb

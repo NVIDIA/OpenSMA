@@ -78,8 +78,8 @@ public:
 
     // Handles I2C write to the device.
     // Parent task must pull and manage interrupts and output changes afterwards.
-    void i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-                   uint8_t                                                    data_length);
+    void i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                   uint8_t                                            data_length);
 
     // Updates GPIO input pins specified by `pin_mask` to the values in `target_pin_values`.
     // - Pins configured as outputs will not be modified and will trigger an error if included

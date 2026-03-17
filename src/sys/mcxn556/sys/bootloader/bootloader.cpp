@@ -31,16 +31,39 @@
 #include "sys/common/utils.h"
 #include "nv/watchdog/runtime.h"
 #include "sys/common/stack_protect.h"
+#include "nv/usb/task.h"
 #include "nv/gpio/driver.h"
+#include "nv/logger/log_fault.h"
 using namespace nv;
 using namespace nv::bootloader;
 
+// Jump information bit flags
+static constexpr uint32_t JUMP_INFO_SLOT_0_FLAG = 0x1;  // Bit 0: booted from slot 0
+static constexpr uint32_t JUMP_INFO_SLOT_1_FLAG = 0x2;  // Bit 1: booted from slot 1
+
+// Global variable to cache current boot index (0xfafafafa = uninitialized)
+NV_SHARED_DATA uint32_t g_current_boot_index = 0xfafafafa;
+
 void Driver::run_on_index(ImageIndex image_index)
 {
+    if (!nv::watchdog::Boot::able_to_switch()) {
+        logger::info(logger::Event::BootReachMaxSwitchTime, {});
+        nv::logger::FaultLogger::fault(nv::logger::Fault::OverSwtichSlotLimit);
+        return;
+    }
+    nv::watchdog::Boot::increase_total_switch_time();
+
     user_app_boot_invoke_option_t boot_option = {
         .option{.B{.boot_image_index = static_cast<uint32_t>(image_index), .tag = Tag}}};
 
     *std::bit_cast<uint32_t*>(BootReasonAddr) = (CMC_SRS_WARM_MASK | CMC_SRS_SW_MASK);
+
+    // write the jump information to the ram
+    constexpr bool use_boot_rom = true;
+    const auto     jump_to      = image_index;
+    *std::bit_cast<volatile uint32_t*>(
+        FmcJumpInformationAddr) = ((jump_to == ImageIndex::Image0) ? 0x1 : 0x2)
+                                | ((use_boot_rom == true) ? 0x4 : 0x0);
 
     bootloader_user_entry(&boot_option);
 
@@ -50,8 +73,32 @@ void Driver::run_on_index(ImageIndex image_index)
 
 Driver::ImageIndex Driver::current_boot_index()
 {
-    const uint32_t BootLogRegValue = *(std::bit_cast<volatile uint32_t*>(ElsAsBootLog0Addr));
-    const uint32_t BootImageValue  = SYSCON_ELS_AS_BOOT_LOG0_BOOT_IMAGE(BootLogRegValue);
+    uint32_t BootImageValue = 0;
+    if (g_current_boot_index == 0xfafafafa) {
+        const uint32_t JumpInformationValue = get_fmc_jump_information();
+        bool           jump_info_invalid    = JumpInformationValue == 0 ? true : false;
+
+        if (jump_info_invalid || get_boot_src() != Driver::BootSourceFMC) {
+            const uint32_t BootLogRegValue = *(
+                std::bit_cast<volatile uint32_t*>(ElsAsBootLog0Addr));
+            BootImageValue = SYSCON_ELS_AS_BOOT_LOG0_BOOT_IMAGE(BootLogRegValue);
+        }
+        else {
+            if (JumpInformationValue & JUMP_INFO_SLOT_0_FLAG) {
+                BootImageValue = 0;
+            }
+            else if (JumpInformationValue & JUMP_INFO_SLOT_1_FLAG) {
+                BootImageValue = 1;
+            }
+            else {
+                BootImageValue = 2;
+            }
+        }
+        g_current_boot_index = BootImageValue;
+    }
+    else {
+        BootImageValue = g_current_boot_index;
+    }
     switch (BootImageValue) {
         case 0:
         case 1 : return static_cast<ImageIndex>(BootImageValue);
@@ -67,6 +114,28 @@ void Driver::hw_init()
         NVIC_SetPriority(static_cast<IRQn_Type>(i), configLIBRARY_LOWEST_INTERRUPT_PRIORITY);
     }
     NVIC_SetPriority(SEC_VIO_IRQn, 0);
+}
+
+void __attribute__((no_stack_protector)) Driver::set_stack_cookie()
+{
+    // Set stack cookie to random value
+    if constexpr (SSP_ENABLED) {
+        uintptr_t                stack_cookie = 0;
+        mbedtls_ctr_drbg_context ctr_drbg;
+        mbedtls_ctr_drbg_init(&ctr_drbg);
+        const int Ret = mbedtls_ctr_drbg_random(&ctr_drbg,
+                                                // NOLINTNEXTLINE(*-reinterpret-cast)
+                                                reinterpret_cast<uint8_t*>(&stack_cookie),
+                                                sizeof(stack_cookie));
+        mbedtls_ctr_drbg_free(&ctr_drbg);
+        if (Ret != 0) {
+            logger::info(logger::Event::BootStackGuardInitFail, {});
+        }
+        // NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
+        __stack_chk_guard = stack_cookie;
+        // Clean up secrets
+        stack_cookie = 0;
+    }
 }
 
 void Driver::disable_all_flexcomm_irq()
@@ -183,6 +252,7 @@ void __attribute__((no_stack_protector)) Driver::boot_init()
 
     nv::info("boot from slot %d\n", boot_slot);
     logger::info(logger::Event::BootSlot, {static_cast<uint8_t>(boot_slot)});
+    logger::info(logger::Event::BootDieId, logger::data_from_u32(SYSCON->DIEID));
 
     flash::Data update_state{};
     flash::Data update_slot{};
@@ -308,27 +378,6 @@ void __attribute__((no_stack_protector)) Driver::boot_init()
         }
     }
 
-    // Set stack cookie to random value
-    {
-        if constexpr (SSP_ENABLED) {
-            uintptr_t                stack_cookie = 0;
-            mbedtls_ctr_drbg_context ctr_drbg;
-            mbedtls_ctr_drbg_init(&ctr_drbg);
-            const int Ret = mbedtls_ctr_drbg_random(&ctr_drbg,
-                                                    // NOLINTNEXTLINE(*-reinterpret-cast)
-                                                    reinterpret_cast<uint8_t*>(&stack_cookie),
-                                                    sizeof(stack_cookie));
-            mbedtls_ctr_drbg_free(&ctr_drbg);
-            if (Ret != 0) {
-                logger::info(logger::Event::BootStackGuardInitFail, {});
-            }
-            // NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
-            __stack_chk_guard = stack_cookie;
-            // Clean up secrets
-            stack_cookie = 0;
-        }
-    }
-
     flash::Flash::set_data_from_kernel(flash::Key::NpdsBootReasonOriginal,
                                        get_original_boot_reason());
 
@@ -343,6 +392,16 @@ void __attribute__((no_stack_protector)) Driver::boot_init()
 
     // TBD: time for reset it
     write_application_fault_record(0x0, 0x0, 0x0, 0x0);
+
+    // Check for USB port reset marker
+    uint32_t usb_reset_marker = 0;
+    nv::mainbox::read_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset,
+                                  usb_reset_marker);
+    if (usb_reset_marker == nv::usb::UsbPortResetMagicNumber) {
+        // Clear mailbox
+        nv::mainbox::write_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset, 0x0);
+        logger::info(logger::Event::UsbPortReset, {});
+    }
 
 #if 0
     uint32_t auth_result     = get_auth_result();
@@ -416,6 +475,7 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
     if (value == nv::common::to_underlying(nv::ipc::BootedEventBits::BootStatusMask)) {
         auto boot_slot = current_boot_index();
         nv::watchdog::Boot::disable();
+        nv::watchdog::Boot::reset_total_switch_time();
         nv::watchdog::Boot::clear_boot_failed(boot_slot);
         if constexpr (nv::ipc::EnableRuntimeWdt) {
             if (nv::watchdog::Runtime::is_reset(ImageIndex::Image0)) {
@@ -603,6 +663,12 @@ uint32_t Driver::get_TRNG_config()
 void Driver::get_fmc_fault(const std::span<uint8_t>& buffer)
 {
     memcpy(buffer.data(), std::bit_cast<void*>(FmcFaultStatusAddr), sizeof(FmcFaultRecord));
+}
+
+uint32_t Driver::get_fmc_jump_information()
+{
+    const auto FmcJumpInformation = *std::bit_cast<uint32_t*>(FmcJumpInformationAddr);
+    return FmcJumpInformation;
 }
 
 void Driver::clear_inactive_alias(ImageIndex inactive_index)

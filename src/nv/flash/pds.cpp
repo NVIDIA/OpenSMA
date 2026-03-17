@@ -184,6 +184,28 @@ void Pds::get_default_value(PdsDataArray& table)
     set_default(Key::PdsDbgTokenNonce4, 0);
     set_default(Key::PdsBackgroundSetup, 0);
     set_default(Key::PdsBackgroundSetupOneTime, 0);
+
+    // set default value for simultaneous fuse addresses
+    for (auto i = static_cast<uint32_t>(Key::PdsOtpSimultaneousFuseAddress0);
+         i <= static_cast<uint32_t>(Key::PdsOtpSimultaneousFuseAddress81);
+         i++) {
+        set_default(static_cast<Key>(i), 0);
+    }
+
+    // SoC Power Smoothing default settings
+    // These defaults are used on first boot or when PDS is reset
+    set_default(Key::PdsSoCPowerSmoothEnabled, 0);             // Disabled by default
+    set_default(Key::PdsSoCPowerSmoothCurrentPresetIndex, 0);  // Default preset 0
+    set_default(Key::PdsSoCPowerBrakeEnabled, 0);              // Disabled by default
+    set_default(Key::PdsMaxACPowerRampRate, 0);                // 0.0f (bit_cast compatible)
+
+    // Leak Detection thresholds (0 = use config.h defaults)
+    for (auto k = static_cast<uint32_t>(Key::PdsLeakDetSlot0Part0);
+         k <= static_cast<uint32_t>(Key::PdsLeakDetSlot3Part1);
+         k++) {
+        set_default(static_cast<Key>(k), 0);
+    }
+    set_default(Key::PdsSoCThermBrakeEnabled, 1);  // Enabled by default
 }
 
 void Pds::load_pds()
@@ -192,6 +214,11 @@ void Pds::load_pds()
     PdsInfo secondary{};
     auto    read_status_primary   = read_pds(PdsPrimaryAddress, primary);
     auto    read_status_secondary = read_pds(PdsSecondaryAddress, secondary);
+
+    (void)recover_corrupted_power_info(primary);
+    (void)recover_corrupted_power_info(secondary);
+    write_pds(PdsPrimaryAddress, primary);
+    write_pds(PdsSecondaryAddress, secondary);
 
     auto primary_is_valid   = read_status_primary == Status::Ok ? is_valid(primary) : false;
     auto secondary_is_valid = read_status_secondary == Status::Ok ? is_valid(secondary) : false;
@@ -244,11 +271,9 @@ Status Pds::write_pds(Address address, const PdsInfo& pds_info)
     }
 
     // Flash write
-    Buffer write_buffer{};
-
+    Buffer   write_buffer{};
     uint32_t remain_size = sizeof(pds_info);
-    cur_address          = get_pds_address(address);
-    Address cur_offset   = 0;
+    Address  cur_offset  = 0;
 
     while (remain_size > 0) {
         const uint32_t CopySize = std::min(remain_size, BufferSize);
@@ -262,7 +287,6 @@ Status Pds::write_pds(Address address, const PdsInfo& pds_info)
         remain_size = nv::common::sub(remain_size, CopySize);
         cur_address = nv::common::add(cur_address, CopySize);
         cur_offset  = nv::common::add(cur_offset, CopySize);
-        cur_address = get_pds_address(cur_address);
     }
     return Status::Ok;
 }
@@ -287,7 +311,42 @@ Status Pds::read_pds(Address address, PdsInfo& pds_info)
         remain_size = nv::common::sub(remain_size, CopySize);
         cur_address = nv::common::add(cur_address, CopySize);
         cur_offset  = nv::common::add(cur_offset, CopySize);
-        cur_address = get_pds_address(cur_address);
+    }
+
+    return Status::Ok;
+}
+
+// WAR 5956416
+Status Pds::recover_corrupted_power_info(PdsInfo& pds_info)
+{
+    bool data_valid = true;
+    for (auto i = static_cast<uint32_t>(Key::PdsSoCPowerSmoothEnabled);
+         i <= static_cast<uint32_t>(Key::PdsAdcCalibrationComplete);
+         i++) {
+        const uint32_t idx = pds_index(static_cast<Key>(i));
+        if (i == static_cast<uint32_t>(Key::PdsSoCPowerSmoothCurrentPresetIndex)) {
+            if (pds_info._pds_buffer.at(idx).data != 0 && pds_info._pds_buffer.at(idx).data != 1
+                && pds_info._pds_buffer.at(idx).data != 2
+                && pds_info._pds_buffer.at(idx).data != 3) {
+                data_valid = false;
+                break;
+            }
+            continue;
+        }
+        else if (pds_info._pds_buffer.at(idx).data != 0
+                 && pds_info._pds_buffer.at(idx).data != 1) {
+            data_valid = false;
+            break;
+        }
+    }
+
+    if (!data_valid) {
+        for (auto i = static_cast<uint32_t>(Key::PdsSoCPowerSmoothEnabled);
+             i <= static_cast<uint32_t>(Key::PdsAdcCalibrationData25);
+             i++) {
+            const uint32_t idx                = pds_index(static_cast<Key>(i));
+            pds_info._pds_buffer.at(idx).data = 0;
+        }
     }
 
     return Status::Ok;

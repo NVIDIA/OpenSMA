@@ -21,6 +21,7 @@
 
 #include "app/pdk-mctp-app-packet-plat.h"
 #include "app/pdk-mctp-app-router-plat.h"
+#include "pdk/cmn/log/log.h"
 
 using namespace pdk::mctp::platforms;
 
@@ -101,7 +102,7 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
                     // Case of assign status is not accept or eid not match
                     if (eid_assign_status != static_cast<uint8_t>(app::EidAssignStatus::Accept)
                         || entry.assigned_eid != crx.data[2]) {
-                        pdk::cmn::console::info(
+                        pdk::cmn::log::here().info(
                             "MCTP: Set Endpoint ID Reject, eid_assign_status: %d, "
                             "eid_pool_size: %d, assigned_eid: "
                             "%d",

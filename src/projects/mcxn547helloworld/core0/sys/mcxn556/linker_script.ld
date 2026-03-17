@@ -64,10 +64,10 @@ SECTIONS
 
   .core1_image :
   {
-    . = ABSOLUTE(__core1_text_start__);
+    . = ALIGN(32);
     __core1_image_start__ = .;
     KEEP(*(.core1_image))
-    . = ABSOLUTE(__core1_text_end__);
+    . = ALIGN(32);
     __core1_image_end__ = .;
   } > m_text
 
@@ -237,10 +237,36 @@ SECTIONS
   } > m_data
 
   __DATA_END = __DATA_ROM + (__data_end__ - __data_start__);
+
+  __SRAMX_FLASH_START = __DATA_END;
+
+  .core1_image_sram :
+  {
+    . = ALIGN(32);
+    __core1_image_sram_start__ = .;
+    . = . + (__core1_image_end__ - __core1_image_start__);
+    . = ALIGN(32);
+    __core1_image_sram_end__ = .;
+  } > m_sramx
+
+  .sramx_code : AT(__SRAMX_FLASH_START)
+  {
+    . = ALIGN(32);
+    __sramx_code_start__ = .;
+    *(sramx_code)
+    *(.code.$SRAMX_SMARTDMA)
+    *(SRAMX_SMARTDMA)
+    *(.data.$SRAMX_SMARTDMA)
+    . = ALIGN(32);
+    __sramx_code_end__ = .;
+  } > m_sramx
+
+  __SRAMX_FLASH_END = __DATA_END + (__sramx_code_end__ - __sramx_code_start__);
+
   text_end = ORIGIN(m_text) + LENGTH(m_text);
   PROVIDE(__text_size = __etext - ORIGIN(m_text));
   
-  ASSERT(__DATA_END <= text_end, "region m_text overflowed with text and data")
+  ASSERT(__SRAMX_FLASH_END <= text_end, "region m_text overflowed with text, data and sramx code")
 
   /* Uninitialized data section */
   .bss (NOLOAD):
@@ -261,6 +287,7 @@ SECTIONS
     *middleware/mbedtls/port/els/cbc_mac_alt.c.o(.bss*)
     *devices/MCXN556S/drivers/fsl_i3c.c.o(.bss*)
     *devices/MCXN556S/drivers/fsl_i3c_edma.c.o(.bss*)
+    *devices/MCXN556S/drivers/fsl_lpspi.c.o(.bss*)
     *(*_ZGVZN*)
     *(*s_debugConsole*)   /* WAR for not changing SDK*/
     . = ALIGN(32);

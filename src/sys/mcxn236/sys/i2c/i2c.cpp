@@ -27,6 +27,7 @@
 #include "nv/i2c/task.h"
 #include "nv/i2c/smb_direct.h"
 #include "nv/logger/task.h"
+#include "sys/i2c/utils.h"
 
 #include "nv/nv.h"
 #include "nv/ipc/supervisor.h"
@@ -58,6 +59,14 @@ LPI2C_Type* Driver::get_base(nv::i2c::Port port)
     // NOLINTNEXTLINE: SDK definition
     std::array<LPI2C_Type*, Size> bases LPI2C_BASE_PTRS;
     return bases.at(nv::common::to_underlying(port));
+}
+
+IRQn_Type Driver::get_irq(nv::i2c::Port port)
+{
+    constexpr uint8_t Size = nv::common::to_underlying(nv::i2c::Port::End);
+    // NOLINTNEXTLINE: SDK definition
+    std::array<IRQn_Type, Size> irqs LPI2C_IRQS;
+    return irqs.at(nv::common::to_underlying(port));
 }
 
 void Driver::irq_handler(uint32_t instance, void* handle)
@@ -98,11 +107,11 @@ void Driver::target_callback(LPI2C_Type*             base,
                              void*                   user_data)
 {
     using namespace nv::i2c;
-    constexpr uint8_t        DefaultData = 0xFF;
-    constexpr uint8_t        ByteMask    = 0xFFU;
-    auto                     context     = static_cast<TargetContex*>(user_data);
-    auto                     task        = static_cast<Task*>(context->task);
-    const std::span<uint8_t> Buffer      = context->buffer;
+    constexpr uint8_t        DefaultData   = 0xFF;
+    constexpr uint8_t        MinPacketSize = 4;
+    auto                     context       = static_cast<TargetContex*>(user_data);
+    auto                     task          = static_cast<Task*>(context->task);
+    const std::span<uint8_t> Buffer        = context->buffer;
     switch (transfer->event) {
         case kLPI2C_SlaveAddressMatchEvent:
             transfer->data     = nullptr;
@@ -136,11 +145,12 @@ void Driver::target_callback(LPI2C_Type*             base,
                 task->rx_error();
                 break;
             }
-            if (!context->transmit) {
+            // do not process small transfers and SMBus reads
+            if (!context->transmit && transfer->data != nullptr
+                && transfer->transferredCount >= MinPacketSize) {
                 // [0] = payload_size, [1] = 8 bit target address, [2:] payload
-                context->buffer[0] = static_cast<uint8_t>(
-                    std::min<uint32_t>(transfer->transferredCount + 1U, ByteMask));
-                context->buffer[1] = static_cast<uint8_t>(base->SAMR & ByteMask) | 0U;
+                context->buffer[0] = transfer->transferredCount + 1;
+                context->buffer[1] = static_cast<uint8_t>(base->SAMR) | 0U;
                 task->rx(context->buffer);
             }
             break;
@@ -174,23 +184,23 @@ void Driver::init()
         LPI2C_GetInstance(_base), irq_handler, &_lpi2c_handle, LP_FLEXCOMM_PERIPH_LPI2C);
 }
 
-void Driver::start()
+void Driver::start(bool enable_target)
 {
     LPI2C_MasterEnable(_base, true);
-    LPI2C_SlaveEnable(_base, true);
-    constexpr uint32_t Mask = kLPI2C_SlaveAddressMatchEvent | kLPI2C_SlaveCompletionEvent;
-    const status_t Status = LPI2C_SlaveTransferNonBlocking(_base, &_lpi2c_handle.target, Mask);
-    if (Status != kStatus_Success) {
-        nv::error("fail to start target\n");
-        return;
+    if (enable_target) {
+        LPI2C_SlaveEnable(_base, true);
+        constexpr uint32_t Mask   = kLPI2C_SlaveAddressMatchEvent | kLPI2C_SlaveCompletionEvent;
+        const status_t     Status = LPI2C_SlaveTransferNonBlocking(
+            _base, &_lpi2c_handle.target, Mask);
+        if (Status != kStatus_Success) {
+            nv::error("fail to start target\n");
+            return;
+        }
     }
 }
 
 bool Driver::write(std::span<uint8_t> data)
 {
-    if (data.size() == 0) {
-        return false;
-    }
     std::copy(data.begin(), data.end(), _controller_context.buffer.begin());
     lpi2c_master_transfer_t transfer = {
         .flags        = kLPI2C_TransferDefaultFlag,
@@ -225,6 +235,48 @@ bool Driver::get_status(uint8_t address)
 
 uint8_t Driver::address()
 {
-    constexpr uint8_t ByteMask = 0xFFU;
-    return static_cast<uint8_t>(_base->SAMR & ByteMask) >> 1U;
+    return static_cast<uint8_t>(_base->SAMR) >> 1U;
+}
+
+i2c::I2cStatus
+Driver::i2c_read(uint8_t address, std::span<uint8_t> buffer, nv::i2c::I2cFlags flags)
+{
+    uint32_t lpi2c_flags = kLPI2C_TransferDefaultFlag;
+
+    if (flags & nv::i2c::I2cFlags::RecvLen) {
+        lpi2c_flags |= kLPI2C_TransferNoStartFlag;
+    }
+
+    if (flags & nv::i2c::I2cFlags::NoStop) {
+        lpi2c_flags |= kLPI2C_TransferNoStopFlag;
+    }
+
+    lpi2c_master_transfer_t xfer{
+        .flags        = lpi2c_flags,
+        .slaveAddress = address,
+        .direction    = kLPI2C_Read,
+        .data         = buffer.data(),
+        .dataSize     = (flags & nv::i2c::I2cFlags::QuickRead) ? 0 : buffer.size(),
+    };
+
+    const status_t status = LPI2C_MasterTransferNonBlocking(
+        _base, &_lpi2c_handle.controller, &xfer);
+    return sys::i2c::get_status(status);
+}
+
+i2c::I2cStatus
+Driver::i2c_write(uint8_t address, std::span<uint8_t> buffer, nv::i2c::I2cFlags flags)
+{
+    lpi2c_master_transfer_t xfer{
+        .flags        = (flags & nv::i2c::I2cFlags::NoStop) ? kLPI2C_TransferNoStopFlag
+                                                            : kLPI2C_TransferDefaultFlag,
+        .slaveAddress = address,
+        .direction    = kLPI2C_Write,
+        .data         = buffer.data(),
+        .dataSize     = (flags & nv::i2c::I2cFlags::QuickWrite) ? 0 : buffer.size(),
+    };
+
+    const status_t status = LPI2C_MasterTransferNonBlocking(
+        _base, &_lpi2c_handle.controller, &xfer);
+    return sys::i2c::get_status(status);
 }

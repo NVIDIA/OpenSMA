@@ -18,6 +18,8 @@
 
 #include "sys/sensor/sensor.h"
 
+#include <cstdint>
+
 void sys::sensor::Driver::init()
 {
     // TODO
@@ -25,6 +27,7 @@ void sys::sensor::Driver::init()
 
 bool sys::sensor::Driver::get_current_temperature([[maybe_unused]] float& result)
 {
-    // TODO
+    constexpr int32_t InvalidTemp = -1;
+    result                        = static_cast<float>(InvalidTemp);
     return true;
 }

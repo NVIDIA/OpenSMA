@@ -21,6 +21,14 @@
 #include "sys/adc/adc.h"
 #include NV_IPC_CONFIG_H
 #include "sys/common/system.h"
+#include "nv/logger/common.h"
+#include "nv/logger/log.h"
+
+#ifndef ENABLE_PERST_MONITORING
+constexpr static bool EnablePerstLMonitoring = false;
+#else
+constexpr static bool EnablePerstLMonitoring = ENABLE_PERST_MONITORING ? true : false;
+#endif
 
 // AHS Will support the following configuratrions:
 // 1-channel/1-drive - PX90E (Orchid CX9)
@@ -50,7 +58,6 @@ namespace nv::ahs {
  */
 AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
 : i2c_bus(config.i2c_bus)
-, i2c_driver_config({config.i2c_bus, i2c_callback, {}, this})
 , i2c_driver()
 , interrupt_l_port(config.interrupt_port)
 , interrupt_l_pin(config.interrupt_pin)
@@ -58,34 +65,31 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
 , ahs_io_expander_addresses()
 , e1s_pin_in(config.input_pins)
 , e1s_pin_out(config.output_pins)
-, e1s_gpio_expanders{}
-, ahs_eeproms{}
-, e1s_hssms{}
 , pgood_vals{}
 , prsntL_vals{}
-, amberLED_vals{}
-, blueLED_vals{}
+, perstL_vals{}
 {
     // Initialize the I2C driver configuration
-    static_assert((NumGpioExpanders * 2) <= sys::i2c::I2CSlaveDriver::NumI2cTargetAddresses,
+    static_assert((NumGpioExpanders * 2) <= sys::i2c::NumI2cTargetAddresses,
                   "NumGpioExpanders is greater than NumI2cTargetAddresses");
-    i2c_driver_config.target_addresses.fill(0);
+
+    std::array<uint8_t, sys::i2c::NumI2cTargetAddresses> target_addresses{};
+    target_addresses.fill(0);
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
-        i2c_driver_config.target_addresses.at(gpioIndex) = config.eeprom_address + gpioIndex;
-        i2c_driver_config.target_addresses.at(
-            gpioIndex + NumGpioExpanders)       = config.io_expander_address + gpioIndex;
+        target_addresses.at(gpioIndex)                    = config.eeprom_address + gpioIndex;
+        target_addresses.at(gpioIndex + NumGpioExpanders) = config.io_expander_address
+                                                          + gpioIndex;
         ahs_eeprom_addresses.at(gpioIndex)      = config.eeprom_address + gpioIndex;
         ahs_io_expander_addresses.at(gpioIndex) = config.io_expander_address + gpioIndex;
     }
 
     // Initialize the I2C driver
-    i2c_driver = sys::i2c::I2CSlaveDriver(i2c_driver_config);
+    i2c_driver.bind(i2c_bus, target_addresses, this);
 
     // Initialize status arrays with default values
     pgood_vals.fill(false);
     prsntL_vals.fill(true);
-    amberLED_vals.fill(false);
-    blueLED_vals.fill(false);
+    perstL_vals.fill(true);
 
     // Configure the interrupt pin as output, initially high
     auto const status = nv::gpio::Driver::init_pin(interrupt_l_port,
@@ -97,23 +101,27 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
         nv::error("Failed to initialize interrupt pin: port=%d, pin=%d\n",
                   interrupt_l_port,
                   interrupt_l_pin);
+        nv::logger::error(
+            logger::Event::AhsInvalidInterruptPin,
+            {static_cast<uint8_t>(interrupt_l_port), static_cast<uint8_t>(interrupt_l_pin)});
+
         // Consider appropriate error recovery or assertion here
     }
 
     // Initialize the I2C devices
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
-        e1s_gpio_expanders.at(gpioIndex) = emulation::Pca9555(0x0000, 0x0000, InputPinMask);
-        auto const num_drives            = (nhp::NumE1sDrives == 1U) ? IO_EXPANDER_ONE_SSD
-                                                                     : IO_EXPANDER_TWO_SSD;
-        ahs_eeproms.at(gpioIndex) = EEPROM(ahs_io_expander_addresses.at(gpioIndex), num_drives);
+        e1s_gpio_expanders.at(gpioIndex).emplace(0x0000, 0x0000, InputPinMask);
+        auto const num_drives = (nhp::NumE1sDrives == 1U) ? IO_EXPANDER_ONE_SSD
+                                                          : IO_EXPANDER_TWO_SSD;
+        ahs_eeproms.at(gpioIndex).emplace(ahs_io_expander_addresses.at(gpioIndex), num_drives);
     }
 
     for (uint8_t bankDriveIndex = 0; bankDriveIndex < nhp::NumE1sDrives; bankDriveIndex++) {
         // coverity[cert_int31_c_violation] dont care about lost bits
-        e1s_hssms.at(bankDriveIndex) = E1sHotSwap(
-            e1s_pin_out.at(bankDriveIndex),
-            hotSwapEvent,
-            (bankDriveIndex + (nv::nhp::NumE1sDrives * config.ahsInstanceNum)));
+        e1s_hssms.at(bankDriveIndex)
+            .emplace(e1s_pin_out.at(bankDriveIndex),
+                     hotSwapEvent,
+                     (bankDriveIndex + (nv::nhp::NumE1sDrives * config.ahsInstanceNum)));
 
         // Set up GPIO interrupts for presence detection on the drive
         nv::gpio::Driver::init_interrupt(e1s_pin_in.at(bankDriveIndex).prsnt_l_port,
@@ -142,7 +150,6 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
  */
 AHS::AHS()
 : i2c_bus()
-, i2c_driver_config()
 , i2c_driver()
 , interrupt_l_port()
 , interrupt_l_pin()
@@ -150,13 +157,9 @@ AHS::AHS()
 , ahs_io_expander_addresses()
 , e1s_pin_in()
 , e1s_pin_out()
-, e1s_gpio_expanders{}
-, ahs_eeproms{}
-, e1s_hssms{}
 , pgood_vals{}
 , prsntL_vals{}
-, amberLED_vals{}
-, blueLED_vals{}
+, perstL_vals{}
 {
     // Default constructor - no initialization performed
 }
@@ -177,16 +180,36 @@ void AHS::gpio_interrupt([[maybe_unused]] nv::gpio::GpioPort port,
                          uint8_t                             driveIndex)
 {
     // Read the current presence detection state from the GPIO pin
-    uint8_t                prsnt_l_temp = 0;
-    const nv::gpio::Status status       = nv::gpio::Driver::read(
-        e1s_pin_in.at(driveIndex).prsnt_l_port,
-        e1s_pin_in.at(driveIndex).prsnt_l_pin,
-        prsnt_l_temp);
+    uint8_t          prsnt_l_temp = 0;
+    nv::gpio::Status status = nv::gpio::Driver::read(e1s_pin_in.at(driveIndex).prsnt_l_port,
+                                                     e1s_pin_in.at(driveIndex).prsnt_l_pin,
+                                                     prsnt_l_temp);
     if (status != gpio::Status::Ok) {
         nv::error("Failed to read prsntL for drive %d\n", driveIndex);
+        nv::logger::error(logger::Event::AhsInvalidInputPin,
+                          {driveIndex,
+                           static_cast<uint8_t>(e1s_pin_in.at(driveIndex).prsnt_l_port),
+                           static_cast<uint8_t>(e1s_pin_in.at(driveIndex).prsnt_l_pin)});
         return;  // Don't update the value if read failed
     }
     prsntL_vals.at(driveIndex) = (prsnt_l_temp != 0);
+
+    if (EnablePerstLMonitoring) {
+        // Read the current PERST# state from the GPIO pin
+        uint8_t perst_l_temp = 0;
+        status               = nv::gpio::Driver::read(e1s_pin_in.at(driveIndex).perst_l_port,
+                                        e1s_pin_in.at(driveIndex).perst_l_pin,
+                                        perst_l_temp);
+        if (status != gpio::Status::Ok) {
+            nv::error("Failed to read perstL for drive %d\n", driveIndex);
+            nv::logger::error(logger::Event::AhsInvalidInputPin,
+                              {driveIndex,
+                               static_cast<uint8_t>(e1s_pin_in.at(driveIndex).perst_l_port),
+                               static_cast<uint8_t>(e1s_pin_in.at(driveIndex).perst_l_pin)});
+            return;  // Don't update the value if read failed
+        }
+        perstL_vals.at(driveIndex) = (perst_l_temp != 0);
+    }
 
     // Update presence detection in GPIO expander
     // coverity[cert_int31_c_violation] dont care about lost bits
@@ -196,7 +219,8 @@ void AHS::gpio_interrupt([[maybe_unused]] nv::gpio::GpioPort port,
     const nv::emulation::Pca9555Bank gpioBank = (driveIndex % 2 == 0)
                                                   ? nv::emulation::Pca9555Bank::Zero
                                                   : nv::emulation::Pca9555Bank::One;
-    e1s_gpio_expanders.at(gpioIndex).update_input_pins(newPinVals, AhsPrsnt0LBitmask, gpioBank);
+    e1s_gpio_expanders.at(gpioIndex)->update_input_pins(
+        newPinVals, AhsPrsnt0LBitmask, gpioBank);
 
     // Update interrupt pin state and hot swap state machine
     updateInterruptPin();
@@ -247,12 +271,12 @@ void AHS::adc_interrupt([[maybe_unused]] sys::adc::AdcPeripheral peripheral,
  * @param this_task_instance Pointer to the AHS instance
  * @param new_transaction true if this is a new I2C transaction
  */
-void AHS::i2c_callback(uint8_t&                                                   address,
-                       bool                                                       is_read,
-                       std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& buffer,
-                       size_t&                                                    data_size,
-                       void* this_task_instance,
-                       bool  new_transaction)
+void AHS::i2c_callback(uint8_t&                                           address,
+                       bool                                               is_read,
+                       std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& buffer,
+                       size_t&                                            data_size,
+                       void*                                              this_task_instance,
+                       bool                                               new_transaction)
 {
     // nv::info("i2c callback r/w:%d addr:%x\n", is_read, address);
     if (is_read) {
@@ -280,23 +304,23 @@ void AHS::i2c_callback(uint8_t&                                                 
  * @param tx_data_size Size of data read
  * @param new_transaction true if this is a new I2C transaction
  */
-void AHS::i2c_read(uint8_t&                                                   address,
-                   std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& tx_buffer,
-                   size_t&                                                    tx_data_size,
-                   bool                                                       new_transaction)
+void AHS::i2c_read(uint8_t&                                           address,
+                   std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& tx_buffer,
+                   size_t&                                            tx_data_size,
+                   bool                                               new_transaction)
 {
     uint8_t reg_output = 0;
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
         if (address == ahs_eeprom_addresses.at(gpioIndex)) {
             // Normal EEPROM read
-            ahs_eeproms.at(gpioIndex).i2c_read(reg_output, new_transaction);
+            ahs_eeproms.at(gpioIndex)->i2c_read(reg_output, new_transaction);
             tx_buffer.at(0) = reg_output;
             tx_data_size    = 1;
             return;
         }
         if (address == ahs_io_expander_addresses.at(gpioIndex)) {
             // Read from IO expander and update interrupt pin state
-            e1s_gpio_expanders.at(gpioIndex).i2c_read(reg_output, new_transaction);
+            e1s_gpio_expanders.at(gpioIndex)->i2c_read(reg_output, new_transaction);
             tx_buffer.at(0) = reg_output;
             tx_data_size    = 1;
             updateInterruptPin();
@@ -305,6 +329,7 @@ void AHS::i2c_read(uint8_t&                                                   ad
     }
     // Invalid address - return dummy data
     nv::error("Invalid address I2C read to AHS\n");
+    nv::logger::error(logger::Event::AhsInvalidI2cReadAddress, {address});
     tx_buffer.at(0) = DummyData;
     tx_data_size    = 1;
 }
@@ -320,45 +345,28 @@ void AHS::i2c_read(uint8_t&                                                   ad
  * @param rx_buffer Buffer containing data to write
  * @param rx_data_size Size of data to write
  */
-void AHS::i2c_write(uint8_t&                                                   address,
-                    std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& rx_buffer,
-                    size_t&                                                    rx_data_size)
+void AHS::i2c_write(uint8_t&                                           address,
+                    std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& rx_buffer,
+                    size_t&                                            rx_data_size)
 {
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
         if (address == ahs_eeprom_addresses.at(gpioIndex)) {
             // Write data to EEPROM
             // coverity[cert_int31_c_violation] datasize cant be more than 256
-            ahs_eeproms.at(gpioIndex).i2c_write(rx_buffer, rx_data_size);
+            ahs_eeproms.at(gpioIndex)->i2c_write(rx_buffer, rx_data_size);
             return;
         }
         else if (address == ahs_io_expander_addresses.at(gpioIndex)) {
             // Write data to IO expander
             // coverity[cert_int31_c_violation] datasize cant be more than 256
-            e1s_gpio_expanders.at(gpioIndex).i2c_write(rx_buffer, rx_data_size);
-
-            // Legacy code for multi-drive GPIO expander support
-            const uint8_t bank0DriveIndex = gpioIndex * 2;
-            const uint8_t bank1DriveIndex = bank0DriveIndex + 1;
-            uint8_t       bank0Reg        = 0;
-            uint8_t       bank1Reg        = 0;
-            e1s_gpio_expanders.at(gpioIndex).get_pin_states(bank0Reg,
-                                                            nv::emulation::Pca9555Bank::Zero);
-            e1s_gpio_expanders.at(gpioIndex).get_pin_states(bank1Reg,
-                                                            nv::emulation::Pca9555Bank::One);
-            amberLED_vals.at(bank0DriveIndex) = bank0Reg & AhsAmberLedBitmask;
-            blueLED_vals.at(bank0DriveIndex)  = bank0Reg & AhsBlueLedLBitmask;
-            amberLED_vals.at(bank1DriveIndex) = bank1Reg & AhsAmberLedBitmask;
-            blueLED_vals.at(bank1DriveIndex)  = bank1Reg & AhsBlueLedLBitmask;
-
-            updateHotSwap(bank0DriveIndex);
-            updateHotSwap(bank1DriveIndex);
-
+            e1s_gpio_expanders.at(gpioIndex)->i2c_write(rx_buffer, rx_data_size);
             updateInterruptPin();
             return;
         }
     }
     // Invalid address
     nv::error("Invalid address I2C write to AHS\n");
+    nv::logger::error(logger::Event::AhsInvalidI2cWriteAddress, {address});
 }
 
 /**
@@ -372,12 +380,10 @@ void AHS::i2c_write(uint8_t&                                                   a
  */
 void AHS::hotSwapTimerInterrupt(uint8_t driveIndex)
 {
+    const bool perstL = EnablePerstLMonitoring ? perstL_vals.at(driveIndex) : true;
     e1s_hssms.at(driveIndex)
-        .updateStateMachine(pgood_vals.at(driveIndex),
-                            prsntL_vals.at(driveIndex),
-                            amberLED_vals.at(driveIndex),
-                            blueLED_vals.at(driveIndex),
-                            true);
+        ->updateStateMachine(
+            pgood_vals.at(driveIndex), prsntL_vals.at(driveIndex), perstL, true);
 }
 
 /**
@@ -393,7 +399,7 @@ void AHS::updateInterruptPin()
     const nv::common::ScopedCritical critical;
 
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
-        if (!e1s_gpio_expanders.at(gpioIndex).get_interrupt_l_state()) {
+        if (!e1s_gpio_expanders.at(gpioIndex)->get_interrupt_l_state()) {
             nv::gpio::Driver::write(interrupt_l_port, interrupt_l_pin, 0U);
             return;
         }
@@ -411,11 +417,9 @@ void AHS::updateInterruptPin()
  */
 void AHS::updateHotSwap(uint8_t driveIndex)
 {
+    const bool perstL = EnablePerstLMonitoring ? perstL_vals.at(driveIndex) : true;
     e1s_hssms.at(driveIndex)
-        .updateStateMachine(pgood_vals.at(driveIndex),
-                            prsntL_vals.at(driveIndex),
-                            amberLED_vals.at(driveIndex),
-                            blueLED_vals.at(driveIndex));
+        ->updateStateMachine(pgood_vals.at(driveIndex), prsntL_vals.at(driveIndex), perstL);
 }
 
 }  // namespace nv::ahs

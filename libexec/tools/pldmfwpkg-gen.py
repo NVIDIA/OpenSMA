@@ -600,6 +600,7 @@ def main():
     parser.add_argument('--compver', help = 'override first component version')
     parser.add_argument('--apsku', help = 'overide ap_sku_id')
     parser.add_argument('--ssdid', help = 'overide ssdid')
+    parser.add_argument('--compstamp', help = 'override comparison stamp')
     parser.add_argument('--out', default = 'fwpkg.bin', help = 'specify output file name, fwpkg.bin')
 
     args = parser.parse_args()
@@ -630,7 +631,11 @@ def main():
         for i in range(len(cfg['FirmwareDevices'][0]['Descriptors'])):
             if int(cfg['FirmwareDevices'][0]['Descriptors'][i]['Type'], 16) == DESCRIPTOR_TYPE_PCI_SUBSYS_ID:
                 cfg['FirmwareDevices'][0]['Descriptors'][i]['Data'] = args.ssdid
-        
+
+    if not args.compstamp is None:
+        print("Comparison Stamp: ", args.compstamp)
+        cfg["Components"][0]["ComparisonStamp"] = args.compstamp
+
     pkg = pldmpkg()
     pkg.parse(cfg, args.images)
     pkg.createpkg(args.out)

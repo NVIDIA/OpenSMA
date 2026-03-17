@@ -12,9 +12,11 @@
 #include "fsl_edma.h"
 #include "stdlib.h"
 #include "fsl_common.h"
-#include "fsl_lpuart.h"
-#include "fsl_clock.h"
 #include "fsl_lpi2c.h"
+#include "fsl_clock.h"
+#include "fsl_lpspi.h"
+#include "fsl_lpuart.h"
+#include "fsl_i3c.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -28,10 +30,6 @@ extern "C" {
 #define DMA0_DMA_BASEADDR (EDMA_Type *)DMA0
 /* Used DMA device. */
 #define DMA1_DMA_BASEADDR (EDMA_Type *)DMA1
-/* Definition of peripheral ID */
-#define LP_FLEXCOMM2_PERIPHERAL ((LPUART_Type *) LP_FLEXCOMM2)
-/* Definition of the clock source frequency */
-#define LP_FLEXCOMM2_CLOCK_SOURCE 12000000UL
 /* BOARD_InitPeripherals defines for LP_FLEXCOMM3 */
 /* Definition of peripheral ID */
 #define LP_FLEXCOMM3_PERIPHERAL LPI2C3
@@ -65,19 +63,60 @@ extern "C" {
 #define LP_FLEXCOMM0_SLAVE_ADDRESS0 82U
 /* Definition of alternative follower address */
 #define LP_FLEXCOMM0_SLAVE_ADDRESS1 0U
+/* Definition of peripheral ID */
+#define LP_FLEXCOMM7_PERIPHERAL ((LPSPI_Type *)LP_FLEXCOMM7)
+/* Definition of clock source frequency */
+#define LP_FLEXCOMM7_CLOCK_FREQ 48000000UL
+/* BOARD_InitPeripherals defines for LP_FLEXCOMM6 */
+/* Definition of peripheral ID */
+#define LP_FLEXCOMM6_PERIPHERAL LPI2C6
+/* Definition of peripheral base address */
+#define LP_FLEXCOMM6_PERIPHERAL_BASE LPI2C6_BASE
+/* Definition of the clock source frequency */
+#define LP_FLEXCOMM6_CLOCK_SOURCE 12000000UL
+/* LP_FLEXCOMM6 interrupt vector ID (number). */
+#define LP_FLEXCOMM6_IRQN LP_FLEXCOMM6_IRQn
+/* LP_FLEXCOMM6 interrupt handler identifier. */
+#define LP_FLEXCOMM6_IRQHANDLER LP_FLEXCOMM6_IRQHandler
+/* Definition of peripheral ID */
+#define LP_FLEXCOMM4_PERIPHERAL ((LPUART_Type *) LP_FLEXCOMM4)
+/* Definition of the clock source frequency */
+#define LP_FLEXCOMM4_CLOCK_SOURCE 12000000UL
+/* BOARD_InitPeripherals defines for LP_FLEXCOMM2 */
+/* Definition of peripheral ID */
+#define LP_FLEXCOMM2_PERIPHERAL LPI2C2
+/* Definition of peripheral base address */
+#define LP_FLEXCOMM2_PERIPHERAL_BASE LPI2C2_BASE
+/* Definition of the clock source frequency */
+#define LP_FLEXCOMM2_CLOCK_SOURCE 12000000UL
+/* Definition of follower address */
+#define LP_FLEXCOMM2_SLAVE_ADDRESS0 16U
+/* Definition of alternative follower address */
+#define LP_FLEXCOMM2_SLAVE_ADDRESS1 12U
+/* BOARD_InitPeripherals defines for I3C1 */
+/* Definition of peripheral ID */
+#define I3C1_PERIPHERAL ((I3C_Type *)I3C1)
+/* Definition of the slow clock source frequency */
+#define I3C1_SLOW_CLOCK_SOURCE 1000000UL
+/* Definition of the clock source frequency */
+#define I3C1_CLOCK_SOURCE_MASTER 25000000UL
 
 /***********************************************************************************************************************
  * Global variables
  **********************************************************************************************************************/
 extern edma_config_t DMA0_config;
 extern edma_config_t DMA1_config;
-extern const lpuart_config_t LP_FLEXCOMM2_config;
 extern const lpi2c_master_config_t LP_FLEXCOMM3_masterConfig;
 extern const lpi2c_slave_config_t LP_FLEXCOMM3_slaveConfig;
 extern const lpi2c_master_config_t LP_FLEXCOMM1_masterConfig;
 extern const lpi2c_slave_config_t LP_FLEXCOMM1_slaveConfig;
 extern const lpi2c_master_config_t LP_FLEXCOMM0_masterConfig;
 extern const lpi2c_slave_config_t LP_FLEXCOMM0_slaveConfig;
+extern const lpspi_master_config_t LP_FLEXCOMM7_config;
+extern const lpi2c_master_config_t LP_FLEXCOMM6_masterConfig;
+extern const lpuart_config_t LP_FLEXCOMM4_config;
+extern const lpi2c_slave_config_t LP_FLEXCOMM2_slaveConfig;
+extern const i3c_master_config_t I3C1_master_config;
 
 /***********************************************************************************************************************
  * Initialization functions

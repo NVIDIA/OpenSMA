@@ -170,7 +170,8 @@ void WwdtDriver::feed(wwdt_instance instance)
 
 void WwdtDriver::trigger_wdt_reset_if_enabled(wwdt_instance instance)
 {
-    if (is_enabled(instance)) {
+    auto cur_core = nv::ipc::get_current_core();
+    if (cur_core == nv::ipc::CoreId::Core0 && is_enabled(instance)) {
         auto wwdt_inst = get_instance(instance);
         WWDT_Deinit(wwdt_inst);
         init(wwdt1, 1, true);

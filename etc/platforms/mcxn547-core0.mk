@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 # All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -69,8 +69,6 @@ PATH_ADARTS := $(MCU_GNAT_PATH)/$(ADA_TARGET)/lib/gnat/$(ADA_RTS)/
 
 MCU_COMPILE_FLAGS := -mcpu=cortex-m33 -mthumb -mapcs -mfloat-abi=hard -mfpu=fpv5-sp-d16
 MCU_COMPILE_FLAGS += -D__NEWLIB__ -DMCU
-# Enable SGPIO TX bit160 transfer in NXP SGPIO driver
-MCU_COMPILE_FLAGS += -DSGPIO_TX_BIT160_TRANSFER
 
 # For tidy support c++23 feature
 ifneq (,$(filter tidy,$(MAKECMDGOALS)))

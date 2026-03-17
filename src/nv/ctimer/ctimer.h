@@ -27,6 +27,8 @@ using NV_Ticks = sys::ctimer::Ticks;
 class Driver : protected sys::ctimer::Driver
 {
 public:
+    using sys::ctimer::Driver::read_ticks_inline;
+
     static void     init();
     static NV_Ticks read_ticks();
     static uint32_t ticks_to_us(NV_Ticks ticks);

@@ -25,6 +25,19 @@
 #include "sys/crypto/crypto.h"
 #include "mpu_syscall_numbers.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
+NV_PRIVILEGED_FUNCTION bool Check_Receive_Sbfile_Capability_Priv()
+{
+    return true;
+}
+
+#if defined(__cplusplus)
+}
+#endif
+
 namespace sys::crypto {
 
 namespace {  // some helper function

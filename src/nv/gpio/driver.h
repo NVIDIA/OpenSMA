@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -49,8 +49,10 @@ public:
                                      InterruptSelect    select);
 
     static Status read(GpioPort port, GpioPin pin, uint8_t& data);
-
+    static Status read_virtual_physical_gpio(GpioPort port, GpioPin pin, uint8_t& data);
+    static Status read_gpio_port(GpioPort port, uint32_t& gpioBitmap);
     static Status write(GpioPort port, GpioPin pin, const uint8_t Data);
+    static Status getDirection(GpioPort port, GpioPin pin, Direction& dir);
 };
 
 }  // namespace nv::gpio

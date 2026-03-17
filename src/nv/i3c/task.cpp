@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -77,6 +77,7 @@ nv::i3c::Task::Status nv::i3c::Task::tx(const nv::mctp::Packet& packet)
 {
     using namespace nv::ipc;
     using namespace nv::mctp;
+    using namespace std::chrono_literals;
     // coverity[assigned_value] need to assign a value to pass lint
     QueueId queue_id = QueueId::End;
     switch (packet.priv.packet_interface) {
@@ -89,13 +90,25 @@ nv::i3c::Task::Status nv::i3c::Task::tx(const nv::mctp::Packet& packet)
     if (length > request.buffer.size()) {
         return Task::Status::InvalidArgument;
     }
-    request.length = static_cast<uint8_t>(length);
+    request.length = static_cast<uint16_t>(length);
     /// prepare I3C request
     auto mctp_raw = packet.to_span().subspan(sizeof(packet.priv));
     std::copy(mctp_raw.begin(), mctp_raw.end(), request.buffer.begin());
     /// send to I3C task
-    auto item         = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
-    auto queue_status = Queue::make(queue_id).send(item);
+    auto   item     = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
+    Queue& queue    = Queue::make(queue_id);
+    bool   need_log = true;
+    while (queue.size() >= I3cQueueMaxTxSize) {
+        if (need_log) {
+            need_log = false;
+            nv::logger::info(nv::logger::Event::I3CTxOverThreshold,
+                             {static_cast<uint8_t>(queue_id)});
+        }
+        auto& task = Supervisor::inst().current_task();
+        task.delay(5ms);
+    }
+
+    auto queue_status = queue.send(item);
     if (queue_status != Queue::Status::Ok) {
         nv::info("fail to put tx packet (%d)\n", queue_status);
         return Task::Status::FailToPutTxPacket;
@@ -243,6 +256,28 @@ nv::i3c::Task::Status nv::i3c::Task::update_ocp_address(nv::mctp::Client      cl
     return Task::Status::Ok;
 }
 
+nv::i3c::Task::Status nv::i3c::Task::sync_cbc_sn(nv::mctp::Client client)
+{
+    using namespace nv::ipc;
+    using namespace nv::mctp;
+    // coverity[assigned_value] need to assign a value to pass lint
+    QueueId queue_id = QueueId::End;
+    switch (client) {
+        case Client::DsI3c0: queue_id = QueueId::I3c0; break;
+        case Client::DsI3c1: queue_id = QueueId::I3c1; break;
+        default            : return Status::InvalidInterface;
+    }
+    /// prepare I3C request
+    const Request RequestPkt{.type = RequestType::SyncCBCSn};
+    /// send to I3C task
+    auto item         = Queue::Item(std::bit_cast<uint8_t*>(&RequestPkt), sizeof(RequestPkt));
+    auto queue_status = Queue::make(queue_id).send_isr(item);
+    if (queue_status != Queue::Status::Ok) {
+        return Task::Status::FailToPutTxPacket;
+    }
+    return Task::Status::Ok;
+}
+
 Task::Task(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _client(config.client)
@@ -257,8 +292,8 @@ Task::Task(Config config) noexcept
 , _gpu_error(config.gpu_error)
 , _ipchandler_id(config.ipchandler_id)
 , _oob_bus(nv::perf_mon::OobBus::End)
-, _sgpio_driver(config.sgpio_config)
 , _fru_i2c_info(config.fru_i2c_info)
+, _platform_info(config.platform_info)
 {
     nv::info("%s bind to I3C port %d\n", config.task_name.data(), config.port_id);
     logger::info(logger::Event::I3CBind,
@@ -281,6 +316,10 @@ Task::Task(Config config) noexcept
     nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
 
     if (_is_gpu) {
+        nv::logger::info(nv::logger::Event::NvlInfo,
+                         {static_cast<uint8_t>(_client),
+                          _platform_info.node_index,
+                          _platform_info.module_id});
         _timer = ipc::Timer::make(
             config.timer_id, std::chrono::microseconds(ipc::SensorUpdateMs), update_sensor);
     }
@@ -289,13 +328,6 @@ Task::Task(Config config) noexcept
             _timer = ipc::Timer::make(config.timer_id,
                                       std::chrono::microseconds(ipc::CheckApStatusTimerUs),
                                       check_ap_status);
-        }
-    }
-    if constexpr (nv::ipc::EnableForwardNvlInfo) {
-        auto result = _sgpio_driver.init();
-        if (!result) {
-            nv::logger::error(nv::logger::Event::SgpioInitFail,
-                              {static_cast<uint8_t>(_client)});
         }
     }
 }
@@ -317,33 +349,6 @@ void Task::start()
     if (!_is_gpu) {
         _driver.init();
         handle_init(init);
-    }
-
-    if constexpr (nv::ipc::EnableForwardNvlInfo) {
-        if (_fru_i2c_info.port != nv::i2c::Port::End) {
-            sys::topology::TopologyInfo::NVL_topology_info topology_info{};
-            auto get_topology_success = sys::topology::TopologyInfo::get_topology_info(
-                _fru_i2c_info.port, _fru_i2c_info.eeprom_addr, topology_info);
-            if (!get_topology_success) {
-                nv::logger::error(nv::logger::Event::SgpioGetTopologyFail);
-            }
-            // TODO: shall not submit to sgpio if get topology failed, shall be done after CBC
-            // FRU is ready
-            constexpr uint32_t CopySize = SgpioBufferSize
-                                        / sizeof(
-                                              sys::topology::TopologyInfo::NVL_topology_info);
-            for (uint32_t i = 0; i < CopySize; i++) {
-                memcpy(static_cast<uint8_t*>(_sgpio_tx_buffer.data())
-                           + i * sizeof(sys::topology::TopologyInfo::NVL_topology_info),
-                       static_cast<uint8_t*>(topology_info.to_span().data()),
-                       sizeof(sys::topology::TopologyInfo::NVL_topology_info));
-            }
-            auto sgpio_status = _sgpio_driver.start(
-                _sgpio_tx_buffer, _sgpio_tx_buffer, _sgpio_rx_buffer);
-            nv::logger::info(
-                nv::logger::Event::SgpioStartStatus,
-                {static_cast<uint8_t>(sgpio_status), static_cast<uint8_t>(_client)});
-        }
     }
 
     while (true) {
@@ -372,12 +377,13 @@ void Task::start()
             case RequestType::Init              : handle_init(data); break;
             case RequestType::CheckApStatus     : handle_ap_status(APStatus::Querying); break;
             case RequestType::OcpAddr           : handle_ocp_addr(data); break;
+            case RequestType::SyncCBCSn         : handle_sync_cbc_sn(data); break;
             default                             : break;
         }
     }
 }
 
-void Task::on_ibi(uint8_t address, std::span<uint8_t> data)
+void Task::on_ibi(uint8_t address, std::span<volatile uint8_t> data)
 {
     using namespace nv::ipc;
     constexpr uint8_t PendingReadId  = 0xAEU;
@@ -535,10 +541,10 @@ void Task::handle_rx(std::span<uint8_t> buffer)
 void Task::handle_tx(std::span<uint8_t> buffer)
 {
     perf_mon::Driver::log_pkt_latency(perf_mon::Driver::LatencyEvent::I3cTaskHandleTx);
-    constexpr size_t  BytesAddrPec = 2;
-    Driver::I3cBuffer raw{0};
-    constexpr uint8_t MinSize = sizeof(nv::mctp::Packet::hdr);
-    constexpr uint8_t MaxSize = raw.size() - BytesAddrPec;
+    constexpr size_t   BytesAddrPec = 2;
+    Driver::I3cBuffer  raw{0};
+    constexpr uint8_t  MinSize = sizeof(nv::mctp::Packet::hdr);
+    constexpr uint16_t MaxSize = raw.size() - BytesAddrPec;
     if (buffer.size() < MinSize || buffer.size() > MaxSize) {
         return;
     }
@@ -628,8 +634,7 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
 
 void Task::handle_i2c_response(std::span<uint8_t> buffer)
 {
-    auto response = std::bit_cast<nv::i2c::I2cResponse*>(buffer.data());
-    nv::info("i2c response %x %d\n", response->address, response->status);
+    [[maybe_unused]] auto response = std::bit_cast<nv::i2c::I2cResponse*>(buffer.data());
 }
 
 void Task::handle_update_sensor([[maybe_unused]] std::span<uint8_t> buffer)
@@ -668,6 +673,10 @@ void Task::handle_init(std::span<uint8_t> buffer)
         // init case
         if (_is_gpu) {
             _driver.init();
+            if constexpr (nv::ipc::EnableForwardNvlInfo) {
+                // MCU needs to prepare NVL topology info when GPU up
+                prepare_nvl_topology_info();
+            }
             result = handle_gpu_reset(_gpu_recovery_addr, _gpu_smbpbi_addr);
             if (result) {
                 _timer.start();
@@ -680,6 +689,7 @@ void Task::handle_init(std::span<uint8_t> buffer)
                 _timer.start();
             }
             else {
+                _driver.init();
                 handle_cxx_reset(false);
             }
         }
@@ -691,6 +701,9 @@ void Task::handle_init(std::span<uint8_t> buffer)
             if (!pull_up_status()) {
                 _driver.deinit();
             }
+        }
+        else {
+            _driver.deinit();
         }
     }
 }
@@ -715,6 +728,14 @@ void Task::handle_ap_status(APStatus set_status)
     if (set_status == APStatus::Querying) {
         // Query for status
         if (status == APStatus::Querying || status == APStatus::ApDown) {
+            if constexpr (ipc::I3CPullUpCheck) {
+                if (!pull_up_status()) {
+                    _driver.deinit();
+                }
+                else {
+                    _driver.init();
+                }
+            }
             // if at startup or ping failed on last check, restart daa
             result = handle_cxx_reset((status == APStatus::ApDown));
             status = result ? APStatus::ApUpNotEnumerated : APStatus::ApDown;
@@ -920,7 +941,15 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
     }
     delay(10ms);
     // dynamic address assignment
-    if (!_driver.process_daa(_address_pool)) {
+    bool daa_result = false;
+    for (uint8_t i = 0; i < DaaRetry; i++) {
+        if (_driver.process_daa(_address_pool)) {
+            daa_result = true;
+            break;
+        }
+        delay(100ms);
+    }
+    if (!daa_result) {
         logger::error_no_wait(logger::Event::I3COobReset,
                               {static_cast<uint8_t>(GpuOobResetStatus::FailToAssignAddr)});
         return false;
@@ -944,30 +973,43 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
 
 bool Task::handle_cxx_reset(bool ping)
 {
+    using namespace std::chrono_literals;
+
     const constexpr uint32_t DelayInit = 2000;
     bool                     result    = false;
 
-    // detect cxx
-    result = _driver.reset_daa(ping);
-    if (!result) {
-        return result;
+    for (uint8_t i = 0; i < DaaRetry; i++) {
+        // detect cxx
+        result = _driver.reset_daa(ping);
+        if (result) {
+            // NBU team requests to add a delay bewteen RSTDAA and ENTDAA
+            if constexpr (nv::ipc::EnableDelayInI3CInit) {
+                nv::ctimer::Driver::delay_for_us(DelayInit);
+            }
+            result = _driver.process_daa(_address_pool);
+            if (result) {
+                return result;
+            }
+        }
+        delay(100ms);
     }
-
-    // NBU team requests to add a delay bewteen RSTDAA and ENTDAA
-    if constexpr (nv::ipc::EnableDelayInI3CInit) {
-        nv::ctimer::Driver::delay_for_us(DelayInit);
-    }
-    return _driver.process_daa(_address_pool);
+    return false;
 }
 
 bool Task::to_i2c(ipchandler::Id    src_id,
                   uint8_t           address,
                   ipchandler::Id    i2c_ipchandler_id,
-                  uint8_t           write_length,
+                  uint16_t          write_length,
                   uint16_t          read_length,
                   ipc::Queue::Item& item)
 {
+    // Validate lengths against buffer limits
+    if (write_length > nv::i2c::I2cBufferSize || read_length > nv::i2c::I2cBufferSize) {
+        return false;
+    }
+
     using namespace nv::ipc;
+    static_assert(sizeof(nv::i2c::I2cRequest) <= Driver::BufferSize);
     Request request{
         .type   = RequestType::I2cRequest,
         .length = sizeof(nv::i2c::I2cRequest),
@@ -978,19 +1020,17 @@ bool Task::to_i2c(ipchandler::Id    src_id,
     i2c_request->read_length  = read_length;
     i2c_request->src_id       = static_cast<uint8_t>(src_id);
 
-    // Copy only the required size
-    if (item.size() != i2c_request->write_buffer.size()) {
-        nv::info("item size (%d) mismatch with buffer size (%d)\n",
-                 item.size(),
-                 i2c_request->write_buffer.size());
-        return false;
+    // Copy write data if any
+    if (write_length > 0) {
+        std::copy_n(item.begin(), write_length, i2c_request->write_buffer.begin());
     }
 
-    // Copy data from span to array
-    std::copy_n(item.begin(), item.size(), i2c_request->write_buffer.begin());
+    // Create queue item with the full request size
+    auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
+                                             sizeof(Task::Request));
 
-    auto request_item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
-    auto status       = ipchandler::Driver::send(
+    // Send to IPC handler
+    auto status = ipchandler::Driver::send(
         src_id, i2c_ipchandler_id, request_item, sizeof(Request), true);
     if (status != ipchandler::Status::Success) {
         nv::info("fail to put i2c request (%d)\n", status);
@@ -1046,4 +1086,97 @@ void Task::update_smbpbi_items(uint32_t value)
     smbpbi_not_ready_count = 0;
     smbpbi_state           = smbpbi::State::Init;
     update_smbpbi_command_index();
+}
+
+void Task::prepare_nvl_topology_info()
+{
+    using namespace nv;
+    using namespace sys::topology;
+    using namespace std::chrono_literals;
+    TopologyInfo::NVL_topology_info topology_info;
+    auto                            result = TopologyInfo::get_topology_info(
+        _fru_i2c_info.port, _fru_i2c_info.eeprom_addr, _platform_info, topology_info);
+    if (!result) {
+        logger::error(logger::Event::FruGetTopologyFail, {static_cast<uint8_t>(_client)});
+    }
+    // drive nvs present
+    uint8_t state = 0;
+    if (_fru_i2c_info.port == nv::i2c::Port::End) {
+        // No FRU case
+        state = _platform_info.nvs_present ? 0 : 1;
+    }
+    else {
+        // FRU case
+        state = (topology_info.TOPOLOGY_ID_TYPE & 0x80) != 0 ? 0 : 1;
+    }
+    logger::info(logger::Event::NvlNvsPresent,
+                 {static_cast<uint8_t>(_client),
+                  _platform_info.nvs_present_port,
+                  _platform_info.nvs_present_pin,
+                  state});
+    (void)gpio::Driver::write(
+        _platform_info.nvs_present_port, _platform_info.nvs_present_pin, state);
+
+    // I2C path
+    if (!_driver.gpu_configure_cms1(_gpu_recovery_addr)) {
+        logger::error(logger::Event::NvlCms1Fail,
+                      {static_cast<uint8_t>(_client),
+                       static_cast<uint8_t>(NvlCms1Status::FailToConfigure)});
+        return;
+    }
+    delay(10ms);
+    if (!_driver.gpu_program_cms1(_gpu_recovery_addr, topology_info.to_span())) {
+        logger::error(logger::Event::NvlCms1Fail,
+                      {static_cast<uint8_t>(_client),
+                       static_cast<uint8_t>(NvlCms1Status::FailToProgram)});
+        return;
+    }
+    delay(10ms);
+    topology_info = {};
+    if (!_driver.gpu_read_cms1(_gpu_recovery_addr, topology_info.to_span())) {
+        logger::error(
+            logger::Event::NvlCms1Fail,
+            {static_cast<uint8_t>(_client), static_cast<uint8_t>(NvlCms1Status::FailToRead)});
+        return;
+    }
+    logger::info(
+        logger::Event::NvlRaw,
+        {
+            static_cast<uint8_t>(_client),
+            topology_info.TRAY_TYPE,
+            topology_info.TOPOLOGY_ID_TYPE,
+            topology_info.CHASSIS_PHYSICAL_SLOT_NUMBER,
+            topology_info.COMPUTE_SLOT_INDEX,
+            static_cast<uint8_t>(topology_info.NODE_INDEX | topology_info.DEVICE_INDEX << 4),
+        });
+
+    // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers)
+    logger::info(logger::Event::FruBoardSerial,
+                 {
+                     static_cast<uint8_t>(_client),
+                     topology_info.RACK_GUID.serial_number[0],
+                     topology_info.RACK_GUID.serial_number[1],
+                     topology_info.RACK_GUID.serial_number[2],
+                     topology_info.RACK_GUID.serial_number[3],
+                     topology_info.RACK_GUID.serial_number[4],
+                     topology_info.RACK_GUID.serial_number[5],
+                     topology_info.RACK_GUID.serial_number[6],
+                 });
+
+    logger::info(logger::Event::FruBoardSerial,
+                 {
+                     static_cast<uint8_t>(_client),
+                     topology_info.RACK_GUID.serial_number[7],
+                     topology_info.RACK_GUID.serial_number[8],
+                     topology_info.RACK_GUID.serial_number[9],
+                     topology_info.RACK_GUID.serial_number[10],
+                     topology_info.RACK_GUID.serial_number[11],
+                     topology_info.RACK_GUID.serial_number[12],
+                 });
+    // NOLINTEND(cppcoreguidelines-avoid-magic-numbers)
+}
+
+void Task::handle_sync_cbc_sn([[maybe_unused]] std::span<uint8_t> buffer)
+{
+    sys::topology::TopologyInfo::update_sn();
 }

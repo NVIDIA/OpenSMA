@@ -27,9 +27,9 @@
 #include "app/pdk-mctp-app-packet-plat.h"
 #include "app/pdk-mctp-app-router-plat.h"
 #include "app/pdk-mctp-app-validator.h"
-#include "pdk-cmn-console.h"
 #include "pdk-cmn-flowcontrol.h"
 #include "pdk-mctp-platforms-enums.h"
+#include "pdk/cmn/log/log.h"
 
 using namespace pdk::cmn;
 
@@ -89,9 +89,9 @@ void bind_i2c_message(const std::array<uint8_t, msg_max_size>& message_buf,
 int main()
 {
     adainit();
-    console::info("cxx-only main()\n");
+    log::here().info("cxx-only main()\n");
     flowcontrol::corepdk_assert(1 > 0, "This is assertion test");
-    pdk::cmn::console::info("MCTP-CPP Usage Example\n");
+    log::here().info("MCTP-CPP Usage Example\n");
 
     // 0.Initialize the components from CorePDK::MOD::MCTP-CPP
     pdk::mctp::app::Control   control;
@@ -129,7 +129,7 @@ int main()
     // 1) ... (Private_Header) (MCTP Header) (Msg n)
     std::array<uint8_t, test_max_size> multi_pkt_buf = {};
     // start disassembly the message
-    pdk::cmn::console::info("Message disassembly start");
+    log::here().info("Message disassembly start");
     pdk::mctp::app::Packet gen_pkt{};
     bool                   is_complete      = false;
     bool                   gen_multi_status = false;
@@ -137,27 +137,27 @@ int main()
     for (uint32_t index = 0; index < loop; ++index) {
         gen_multi_status = composer.gen_packet(
             gen_pkt, msg_length, index, is_complete, message_buf);
-        pdk::cmn::console::info("Packet #%d", index + 1);
-        pdk::cmn::console::info("Length: %d", pdk::mctp::platforms::get_packet_length(gen_pkt));
+        log::here().info("Packet #%d", index + 1);
+        log::here().info("Length: %d", pdk::mctp::platforms::get_packet_length(gen_pkt));
         if (gen_multi_status == false) {
-            pdk::cmn::console::info("Disassembly status: Failed");
+            log::here().info("Disassembly status: Failed");
             corepdk_exit_program(1);
         }
         // copy the packets to the multi-packet buffer
         memcpy(multi_pkt_buf.begin() + gen_offset,
                &gen_pkt,
                pdk::mctp::platforms::get_packet_length(gen_pkt));
-        pdk::cmn::console::info("Status: Copied to buffer");
+        log::here().info("Status: Copied to buffer");
         gen_offset += pdk::mctp::platforms::get_packet_length(gen_pkt);
         if (is_complete == true) {
-            pdk::cmn::console::info("Message disassembly complete\n");
+            log::here().info("Message disassembly complete\n");
             break;
         }
     }
     composer.clear();
 
     // 4. MCTP-CPP message validate + assembly example
-    pdk::cmn::console::info("Message assembly start");
+    log::here().info("Message assembly start");
     // Define the recv_message_buf to store the result of message assembly
     std::array<uint8_t, msg_max_size>        recv_message_buf = {};
     pdk::mctp::platforms::Packet::LengthType full_pkt_size{};
@@ -169,26 +169,25 @@ int main()
         // cast the message buffer to a packet to get the header information
         const pdk::mctp::app::Packet& recv_pkt = *std::bit_cast<pdk::mctp::app::Packet*>(
             &multi_pkt_buf.at(recv_offset));
-        pdk::cmn::console::info("Packet #%d", index + 1);
-        pdk::cmn::console::info("Length: %d",
-                                pdk::mctp::platforms::get_packet_length(recv_pkt));
+        log::here().info("Packet #%d", index + 1);
+        log::here().info("Length: %d", pdk::mctp::platforms::get_packet_length(recv_pkt));
         auto recv_packet_interface = static_cast<pdk::mctp::platforms::Interface>(
             pdk::mctp::platforms::get_packet_interface(recv_pkt));
         validation_status = validator.validate(recv_pkt, recv_packet_interface);
         if (validation_status == false) {
-            pdk::cmn::console::info("Validation status: Failed");
+            log::here().info("Validation status: Failed");
             corepdk_exit_program(1);
         }
         else {
-            pdk::cmn::console::info("Validation status: Success");
+            log::here().info("Validation status: Success");
         }
         recv_multi_status = composer.recv_packet(full_pkt_size, recv_pkt, recv_message_buf);
-        pdk::cmn::console::info("Status: Copied to buffer");
+        log::here().info("Status: Copied to buffer");
         if (recv_multi_status == true) {
             // full_pkt_size is the size of the full packet: size of(Private_Header) +
             // size of(MCTP Header) + size of(Payload)
-            pdk::cmn::console::info("Full packet size: %d", full_pkt_size);
-            pdk::cmn::console::info("Message assembly complete\n");
+            log::here().info("Full packet size: %d", full_pkt_size);
+            log::here().info("Message assembly complete\n");
             break;
         }
         recv_offset += pdk::mctp::platforms::get_packet_length(recv_pkt);
@@ -246,7 +245,7 @@ void gen_i2c_message(const pdk::mctp::app::MsgType          msg_type,
          ++i) {
         i2c_message_buf.at(i) = i % UINT8_MAX;
     }
-    pdk::cmn::console::info("i2c message generated\n");
+    log::here().info("i2c message generated\n");
 }
 
 void unbind_i2c_message(const std::array<uint8_t, i2c_msg_max_size>& i2c_message_buf,
@@ -263,7 +262,7 @@ void unbind_i2c_message(const std::array<uint8_t, i2c_msg_max_size>& i2c_message
     std::memcpy(static_cast<void*>(&mctp_pkt.msg[0]),
                 static_cast<void*>(&i2c_mctp_pkt.msg[0]),
                 pdk::mctp::platforms::get_packet_length(mctp_pkt) - pdk::mctp::app::hdrSize);
-    pdk::cmn::console::info("i2c message unbinding complete\n");
+    log::here().info("i2c message unbinding complete\n");
 }
 
 void bind_i2c_message(const std::array<uint8_t, msg_max_size>& message_buf,
@@ -279,5 +278,5 @@ void bind_i2c_message(const std::array<uint8_t, msg_max_size>& message_buf,
     std::memcpy(static_cast<void*>(&i2c_mctp_pkt.msg[0]),
                 static_cast<void*>(&mctp_pkt.msg[0]),
                 pdk::mctp::platforms::get_packet_length(mctp_pkt) - pdk::mctp::app::hdrSize);
-    pdk::cmn::console::info("i2c message binding complete\n");
+    log::here().info("i2c message binding complete\n");
 }

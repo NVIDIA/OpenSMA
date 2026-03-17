@@ -18,7 +18,18 @@
 #include "sys/crypto/crypto.h"
 
 namespace sys::crypto {
+#if defined(__cplusplus)
+extern "C" {
+#endif
 
+NV_PRIVILEGED_FUNCTION bool Check_Receive_Sbfile_Capability_Priv()
+{
+    return true;
+}
+
+#if defined(__cplusplus)
+}
+#endif
 nv::spdm::crypto::CryptoStatus authenticate_firmware(
     [[maybe_unused]] const nv::fw_parser::mcu::ParsingFwType InputParseingFwType)
 {

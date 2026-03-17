@@ -20,6 +20,7 @@
 #include <string_view>
 #include <array>
 #include <chrono>
+#include <optional>
 
 #include NV_IPC_CONFIG_H
 
@@ -153,6 +154,18 @@ private:
      */
     void checkForHotSwapTimers();
 
+    /**
+     * @brief Checks if an AHS instance/drive is valid
+     *
+     * Checks if the AHS instance at the given index is initialized.
+     *
+     * @param ahsInstance AHS instance number to check
+     * @param driveIndex Drive index within the AHS instance
+     *
+     * @return true if the AHS instance/drive is valid, false otherwise
+     */
+    static bool isAhsInstanceDriveValid(uint8_t ahsInstance, uint8_t driveIndex);
+
     // Member Constants
     // ---------------------------------------------
 
@@ -163,7 +176,7 @@ private:
     static Task* taskInstance;
 
     /** @brief Array of AHS instances for all NHP instances */
-    std::array<AHS, nhp::NumNhpInstances> ahs_instances;
+    std::array<std::optional<AHS>, nhp::NumNhpInstances> ahs_instances;
 
     /** @brief Reference to the hot swap timer event */
     nv::ipc::Event& hotSwapTimerEvent;

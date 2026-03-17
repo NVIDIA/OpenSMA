@@ -7,9 +7,13 @@ namespace nv::fw_parser::ap {
 
 enum class ApFwStatus : uint8_t
 {
-    Update_In_Progress,
-    Update_Complete,
-    Update_Complete_But_Not_Activate,
+    Sb_Auth_Success                  = 0xff,
+    Update_Complete                  = 0x1,
+    Update_Complete_But_Not_Activate = 0x2,
+    Update_In_Progress               = 0x3,
+    Auth_In_Progress                 = 0x4,
+    Auth_Failed                      = 0x5,
+    Not_Supported                    = 0x00
 };
 
 enum class ParsingApFwType : uint8_t
@@ -18,6 +22,13 @@ enum class ParsingApFwType : uint8_t
     ActiveSlot,
     UpdateSlot,  // for pldm update fw
     End,
+};
+
+enum class PublicKeyIndex : uint32_t
+{
+    DebugKeyIndex = 0,
+    ProdKeyIndex  = 1,
+    KeyIndexCount = 2,
 };
 
 // ECDSA P-384 signature structure with separated r and s components
@@ -138,15 +149,38 @@ struct [[gnu::packed]] ApFwMetadata
 };
 enum class ApFwParsingErrorCode : uint8_t
 {
-    AuthenticationFailed   = 0x02,
-    FlashAccessFail        = 0x03,
-    InvalidParsingApFwType = 0x04,
+    AuthenticationFailed       = 0x02,
+    FlashAccessFail            = 0x03,
+    InvalidParsingApFwType     = 0x04,
+    MismatchPublicKeyIndex     = 0x05,
+    InvalidHashTableEntryIndex = 0x06,
 };
 
 std::expected<ApFwMetadata::TbsData, ApFwParsingErrorCode>
 get_ap_metadata_data(const ParsingApFwType input_parsing_ap_fw_type);
+
 std::expected<ApFwVersion, ApFwParsingErrorCode>
 get_ap_fw_version(const ParsingApFwType input_parsing_ap_fw_type);
+
+std::expected<uint8_t, ApFwParsingErrorCode>
+get_ap_sec_version(const ParsingApFwType input_parsing_ap_fw_type);
+
+std::expected<uint8_t, ApFwParsingErrorCode>
+get_ap_build_type(const ParsingApFwType input_parsing_ap_fw_type);
+
+std::expected<std::array<uint8_t, 16>, ApFwParsingErrorCode>
+get_ap_comp_version_str(const ParsingApFwType input_parsing_ap_fw_type);
+
+std::expected<PublicKeyIndex, ApFwParsingErrorCode>
+get_ap_signing_key_index(const ParsingApFwType input_parsing_ap_fw_type);
+
+// Get the number of sub-images in the AP firmware
+std::expected<uint8_t, ApFwParsingErrorCode>
+get_ap_fw_images_count(const ParsingApFwType input_parsing_ap_fw_type);
+
+// Get the hash table entry of the AP firmware
+std::expected<MetadataHashTableEntry, ApFwParsingErrorCode>
+get_ap_hash_table_entry(const ParsingApFwType input_parsing_ap_fw_type, uint8_t index);
 
 // Compile-time assertion to ensure the struct is exactly 4096 bytes
 static_assert(sizeof(ApFwMetadata) == 4096, "ApFwMetadata must be exactly 4096 bytes");

@@ -50,7 +50,7 @@ EEPROM::EEPROM(const uint8_t io_expander_address) : nv::emulation::At24c01()
     _memory.at(NUM_OF_PARTITIONS) = NUM_OF_PARTITIONS_1;
 
     // Use surprise with power mapping version type for AHS operation
-    _memory.at(MAPPING_VERSION_TYPE) = MAPPING_VERSION_TYPE_SURPRISE_WITH_POWER;
+    _memory.at(MAPPING_VERSION_TYPE) = MAPPING_VERSION_TYPE_PRESENT_MIRROR;
 
     // Disable IO expander interrupts by default
     _memory.at(INTERRUPT_INFO_IO_EXPANDER) = INTERRUPT_INFO_IO_EXPANDER_DISABLED;

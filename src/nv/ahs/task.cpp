@@ -21,6 +21,8 @@
 #include "nv/gpio/common.h"
 #include "sys/adc/adc.h"
 #include "nv/nv.h"
+#include "nv/logger/common.h"
+#include "nv/logger/log.h"
 #include NV_IPC_CONFIG_H
 
 extern void projectTryRunAdcTrigger();
@@ -75,8 +77,7 @@ Task::Task(const TaskConfig& config) noexcept
 {
     // Create AHS instances for all NHP instances
     for (uint8_t i = 0; i < nv::nhp::NumNhpInstances; i++) {
-        // NOLINTNEXTLINE: Placement new for array initialization
-        new (&ahs_instances[i]) AHS(config.ahs_configs.at(i), &hotSwapTimerEvent);
+        ahs_instances.at(i).emplace(config.ahs_configs.at(i), &hotSwapTimerEvent);
     }
     nv::info("Finished Task initialization\n");
 }
@@ -114,6 +115,8 @@ void Task::start()
 {
     nv::info("Starting AHS ADC Polling Loop\n");
 
+    nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Nhp);
+
     // coverity[no_escape] should never leave here
     while (true) {
         // Delay for the configured delay time
@@ -127,6 +130,48 @@ void Task::start()
         // Check for expired hot swap timers across all AHS instances
         checkForHotSwapTimers();
     }
+}
+
+/**
+ * @brief Checks if an AHS instance/drive is valid
+ *
+ * Checks if the AHS instance at the given index is initialized.
+ *
+ * @param ahsInstance AHS instance number to check
+ * @param driveIndex Drive index within the AHS instance
+ *
+ * @return true if the AHS instance/drive is valid, false otherwise
+ */
+bool Task::isAhsInstanceDriveValid(uint8_t ahsInstance, uint8_t driveIndex)
+{
+    if (nullptr == Task::taskInstance) {
+        return false;
+    }
+
+    if (ahsInstance >= Task::taskInstance->ahs_instances.size()) {
+        nv::error("Invalid AHS instance: %d\n", ahsInstance);
+        nv::logger::error(
+            logger::Event::AhsInvalidInstance,
+            {static_cast<uint8_t>(ahsInstance), static_cast<uint8_t>(driveIndex)});
+        return false;
+    }
+
+    // Check if the optional has a value before dereferencing
+    if (!Task::taskInstance->ahs_instances.at(ahsInstance).has_value()) {
+        nv::info("AHS instance %d not initialized\n", ahsInstance);
+        return false;
+    }
+
+    // Validate drive index
+    if (driveIndex >= nv::nhp::NumE1sDrives) {
+        nv::error("Invalid drive index: %d\n", driveIndex);
+        nv::logger::error(
+            logger::Event::AhsInvalidDriveIndex,
+            {static_cast<uint8_t>(ahsInstance), static_cast<uint8_t>(driveIndex)});
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -147,15 +192,12 @@ void Task::gpio_interrupt_callback(nv::gpio::GpioPort port,
                                    uint8_t            ahsInstance,
                                    uint8_t            driveIndex)
 {
-    if (nullptr == Task::taskInstance) {
+    if (!isAhsInstanceDriveValid(ahsInstance, driveIndex)) {
         return;
     }
-    if (ahsInstance >= Task::taskInstance->ahs_instances.size()) {
-        nv::error("Invalid AHS instance: %d\n", ahsInstance);
-        return;
-    }
+
     // Route the interrupt to the appropriate AHS instance
-    Task::taskInstance->ahs_instances.at(ahsInstance).gpio_interrupt(port, pin, driveIndex);
+    Task::taskInstance->ahs_instances.at(ahsInstance)->gpio_interrupt(port, pin, driveIndex);
 }
 
 /**
@@ -172,25 +214,12 @@ void Task::gpio_interrupt_callback(nv::gpio::GpioPort port,
  */
 void Task::adc_interrupt_callback(uint16_t value, uint8_t ahsInstance, uint8_t driveIndex)
 {
-    // Check if task instance is initialized
-    if (nullptr == Task::taskInstance) {
-        return;
-    }
-
-    // Validate AHS instance index
-    if (ahsInstance >= Task::taskInstance->ahs_instances.size()) {
-        nv::error("Invalid AHS instance: %d\n", ahsInstance);
-        return;
-    }
-
-    // Validate drive index
-    if (driveIndex >= nv::nhp::NumE1sDrives) {
-        nv::error("Invalid drive index: %d\n", driveIndex);
+    if (!isAhsInstanceDriveValid(ahsInstance, driveIndex)) {
         return;
     }
 
     // Route the ADC data to the appropriate AHS instance
-    Task::taskInstance->ahs_instances.at(ahsInstance).adc_interrupt(0U, driveIndex, value);
+    Task::taskInstance->ahs_instances.at(ahsInstance)->adc_interrupt(0U, driveIndex, value);
 }
 
 /**
@@ -219,7 +248,7 @@ void Task::checkForHotSwapTimers()
                 // Calculate AHS instance index from drive index
                 const uint8_t ahsIndex = driveIndex / nv::nhp::NumE1sDrives;
                 // coverity[cert_int31_c_violation] dont care about lost bits
-                ahs_instances.at(ahsIndex).hotSwapTimerInterrupt(
+                ahs_instances.at(ahsIndex)->hotSwapTimerInterrupt(
                     driveIndex - (ahsIndex * nv::nhp::NumE1sDrives));
             }
             eventBits >>= 1;

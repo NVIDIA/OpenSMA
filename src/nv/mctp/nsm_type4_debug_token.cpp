@@ -16,11 +16,13 @@
  * limitations under the License.
  */
 
+#include <array>
 #include <cstdint>
 #include <cstring>
 
 #include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/flash.h"
+#include "nv/mctp/constants.h"
 #include "nv/mctp/nsm.h"
 
 using namespace nv;
@@ -28,6 +30,22 @@ using namespace mctp;
 
 namespace {
 using namespace debugtoken;  // Access ReasonableSize, MaxTlvEntries, and debug token constants
+
+// Helper function to get raw data based on OCP version
+static std::span<const uint8_t> get_raw_data(const Packet& rx)
+{
+    auto& nrx = NsmPktReq::from(rx);
+
+    if (nrx.ocp_version >= 2) {
+        // OCP Management IF Version 2 or higher - use NsmPktReqV2 format
+        const auto& nrx_v2 = NsmPktReqV2::from(rx);
+        return {static_cast<const uint8_t*>(nrx_v2.data), nrx_v2.data_size};
+    }
+    else {
+        // OCP Management IF Version 1 - use NsmPktReq format
+        return {static_cast<const uint8_t*>(nrx.data), static_cast<size_t>(nrx.data_size)};
+    }
+}
 
 // Convert object to byte span
 template<typename T>
@@ -83,12 +101,20 @@ static uint8_t get_sku_information()
     }
 }
 
-// Helper function to get token types from installed token
-static std::pair<uint32_t, uint32_t> getInstalledTokenTypes()
+// Token info structure for query results
+struct TokenTypeInfo
 {
-    uint32_t token_type_bitmask = 0;
+    uint32_t                                        num_types    = 0;
+    uint32_t                                        type_bitmask = 0;
+    std::array<uint32_t, debugtoken::MaxTokenTypes> subtypes     = {};
+};
 
-    // Read TOKEN_TYPE TLV from installed token
+// Helper function to get token types and subtypes from installed token
+static TokenTypeInfo getInstalledTokenTypes()
+{
+    TokenTypeInfo result{};
+
+    // Read token from flash
     std::array<uint8_t, debugtoken::ReasonableSize> token_buffer       = {};
     constexpr uint32_t                              FlashReadChunkSize = nv::flash::BufferSize;
     constexpr uint32_t NumChunks    = debugtoken::ReasonableSize / FlashReadChunkSize;
@@ -101,56 +127,120 @@ static std::pair<uint32_t, uint32_t> getInstalledTokenTypes()
                                                            {token_buffer.data() + offset, chunk_size});
 
         if (flash_status != nv::flash::Status::Ok) {
-            return {0, 0};  // Failed to read, assume no token types
+            return result;  // Failed to read, return empty
         }
     }
+
+    const std::span<const uint8_t> token_span(token_buffer.data(), token_buffer.size());
 
     // Read TokenType TLV (0x0009) which contains the bitmask
-    const std::span<const uint8_t> token_span(token_buffer.data(), token_buffer.size());
-    std::span<uint8_t>             bitmask_span(
-        static_cast<uint8_t*>(static_cast<void*>(&token_type_bitmask)),
-        sizeof(token_type_bitmask));
-    const debugtoken::TokenErrorCode tlv_result = debugtoken::read_tlv_field(
+    std::span<uint8_t> bitmask_span(
+        static_cast<uint8_t*>(static_cast<void*>(&result.type_bitmask)),
+        sizeof(result.type_bitmask));
+    auto tlv_result = debugtoken::read_tlv_field(
         token_span, debugtoken::TlvType::TokenType, bitmask_span);
 
+    if (tlv_result != debugtoken::TokenErrorCode::NoErrorCode) {
+        return result;  // Failed to read token type
+    }
+
     // Count number of known token types in bitmask
-    uint32_t num_token_types = 0;
-    if (tlv_result == debugtoken::TokenErrorCode::NoErrorCode) {
-        // Check for token types based on bit positions
-        if (token_type_bitmask & 0x01) {
-            num_token_types++;  // FlashDebugFw (0x01)
-        }
-        if (token_type_bitmask & 0x02) {
-            num_token_types++;  // OtpDumpEn (0x02)
-        }
-        if (token_type_bitmask & 0x04) {
-            num_token_types++;  // RasDebug (0x04)
+    if (result.type_bitmask & 0x01) {
+        result.num_types++;  // FlashDebugFw (0x01)
+    }
+    if (result.type_bitmask & 0x02) {
+        result.num_types++;  // McuDebug (0x02)
+    }
+    if (result.type_bitmask & 0x04) {
+        result.num_types++;  // CpldDebug (0x04)
+    }
+
+    // Scan for TokenTypeSubtypeList TLV (0x0016) to get subtypes
+    // Need to manually scan because length is variable (depends on number of pairs)
+    debugtoken::TlvHeader tlv_header{};
+    memcpy(&tlv_header, token_buffer.data(), sizeof(debugtoken::TlvHeader));
+
+    if (tlv_header.identifier == debugtoken::TlvMagicNumber) {
+        const uint32_t header_size   = sizeof(debugtoken::TlvHeader);
+        const uint32_t tlv_data_size = tlv_header.size;
+        uint32_t       offset        = header_size;
+        const uint32_t end_offset    = header_size + tlv_data_size;
+
+        // Scan all TLV entries to find TokenTypeSubtypeList
+        while (offset + debugtoken::TlvHeaderSize <= end_offset
+               && offset + debugtoken::TlvHeaderSize <= token_buffer.size()) {
+            debugtoken::TlvData tlv_entry{};
+            memcpy(&tlv_entry, token_buffer.data() + offset, sizeof(debugtoken::TlvData));
+
+            if (tlv_entry.type == debugtoken::TlvType::TokenTypeSubtypeList) {
+                // Found TokenTypeSubtypeList TLV - parse pairs based on actual length
+                const uint32_t data_offset = offset + debugtoken::TlvHeaderSize;
+                const uint32_t num_pairs   = tlv_entry.length
+                                         / debugtoken::TokenTypeSubtypePairSize;
+
+                for (uint32_t i = 0; i < num_pairs && i < debugtoken::MaxTokenTypeSubtypePairs;
+                     i++) {
+                    const uint32_t pair_offset = data_offset
+                                               + (i * debugtoken::TokenTypeSubtypePairSize);
+                    if (pair_offset + debugtoken::TokenTypeSubtypePairSize
+                        > token_buffer.size()) {
+                        break;
+                    }
+
+                    debugtoken::TokenTypeSubtypePair pair{};
+                    memcpy(&pair,
+                           token_buffer.data() + pair_offset,
+                           debugtoken::TokenTypeSubtypePairSize);
+
+                    // Map token type to array index and store subtype
+                    uint32_t type_index = 0;
+                    switch (pair.type) {
+                        case debugtoken::DebugTokenTypeDebugFw:
+                            type_index = debugtoken::DebugTokenBitPosDebugFw;
+                            break;
+                        case debugtoken::DebugTokenTypeMcuDebug:
+                            type_index = debugtoken::DebugTokenBitPosMcuDebug;
+                            break;
+                        case debugtoken::DebugTokenTypeCpldDebug:
+                            type_index = debugtoken::DebugTokenBitPosCpldDebug;
+                            break;
+                        default: continue;
+                    }
+                    result.subtypes.at(type_index) = pair.subtype;
+                }
+                break;  // Found and parsed, done
+            }
+
+            // Move to next TLV entry
+            offset += debugtoken::TlvHeaderSize + tlv_entry.length;
         }
     }
 
-    return {num_token_types, token_type_bitmask};
+    return result;
 }
 
-static void map_bitpos_to_token(uint32_t  bit_pos,
+static void map_bitpos_to_token(uint32_t                                               bit_pos,
+                                const std::array<uint32_t, debugtoken::MaxTokenTypes>& subtypes,
                                 uint32_t& token_type,
                                 uint32_t& token_subtype,
                                 bool&     valid)
 {
     valid = true;
+
     switch (bit_pos) {
-        case debugtoken::DebugTokenBitPosDebugFw:  // Debug FW (bit 0 = 0x1)
+        case debugtoken::DebugTokenBitPosDebugFw:  // bit position 0 (bitmask 0x01)
             token_type    = debugtoken::DebugTokenTypeDebugFw;
-            token_subtype = debugtoken::DebugTokenSubtypeDebugFw;
+            token_subtype = subtypes.at(debugtoken::DebugTokenBitPosDebugFw);
             break;
-        case debugtoken::DebugTokenBitPosOtpDump:  // OTP dump enable (bit 1 = 0x2)
-            token_type    = debugtoken::DebugTokenTypeOtpDump;
-            token_subtype = debugtoken::DebugTokenSubtypeOtpDump;
+        case debugtoken::DebugTokenBitPosMcuDebug:  // bit position 1 (bitmask 0x02)
+            token_type    = debugtoken::DebugTokenTypeMcuDebug;
+            token_subtype = subtypes.at(debugtoken::DebugTokenBitPosMcuDebug);
             break;
-        case debugtoken::DebugTokenBitPosRasDebug:  // RAS Debug (bit 2 = 0x4)
-            token_type    = debugtoken::DebugTokenTypeRasDebug;
-            token_subtype = debugtoken::DebugTokenSubtypeRasDebug;
+        case debugtoken::DebugTokenBitPosCpldDebug:  // bit position 2 (bitmask 0x04)
+            token_type    = debugtoken::DebugTokenTypeCpldDebug;
+            token_subtype = subtypes.at(debugtoken::DebugTokenBitPosCpldDebug);
             break;
-        default: valid = false; break;
+        default: valid = false; return;
     }
 }
 
@@ -222,86 +312,71 @@ bool Nsm::process_debugtoken_diagnostics(const Packet& rx, Packet& tx)
 
 void Nsm::on_install_token(const Packet& rx, Packet& tx)
 {
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-    auto& ntx       = NsmPktResp::from(tx);
-    auto& nrx       = NsmPktReq::from(rx);
-    ntx.nv_msg_type = NsmMsgType::Diagnostics;
-    ntx.set_type4_code(nrx.get_type4_code());
+    auto& nrx = NsmPktReq::from(rx);
 
-    // Get data size and data based on OCP version
-    uint16_t       dataSize   = 0;
-    const uint8_t* dataBuffer = nullptr;
+    // Get raw data based on OCP version (V1 or V2)
+    const auto raw_data = get_raw_data(rx);
 
-    if (nrx.ocp_version >= 2) {
-        // OCP Management IF Version 2 or higher - use NsmPktReqV2 format
-        const auto& nrx_v2 = NsmPktReqV2::from(rx);
-        dataSize           = nrx_v2.data_size;
-        dataBuffer         = static_cast<const uint8_t*>(nrx_v2.data);
-    }
-    else {
-        // OCP Management IF Version 1 - use NsmPktReq format
-        dataSize   = static_cast<uint16_t>(nrx.data_size);
-        dataBuffer = static_cast<const uint8_t*>(nrx.data);
-    }
+    // For install operation, both V1 and V2 use chunk protocol
+    // Data format: chunk header (12 bytes) + complete TLV token (including TLV header)
+    constexpr uint32_t MinTokenSize = sizeof(debugtoken::TlvHeader);
+    const uint32_t     MinDataSize  = NsmV2ChunkHeaderSize + MinTokenSize;
 
-    if (dataSize == 0 || dataBuffer == nullptr) {
+    // Validate minimum data size
+    if (raw_data.size() <= MinDataSize) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
 
+    // Skip chunk header to get actual TLV token
+    const auto token_data = raw_data.subspan(NsmV2ChunkHeaderSize);
+
     // Install the debug token using TLV version
-    const std::span<const uint8_t>   token_span(dataBuffer, dataSize);
     const debugtoken::TokenErrorCode validation_result = debugtoken::install_dbg_token_tlv(
-        token_span);
+        token_data);
+
+    // Build response
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+    auto& ntx       = NsmPktRespType4Error::from(tx);
+    ntx.nv_msg_type = NsmMsgType::Diagnostics;
+    ntx.set_type4_code(nrx.get_type4_code());
 
     if (validation_result == debugtoken::TokenErrorCode::NoErrorCode) {
-        ntx.completion_code   = Ccode::Success;
-        ntx.data_size         = 0;
-        tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
+        // Success response: completion_code = Success, error_code = 0
+        ntx.completion_code = Ccode::Success;
+        ntx.error_code      = 0;
     }
     else {
-        // Return error with TokenErrorCode in data payload
-        ntx.completion_code         = Ccode::ErrorGeneral;
-        const auto error_code_value = static_cast<uint16_t>(validation_result);
-        memcpy(&ntx.data, &error_code_value, sizeof(error_code_value));
-        ntx.data_size         = sizeof(error_code_value);
-        tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + sizeof(error_code_value);
+        // Error response: completion_code = Error, error_code = TokenErrorCode
+        ntx.completion_code = Ccode::ErrorGeneral;
+        ntx.error_code      = static_cast<uint16_t>(validation_result);
     }
+
+    tx.priv.packet_length = sizeof(Header) + Type4ResponseSize;
 }
 
 void Nsm::on_erase_token(const Packet& rx, Packet& tx)
 {
-    auto& nrx = NsmPktReq::from(rx);
+    // Get raw data based on OCP version (V1 or V2)
+    const auto raw_data = get_raw_data(rx);
 
-    // Get data size and data based on OCP version
-    uint16_t       dataSize   = 0;
-    const uint8_t* dataBuffer = nullptr;
+    // Note: Unlike install, erase does NOT use chunk protocol
+    constexpr size_t MinEraseDataSize = sizeof(uint32_t);
 
-    if (nrx.ocp_version >= 2) {
-        // OCP Management IF Version 2 or higher - use NsmPktReqV2 format
-        const auto& nrx_v2 = NsmPktReqV2::from(rx);
-        dataSize           = nrx_v2.data_size;
-        dataBuffer         = static_cast<const uint8_t*>(nrx_v2.data);
-    }
-    else {
-        // OCP Management IF Version 1 - use NsmPktReq format
-        dataSize   = static_cast<uint16_t>(nrx.data_size);
-        dataBuffer = static_cast<const uint8_t*>(nrx.data);
-    }
-
-    // Extract token type from request data
-    uint32_t token_type = 0;
-    if (dataSize >= sizeof(token_type) && dataBuffer != nullptr) {
-        memcpy(&token_type, dataBuffer, sizeof(token_type));
-    }
-    else {
+    // Validate minimum data size
+    if (raw_data.size() < MinEraseDataSize) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
 
+    // Extract token type from request data
+    uint32_t token_type = 0;
+    memcpy(&token_type, raw_data.data(), sizeof(token_type));
+
     // Get installed token information at the beginning
-    auto [num_types, installed_bitmask] = getInstalledTokenTypes();
+    const auto token_info        = getInstalledTokenTypes();
+    const auto installed_bitmask = token_info.type_bitmask;
 
     debugtoken::TokenErrorCode error_code = debugtoken::TokenErrorCode::NoErrorCode;
 
@@ -356,24 +431,22 @@ void Nsm::on_erase_token(const Packet& rx, Packet& tx)
     // Build response
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
-    auto& ntx       = NsmPktResp::from(tx);
+    auto& ntx       = NsmPktRespType4Error::from(tx);
     ntx.nv_msg_type = NsmMsgType::Diagnostics;
     ntx.set_type4_code(NsmType4CmdCode::EraseToken);
 
-    if (error_code != debugtoken::TokenErrorCode::NoErrorCode) {
-        // Return error with TokenErrorCode in data payload
-        ntx.completion_code         = Ccode::ErrorGeneral;
-        const auto error_code_value = static_cast<uint16_t>(error_code);
-        memcpy(&ntx.data, &error_code_value, sizeof(error_code_value));
-        ntx.data_size         = sizeof(error_code_value);
-        tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + sizeof(error_code_value);
+    if (error_code == debugtoken::TokenErrorCode::NoErrorCode) {
+        // Success response: completion_code = Success, error_code = 0
+        ntx.completion_code = Ccode::Success;
+        ntx.error_code      = 0;
     }
     else {
-        // Success response has no data payload
-        ntx.completion_code   = Ccode::Success;
-        ntx.data_size         = 0;
-        tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
+        // Error response: completion_code = Error, error_code = TokenErrorCode
+        ntx.completion_code = Ccode::ErrorGeneral;
+        ntx.error_code      = static_cast<uint16_t>(error_code);
     }
+
+    tx.priv.packet_length = sizeof(Header) + Type4ResponseSize;
 }
 
 void Nsm::on_query_token(const Packet& rx, Packet& tx)
@@ -387,13 +460,14 @@ void Nsm::on_query_token(const Packet& rx, Packet& tx)
     const bool token_installed = debugtoken::is_dbg_token_tlv_in_flash();
 
     // Get token type information once
-    uint32_t token_type_bitmask = 0;
-    uint32_t num_token_types    = 0;
+    TokenTypeInfo token_info{};
+    uint32_t      token_type_bitmask = 0;
+    uint32_t      num_token_types    = 0;
 
     if (token_installed) {
-        auto [types_count, bitmask] = getInstalledTokenTypes();
-        num_token_types             = types_count;
-        token_type_bitmask          = bitmask;
+        token_info         = getInstalledTokenTypes();
+        num_token_types    = token_info.num_types;
+        token_type_bitmask = token_info.type_bitmask;
     }
 
     // Validate token types count
@@ -488,7 +562,8 @@ void Nsm::on_query_token(const Packet& rx, Packet& tx)
                 uint32_t token_subtype = 0;
                 bool     valid         = false;
 
-                map_bitpos_to_token(bit_pos, token_type, token_subtype, valid);
+                map_bitpos_to_token(
+                    bit_pos, token_info.subtypes, token_type, token_subtype, valid);
 
                 if (valid) {
                     if (!copy_and_advance(response_buffer, to_bytes(token_type), current_offset)

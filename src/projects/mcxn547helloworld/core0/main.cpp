@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -51,6 +51,8 @@
 #include "nv/logger/task.h"
 #include "nv/bootloader.h"
 #include "nv/gpio/driver.h"
+#include "nv/lstp/lstp_task.h"
+#include "nv/ssif/task.h"
 #include "nv/i3c/task.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/perf_mon/perf_mon.h"
@@ -60,6 +62,8 @@
 #include "nv/ipchandler/enums.h"
 #include <trustzone/resource_config.h>
 #include "sys/common/AHB_config.h"
+#include "sys/smartdma/driver.h"
+#include "nv/spi/flashrom_task.h"
 
 static void make_i2c_task()
 {
@@ -115,6 +119,25 @@ static void make_i2c_task()
             i2c::make_task_by_port<i2c::Port::Three>(config);
         }
     }
+
+    // LSTP
+    {
+        constexpr auto config = i2c::Task::Config{ipc::TaskId::I2c3,
+                                                  "I2C3",
+                                                  mctp::Client::End,
+                                                  ipc::EventId::I2c3,
+                                                  ipc::QueueId::I2c3,
+                                                  i2c::Port::Six,
+                                                  i2c::Task::DynAddr,
+                                                  ipc::BootedEventBits::I2c3,
+                                                  nv::ipc::TimerId::End,
+                                                  nv::ipchandler::Id::I2c3,
+                                                  ipc::TimerId::I2c3RepeatedStartTimeout};
+        if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
+            NVIC_EnableIRQ(sys::i2c::Driver::get_irq(config.port_id));
+            i2c::make_task_by_port<i2c::Port::Six>(config);
+        }
+    }
 }
 
 static void make_i3c_task()
@@ -137,10 +160,58 @@ static void make_i3c_task()
         {nv::gpio::InvalidGpioPort, nv::gpio::InvalidGpioPin},
         nv::ipchandler::Id::I3c0,
         {nv::i2c::Port::One, 0x50},
-        {16, 17, 19, 18},
     };
     if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
         nv::i3c::Task::make(config);
+    }
+}
+
+void make_spi_task()
+{
+    // LSTP
+    using namespace nv;
+    spi::FlashromTask::Config config{
+        ipc::TaskId::Spi0,
+        "SPI0",
+        spi::Flexcomm::Seven,
+        nv::ipc::SPI0_CS0_PORT,
+        nv::ipc::SPI0_CS0_PIN,
+        nv::ipc::SPI0_CS1_PORT,
+        nv::ipc::SPI0_CS1_PIN,
+        ipc::BootedEventBits::Spi0,
+    };
+    if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
+        spi::FlashromTask::make(config);
+    }
+}
+
+static void make_lstp_task()
+{
+    // LSTP GPIO
+    using namespace nv;
+    if constexpr (ipc::EnableLstp && lstp::EnableGpio) {
+        lstp::LstpTask::Config config{
+            ipc::TaskId::Lstp,
+            "LSTP",
+            ipc::BootedEventBits::Lstp,
+        };
+        if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
+            lstp::LstpTask::make(config);
+        }
+    }
+}
+
+static void make_ssif_task()
+{
+    using namespace nv;
+    ssif::Task::Config config{ipc::TaskId::Ssif,
+                              "SSIF",
+                              ipc::EventId::Ssif,
+                              i2c::Port::Two,
+                              nv::ipc::CPU0_SSIF_PORT,
+                              nv::ipc::CPU0_SSIF_PIN};
+    if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
+        ssif::Task::make(config);
     }
 }
 
@@ -155,7 +226,7 @@ void SystemInitHook(void)
 }
 
 extern "C" {
-extern uint8_t  __core1_image_start__;
+extern uint8_t  __core1_text_start__;
 extern uint32_t __shared_memory_start__;
 }
 
@@ -194,15 +265,36 @@ int main()
     flash::Task::make();
     usb::Task::make();
     make_i2c_task();
+    if constexpr (ipc::EnableSmartDMA) {
+        sys::smartdma::Driver::init();
+    }
     make_i3c_task();
+    gpio::Driver::init_pin(nv::ipc::SPI0_CS0_PORT,
+                           nv::ipc::SPI0_CS0_PIN,
+                           gpio::Direction::Output,
+                           gpio::GpioState::High);
+    gpio::Driver::init_pin(nv::ipc::SPI0_CS1_PORT,
+                           nv::ipc::SPI0_CS1_PIN,
+                           gpio::Direction::Output,
+                           gpio::GpioState::High);
+    make_spi_task();
     logger::Task::make();
 
+    bootloader::Driver::set_stack_cookie();
     bootloader::Driver::boot_init();
     ctimer::Driver::init();
     gpio::Driver::init();
     for (auto& [port, pin, det, sel] : nv::ipc::GpioInterruptSetup) {
         gpio::Driver::init_interrupt(port, pin, det, sel);
     }
+    make_lstp_task();
+    // Set SSIF alert pin to high (inactive)
+    gpio::Driver::init_pin(nv::ipc::CPU0_SSIF_PORT,
+                           nv::ipc::CPU0_SSIF_PIN,
+                           gpio::Direction::Output,
+                           gpio::GpioState::High);
+    make_ssif_task();
+
     perf_mon::Driver::init();
     telemetry::Cache::inst().init();
     sys::sensor::Driver::init();
@@ -210,7 +302,7 @@ int main()
     ipc::task::Task::make(
         ipc::task::Task::Config{ipc::TaskId::Ipc0,
                                 "IPC0",
-                                reinterpret_cast<uint32_t>(&__core1_image_start__),
+                                reinterpret_cast<uint32_t>(&__core1_text_start__),
                                 reinterpret_cast<uint32_t>(&__shared_memory_start__)});
 
     ipc::Supervisor::inst().startup(0, nullptr);

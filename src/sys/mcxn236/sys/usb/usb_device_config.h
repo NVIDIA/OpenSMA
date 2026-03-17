@@ -32,7 +32,7 @@
 #ifndef USB_DEVICE_CONFIG_HID
 #define USB_DEVICE_CONFIG_HID (1U)
 #endif
-#if ((defined(USB_CONFIG_NV_SMA_SPI)) && (USB_CONFIG_NV_SMA_SPI > 0U))
+#if ((defined(USB_CONFIG_LSTP)) && (USB_CONFIG_LSTP > 0U))
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)
 #endif
 #endif

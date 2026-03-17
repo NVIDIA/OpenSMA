@@ -37,7 +37,7 @@ constexpr Address FirmwareMaxSize    = 0x80000;
 constexpr Address RemapSize          = 0x80000;
 constexpr Address MaxAddress         = 0x100000;
 constexpr Address LoggerStartAddress = 0x70000;
-constexpr Address FirmwareMaxSize    = 0x68000;
+constexpr Address FirmwareMaxSize    = 0x60000;
 #endif
 
 constexpr Address FmcFwAddress = 0x1008000;

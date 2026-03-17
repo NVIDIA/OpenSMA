@@ -19,7 +19,8 @@
 #include <array>
 #include <span>
 #include <stdint.h>
-#include "nv/i2c/common.h"
+
+#include "nv/i2c/i2c_types.h"
 #include "nv/i2c/port.h"
 #include "nv/mctp/enums.h"
 #include "nv/telemetry/cache.h"
@@ -30,6 +31,8 @@ enum ManufacturerId : uint8_t
 {
     TI        = 0x55,  // TMP461, 451
     Microchip = 0x54,  // EMC1812
+    OnSemi    = 0x41,  // Onsemi Nct72
+
 };
 
 enum SensorModel : uint8_t
@@ -37,32 +40,33 @@ enum SensorModel : uint8_t
     Sensor_Tmp461  = 1,
     Sensor_Emc1812 = 2,
     Sensor_Tmp1075 = 3,
+    Sensor_Nct70   = 4,
 };
 
 // I2C Temperature Sensor configuration structure
 // Using [[gnu::packed]] to ensure no padding bytes are added by the compiler
 struct [[gnu::packed]] I2cTempSensorConfig
 {
-    nv::i2c::Port                     port;
-    uint8_t                           identified_addr;
-    uint8_t                           sensor_model;
-    nv::mctp::Type3TemperatureSensors sensor_id;
-    std::array<uint8_t, 2> addresses;  // primary/secondary address, can be extended if with
-                                       // more vendors.
+    const nv::i2c::Port                     port            = nv::i2c::Port::Zero;
+    uint8_t                                 identified_addr = 0;
+    uint8_t                                 sensor_model    = 0;
+    const nv::mctp::Type3TemperatureSensors sensor_id       = {};
+    const std::array<uint8_t, 2> addresses = {};  // primary/secondary address, can be extended
+                                                  // if with more vendors.
 };
 
 struct [[gnu::packed]] I2cTempSensorThresholdsConfig
 {
-    nv::i2c::Port                     port;
-    uint8_t                           identified_addr;
-    uint8_t                           sensor_model;
-    int8_t                            local_warning_threshold;
-    int8_t                            local_shutdown_threshold;
-    int8_t                            remote_warning_threshold;
-    int8_t                            remote_shutdown_threshold;
-    nv::mctp::Type3TemperatureSensors sensor_id;
-    std::array<uint8_t, 2> addresses;  // primary/secondary address, can be extended if with
-                                       // more vendors.
+    const nv::i2c::Port                     port                      = nv::i2c::Port::Zero;
+    uint8_t                                 identified_addr           = 0;
+    uint8_t                                 sensor_model              = 0;
+    const int8_t                            local_warning_threshold   = 0;
+    const int8_t                            local_shutdown_threshold  = 0;
+    const int8_t                            remote_warning_threshold  = 0;
+    const int8_t                            remote_shutdown_threshold = 0;
+    const nv::mctp::Type3TemperatureSensors sensor_id                 = {};
+    const std::array<uint8_t, 2> addresses = {};  // primary/secondary address, can be extended
+                                                  // if with more vendors.
 };
 
 class TempSensor
@@ -94,6 +98,7 @@ public:
     I2cStatus write_reg(uint8_t offset, uint8_t value);
     I2cStatus read_reg_16bits(uint8_t offset, uint16_t& value);
     I2cStatus write_reg_16bits(uint8_t offset, uint16_t value);
+    I2cStatus read_block(uint8_t offset, std::span<uint8_t> value, uint8_t& length);
 
 private:
     Port                   _port;

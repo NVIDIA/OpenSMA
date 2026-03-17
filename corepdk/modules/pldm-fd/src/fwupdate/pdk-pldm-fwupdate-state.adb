@@ -484,7 +484,6 @@ is
          --  requester timeout handler DL/Verify/Apply
          when PLDMFW_STATE_DL =>
             Add_U8 (Context.Req_Retry, 1, Context.Req_Retry);
-            Add_U8 (Context.Spi_Flash_Retry, 1, Context.Spi_Flash_Retry);
             Add_U32 (Context.Total_Retry, 1, Context.Total_Retry);
             --  over retry and back to idle mode
             if Context.Req_Retry > PLDMFW_TIMEING_PN1
@@ -500,8 +499,8 @@ is
                  (Ret,
                   (PLDMFW_FD_TIMEOUT_T1 - (PLDMFW_TIMEING_PN1 * PLDMFW_TIMEING_PT2)) *
                   MSEC_TO_NSEC);
-            --  spi flash programing fail over retry times (25 times)
-            elsif Context.Spi_Flash_Retry > PLDMFW_SPIFLASH_RETRY
+            --  spi flash programing fail over retry times
+            elsif Context.Spi_Flash_Retry > Context.Write_Fail_Retry
             then
                Context.Idle_Reason_Code := PLDMFW_CMD_GET_STATUS_REASON_TIMEOUT_DL;
                Context.Slot_State       := Pldmfw_Slot_State_Spiflash_Error;

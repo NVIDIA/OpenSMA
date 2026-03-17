@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -18,7 +18,10 @@
 
 #include "sys/i2c/utils.h"
 #include "nv/common/utils.h"
+#include "nv/i2c/mutex.h"
 #include "nv/i2c/port.h"
+#include "nv/ipc/mutex.h"
+#include "nv/ipc/supervisor.h"
 
 namespace sys::i2c {
 
@@ -53,14 +56,23 @@ nv::i2c::I2cStatus i2c_write(nv::i2c::Port port, uint8_t address, std::span<uint
     }
 
     lpi2c_master_transfer_t xfer{
-        .flags        = kLPI2C_TransferDefaultFlag,
-        .slaveAddress = address,
-        .direction    = kLPI2C_Write,
-        .data         = buffer.data(),
-        .dataSize     = buffer.size(),
+        .flags          = kLPI2C_TransferDefaultFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Write,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = buffer.data(),
+        .dataSize       = buffer.size(),
     };
 
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    // Acquire mutex
+    auto mutex_status = mutex.lock();
+    if (mutex_status != nv::ipc::Mutex::Status::Ok) {
+        return nv::i2c::I2cStatus::MutexError;
+    }
     const status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
+    mutex.unlock();
     return get_status(status);
 }
 
@@ -72,14 +84,23 @@ nv::i2c::I2cStatus i2c_read(nv::i2c::Port port, uint8_t address, std::span<uint8
     }
 
     lpi2c_master_transfer_t xfer{
-        .flags        = kLPI2C_TransferDefaultFlag,
-        .slaveAddress = address,
-        .direction    = kLPI2C_Read,
-        .data         = buffer.data(),
-        .dataSize     = buffer.size(),
+        .flags          = kLPI2C_TransferDefaultFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Read,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = buffer.data(),
+        .dataSize       = buffer.size(),
     };
 
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    // Acquire mutex
+    auto mutex_status = mutex.lock();
+    if (mutex_status != nv::ipc::Mutex::Status::Ok) {
+        return nv::i2c::I2cStatus::MutexError;
+    }
     const status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
+    mutex.unlock();
     return get_status(status);
 }
 
@@ -93,17 +114,27 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
         return nv::i2c::I2cStatus::Error;
     }
 
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    // Acquire mutex
+    auto mutex_status = mutex.lock();
+    if (mutex_status != nv::ipc::Mutex::Status::Ok) {
+        return nv::i2c::I2cStatus::MutexError;
+    }
+
     // Write phase
     lpi2c_master_transfer_t xfer{
-        .flags        = kLPI2C_TransferNoStopFlag,
-        .slaveAddress = address,
-        .direction    = kLPI2C_Write,
-        .data         = write_buffer.data(),
-        .dataSize     = write_buffer.size(),
+        .flags          = kLPI2C_TransferNoStopFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Write,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = write_buffer.data(),
+        .dataSize       = write_buffer.size(),
     };
 
     status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
     if (status != kStatus_Success) {
+        mutex.unlock();
         return get_status(status);
     }
 
@@ -114,6 +145,7 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
     xfer.dataSize  = read_buffer.size();
 
     status = LPI2C_MasterTransferBlocking(base, &xfer);
+    mutex.unlock();
     return get_status(status);
 }
 

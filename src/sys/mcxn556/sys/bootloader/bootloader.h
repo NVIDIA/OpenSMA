@@ -67,9 +67,10 @@ protected:
     static constexpr uint32_t AuthResultAddr    = BootReasonAddr + 4;
     static constexpr uint32_t TRNGConfigAddr    = 0x01100050;
 
-    static constexpr uint32_t FmcFaultMagic        = 0xABABABAB;
-    static constexpr uint32_t FmcFaultStatusAddr   = 0x2000219C;
-    static constexpr uint32_t FmcOrdinalNumberAddr = 0x200022C0;
+    static constexpr uint32_t FmcFaultMagic          = 0xABABABAB;
+    static constexpr uint32_t FmcFaultStatusAddr     = 0x2000219C;
+    static constexpr uint32_t FmcJumpInformationAddr = 0x200021B8;
+    static constexpr uint32_t FmcOrdinalNumberAddr   = 0x200022C0;
 
     static constexpr uint32_t SignatureSize    = 96;
     static constexpr uint32_t SignatureAk0Addr = 0x20002200;

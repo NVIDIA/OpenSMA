@@ -23,6 +23,8 @@
 #include "nv/logger/log.h"
 #include "nv/gpio/driver.h"
 #include "nv/nv.h"
+#include "nv/mctp/nsm.h"
+#include "task.h"
 
 namespace nv::iox {
 
@@ -175,63 +177,12 @@ Status Iox::access_reg_polarity(Operation op, Register reg, uint8_t& data)
  *               PCA9555: output is 0, input is 1
  *               MCXN236: output is 1, input is 0
  *        @note: need to invert the direction as we are using MCXN236 definition
- *    2. write: write to the config register
- *        a. update the gpio direction
- *        b. update the open drain (disable for input, enable for output)
- *        c. update the gpio value if the gpio is re-configured as output
- *        d. re-config the gpio based on the new PinConfig
+ *    2. write: write to the config register, always return Success.
  */
 Status Iox::access_reg_config(Operation op, Register reg, uint8_t& data)
 {
     if (op == Operation::Read) {
         data = ~regs.at(static_cast<uint8_t>(reg));
-    }
-    else {
-        auto& prvCfg = regs.at(static_cast<uint8_t>(reg));
-        auto  newCfg = ~data;
-
-        // check if the config is changed
-        if (prvCfg == newCfg) {
-            return Status::Ok;
-        }
-
-        // compare the config bit by bit
-        for (size_t i = 0; i < 8; ++i) {
-            const auto prvDir = static_cast<nv::gpio::Direction>((prvCfg >> i) & 0x01);
-            const auto newDir = static_cast<nv::gpio::Direction>((newCfg >> i) & 0x01);
-            if (prvDir == newDir) {
-                continue;
-            }
-
-            // update gpio PinConfig (NOT the config register)
-            auto& cfg = pins.at((reg == Register::Config0) ? (i + 0) : (i + 8));
-            cfg.dir   = newDir;
-
-            // always disable open drain for input pin
-            // always enable open drain for output pin
-            // TODO: check if the open drain is needed ???
-            cfg.openDrain = (newDir == nv::gpio::Direction::Output)
-                              ? nv::gpio::GpioOpenDrain::Enable
-                              : nv::gpio::GpioOpenDrain::Disable;
-
-            // always enable interrupt for input pin
-            // always disable interrupt for output pin
-
-            // re-config the gpio based on the new PinConfig
-            config_gpio(cfg);
-
-            // if new direction is output, set the gpio value based on the Output Port Register
-            if (newDir == nv::gpio::Direction::Output) {
-                const auto& output = (reg == Register::Config0)
-                                       ? regs.at(static_cast<uint8_t>(Register::OutputPort0))
-                                       : regs.at(static_cast<uint8_t>(Register::OutputPort1));
-                set_gpio(
-                    cfg.port, cfg.pin, static_cast<nv::gpio::GpioState>((output >> i) & 0x01));
-            }
-        }
-
-        // update the config register
-        prvCfg = newCfg;
     }
     return Status::Ok;
 }
@@ -374,6 +325,23 @@ Status Iox::get_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::G
         return Status::Ok;
     }
 
+    // Find GPIO index from port and pin
+    constexpr uint16_t invalidIndex = 0xffff;
+    uint16_t           gpio_index   = invalidIndex;
+    for (uint16_t i = 0; i < nv::ipc::GpioNum; i++) {
+        const auto& gpio_config = nv::ipc::GpioSetup.at(i);
+        if (std::get<0>(gpio_config) == port && std::get<1>(gpio_config) == pin) {
+            gpio_index = i;
+            break;
+        }
+    }
+
+    // Check for GPIO spoofing
+    if (gpio_index != invalidIndex && applySpoofingIfActive(gpio_index, port, pin, val)) {
+        return Status::Ok;  // Spoofed value returned
+    }
+
+    // No spoofing, read actual hardware
     uint8_t data = 0;
     auto    err  = nv::gpio::Driver::read(port, pin, data);
     if (err != nv::gpio::Status::Ok) {
@@ -464,6 +432,74 @@ void Iox::set_gpio_bit(uint8_t bit, bool set)
 bool Iox::get_gpio_bit(uint8_t bit)
 {
     return (g_gpio.gpio_value & (1U << bit)) != 0;
+}
+
+void Iox::setSpoofingConfig(
+    bool                                                         spoofingActive,
+    uint8_t                                                      numSpoofEntries,
+    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries>& spoofEntries)
+{
+    this->spoofingActive  = spoofingActive;
+    this->numSpoofEntries = numSpoofEntries;
+
+    for (uint8_t i = 0; i < numSpoofEntries; i++) {
+        this->spoofEntries.at(i).gpioIndex = spoofEntries.at(i).gpioIndex;
+        this->spoofEntries.at(i).activated = spoofEntries.at(i).activated;
+    }
+}
+
+bool Iox::applySpoofingIfActive(uint16_t             gpio_index,
+                                nv::gpio::GpioPort   port,
+                                nv::gpio::GpioPin    pin,
+                                nv::gpio::GpioState& val)
+{
+    if (!spoofingActive) {
+        return false;  // Spoofing not active
+    }
+
+    // Check if this is an input GPIO (only input GPIOs are spoofed)
+    nv::gpio::Direction gpio_dir = nv::gpio::Direction::Input;
+    if (nv::gpio::Driver::getDirection(port, pin, gpio_dir) != nv::gpio::Status::Ok) {
+        return false;
+    }
+
+    if (gpio_dir != nv::gpio::Direction::Input) {
+        return false;  // Only spoof input GPIOs
+    }
+
+    // Get default value for this GPIO
+    nv::gpio::GpioState default_value{};
+
+    // Search through IoxConfigs to find the matching PinConfig to get default pin state
+    bool found = false;
+    for (const auto& iox_config : nv::ipc::IoxConfigs) {
+        if (iox_config.addr == addr) {
+            for (const auto& pin_config : iox_config.pinConfig) {
+                if (pin_config.port == port && pin_config.pin == pin) {
+                    default_value = pin_config.val;
+                    found         = true;
+                    break;
+                }
+            }
+        }
+        if (found) {
+            break;
+        }
+    }
+
+    // Check if this GPIO is in the spoofing list
+    for (uint8_t i = 0; i < numSpoofEntries && i < spoofEntries.size(); i++) {
+        if (spoofEntries.at(i).activated && spoofEntries.at(i).gpioIndex == gpio_index) {
+            // Return inverted default value (spoofed)
+            val = (default_value == nv::gpio::GpioState::Low) ? nv::gpio::GpioState::High
+                                                              : nv::gpio::GpioState::Low;
+            return true;  // Spoofed value returned
+        }
+    }
+
+    // Spoofing active but this GPIO not in list - return default value
+    val = default_value;
+    return true;
 }
 
 }  // namespace nv::iox

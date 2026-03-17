@@ -19,7 +19,7 @@
 
 #include "sys/common/utils.h"
 #include "sys/flash/fccob.h"
-
+#include "nv/fw_parser/fw_parser_mcu.h"
 using namespace sys::flash;
 
 namespace {
@@ -447,46 +447,12 @@ uint32_t CfpaDriver::get_firmware_version()
 
 uint32_t CfpaDriver::get_key_index()
 {
-    uint32_t cert_block_addr{};
-    memcpy(&cert_block_addr,
-           std::bit_cast<void*>(CertBlockAddressOffset),
-           sizeof(cert_block_addr));
-
-    uint32_t magic{};
-    memcpy(&magic, std::bit_cast<void*>(cert_block_addr), sizeof(magic));
-    if (magic != CertBlockMagic) {
-        return InvalidValue;
+    auto key_index = nv::fw_parser::mcu::get_image_signing_key_version(
+        nv::fw_parser::mcu::ParsingFwType::ActiveSlot);
+    if (key_index.has_value()) {
+        return *key_index;
     }
-
-    RotRecordFlags flags{};
-    memcpy(&flags, std::bit_cast<void*>(cert_block_addr + CertBlockFlagsOffset), sizeof(flags));
-    // nv::info("flags 0x%x\n", flags);
-
-    if (flags.type_of_rot != nv::common::to_underlying(TypeOfRot::Secp256R1)
-        && flags.type_of_rot != nv::common::to_underlying(TypeOfRot::Secp384R1)) {
-        return InvalidValue;
-    }
-
-    const uint32_t RotKhSize      = flags.type_of_rot
-                                    == nv::common::to_underlying(TypeOfRot::Secp384R1)
-                                      ? 48
-                                      : 32;
-    const uint32_t RotKPublicSize = flags.type_of_rot
-                                         == nv::common::to_underlying(TypeOfRot::Secp384R1)
-                                      ? 96
-                                      : 64;
-
-    const uint32_t OffsetToKeyIndex = flags.used_rot_num * RotKhSize + RotKPublicSize
-                                    + KeyIndexSkipOffset;
-    // nv::info("OffsetToKeyIndex 0x%x\n", OffsetToKeyIndex);
-
-    uint32_t key_index{};
-    memcpy(&key_index,
-           std::bit_cast<void*>(cert_block_addr + OffsetToKeyIndex),
-           sizeof(key_index));
-    // nv::info("key_index 0x%x\n", key_index);
-
-    return key_index;
+    return InvalidValue;
 }
 
 status_t CfpaDriver::read_cmpa(const std::span<uint8_t>& buffer, uint32_t offset)

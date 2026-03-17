@@ -25,6 +25,7 @@
 #include "nv/spdm/task.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "sys/spdm/platform_measurement.h"
+#include "nv/spdm/spdm_ap_measurement.h"
 using namespace nv;
 
 // for importing the funciton of ada pldm library
@@ -164,6 +165,7 @@ void spdm_init_all_measurement_cache()
     std::memcpy(static_cast<void*>(nv::spdm::measurement::debugtoken::DTconfig.serial.value),
                 measurement_cache.measurement_uuid.data(),
                 nv::debugtoken::DT_DEV_SER_NUM_SIZE);
+    measurement_cache.measurement_rom_patch_cmac = sys::spdm::get_boot_rom_cmac_in_kernel();
     // Note: Serial number is now directly accessed from measurement_cache in TLV functions
 };
 
@@ -269,7 +271,7 @@ void spdm_get_fw_version(bool is_active_slot, MeasurementFirmwareVersionT& fw_ve
     return;
 }
 
-uint8_t spdm_get_fw_security_version(bool is_active_slot)
+uint64_t spdm_get_fw_security_version(bool is_active_slot)
 {
     const auto FwType = is_active_slot == true
                           ? nv::fw_parser::mcu::ParsingFwType::ActiveSlot
@@ -277,12 +279,11 @@ uint8_t spdm_get_fw_security_version(bool is_active_slot)
 
     auto security_version_check = nv::fw_parser::mcu::get_security_version(FwType);
     if (!security_version_check.has_value()) {
-        constexpr uint8_t DefaultSnvValue = 0xff;
+        constexpr uint64_t DefaultSnvValue = std::numeric_limits<uint64_t>::max();
         return DefaultSnvValue;
     }
     // this mask should remove when next version of spdm measurement block
-    constexpr uint32_t SecurityVersionMask = 0x000000ff;
-    return (*security_version_check) & SecurityVersionMask;
+    return *security_version_check;
 }
 
 /*
@@ -309,16 +310,6 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             input_version = nv::spdm::measurement::MeasurementVersion;
             break;
         }
-        case MeasMcuActiveFirmwareHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            spdm_get_fw_image_hash(true, hash_data);
-        } break;
-        case MeasMcuInactiveFirmwareHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            spdm_get_fw_image_hash(false, hash_data);
-        } break;
         case MeasFuses: {
             auto& hash_data = *std::bit_cast<
                 std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
@@ -383,14 +374,14 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             }
         } break;
         case MeasMcuActiveFirmwareSecurityVersion: {
-            auto& svn = *std::bit_cast<uint8_t*>(buffer);
+            auto& svn = *std::bit_cast<uint64_t*>(buffer);
             svn       = spdm_get_fw_security_version(true);
         } break;
         case MeasMcuInctiveFirmwareSecurityVersion: {
-            auto& svn = *std::bit_cast<uint8_t*>(buffer);
+            auto& svn = *std::bit_cast<uint64_t*>(buffer);
             svn       = spdm_get_fw_security_version(false);
         } break;
-        case MeasMcxn236Uuid: {
+        case MeasMcxnUuid: {
             auto& measurement_cache = nv::spdm::Task::get_measurement_cache();
             auto& input_uuid = *std::bit_cast<decltype(&measurement_cache.measurement_uuid)>(
                 buffer);
@@ -415,7 +406,7 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             auto& fw_version = *std::bit_cast<MeasurementFirmwareVersionT*>(buffer);
             spdm_get_fw_version(false, fw_version);
         } break;
-        case MeasBootStatus: {
+        case MeasMcuBootStatus: {
             // not define yet, use hard code now.
             constexpr uint8_t SuccessBootStatusCode = 0xffu;
             auto&             boot_status           = *std::bit_cast<uint8_t*>(buffer);
@@ -456,10 +447,51 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
                 copy_identity_view.begin(), copy_identity_view.end(), output_buffer.begin());
 
         } break;
-        case MeasReservedIndex2:
-        case MeasReservedIndex3:
+        case MeasApFirmwareHash: {
+            auto& hash_data = *std::bit_cast<
+                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
+            nv::spdm::ap_measurement::get_ap_firmware_hash(hash_data);
+        } break;
+        case MeasApRollbackFuses: {
+            auto& ap_rollback_fuse_value = *std::bit_cast<uint32_t*>(buffer);
+            nv::spdm::ap_measurement::get_ap_rollback_fuses(ap_rollback_fuse_value);
+        } break;
+        case MeasApKeyRevocationFuses: {
+            auto& key_revocation_fuse_value = *std::bit_cast<uint32_t*>(buffer);
+            nv::spdm::ap_measurement::get_ap_key_revocation_fuses(key_revocation_fuse_value);
+        } break;
+        case MeasApMetadataHash: {
+            auto& hash_data = *std::bit_cast<
+                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
+            nv::spdm::ap_measurement::get_ap_metadata_hash(hash_data);
+        } break;
+        case MeasApFirmwareSecurityVersion: {
+            auto& security_version = *std::bit_cast<uint64_t*>(buffer);
+            nv::spdm::ap_measurement::get_ap_firmware_security_version(security_version);
+        } break;
+        case MeasApFirmwareVersion: {
+            auto& firmware_version = *std::bit_cast<nv::fw_parser::ap::ApFwVersion*>(buffer);
+            nv::spdm::ap_measurement::get_ap_firmware_version(firmware_version);
+        } break;
+        case MeasApBootStatus: {
+            auto& authenticated_status = *std::bit_cast<uint8_t*>(buffer);
+            nv::spdm::ap_measurement::get_ap_authenticated_status(authenticated_status);
+        } break;
+
+        case MeasApType: {
+            auto& ap_type = *std::bit_cast<std::array<uint8_t, 4>*>(buffer);
+            nv::spdm::ap_measurement::get_ap_type(ap_type);
+            break;
+        }
+        case MeasRomPatchCmac: {
+            auto& measurement_rom_patch_cmac = *std::bit_cast<std::array<uint8_t, 16>*>(buffer);
+            measurement_rom_patch_cmac.fill(0);
+            // TODO: remove this after testing
+            // measurement_rom_patch_cmac       = nv::spdm::Task::get_measurement_cache()
+            //                                  .measurement_rom_patch_cmac;
+            break;
+        }
         case MeasReservedIndex20:
-        case MeasReservedIndex21:
         case MeasReservedIndex22:
         case MeasReservedIndex23:
         case MeasReservedIndex24:
@@ -469,9 +501,7 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex36:
         case MeasReservedIndex37:
         case MeasReservedIndex40:
-        case MeasReservedIndex41:
         case MeasReservedIndex42:
-        case MeasReservedIndex44:
         case MeasReservedIndex45: {
             using Reserved1b                     = std::array<uint8_t, 1>;
             constexpr uint8_t RawBitDefaultValue = 0xff;
@@ -480,17 +510,15 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             break;
         }
         case MeasReservedIndex4:
+        case MeasReservedIndex5:
+        case MeasReservedIndex6:
         case MeasReservedIndex7:
         case MeasReservedIndex8:
-        case MeasReservedIndex9:
         case MeasReservedIndex10:
         case MeasReservedIndex11:
         case MeasReservedIndex12:
-        case MeasReservedIndex16:
-        case MeasReservedIndex17:
         case MeasReservedIndex29:
         case MeasReservedIndex30:
-        case MeasReservedIndex31:
         case MeasReservedIndex32:
         case MeasReservedIndex33:
         case MeasReservedIndex46:
@@ -880,8 +908,7 @@ nv::debugtoken::LifecycleState get_device_lifecycle_state()
 void get_debug_token_status(nv::debugtoken::DebugTokenStatsT& status)
 {
     // TODO:: fill the real data
-    status.install_count = 0;
-    status.was_installed = 0;
+    status.currently_installed = 0;
     return;
 }
 

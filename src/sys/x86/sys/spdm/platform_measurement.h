@@ -22,5 +22,6 @@
 
 namespace sys::spdm {
 std::array<std::pair<uint32_t, uint32_t>, 0> get_fuse_index_mask_pair();
+std::array<uint8_t, 16>                      get_boot_rom_cmac_in_kernel();
 
-}
+}  // namespace sys::spdm

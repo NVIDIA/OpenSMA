@@ -39,7 +39,7 @@ At24c01::At24c01() : _memory(), _current_address(0)
     // Check that the memory size and page size are correct
     static_assert(MEMORY_SIZE == 128, "MEMORY_SIZE must be 128");
     static_assert(PAGE_SIZE == 8, "PAGE_SIZE must be 8");
-    static_assert(sys::i2c::I2CSlaveDriver::BufferSize >= 32, "I2C buffer size must be >= 32");
+    static_assert(sys::i2c::I2cSlaveBufferSize >= 32, "I2C buffer size must be >= 32");
 
     // Initialize memory to 0xFF (unprogrammed state)
     _memory.fill(ERASED_MEMORY);
@@ -92,9 +92,8 @@ void At24c01::i2c_read(uint8_t& return_data, [[maybe_unused]] bool new_transacti
  * @param i2c_data Array containing the write data (first byte is address)
  * @param data_length Number of bytes to write (including address byte)
  */
-void At24c01::i2c_write(
-    const std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-    uint8_t                                                          data_length)
+void At24c01::i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                        uint8_t                                                  data_length)
 {
     // Validate input parameters
     if (data_length == 0) {

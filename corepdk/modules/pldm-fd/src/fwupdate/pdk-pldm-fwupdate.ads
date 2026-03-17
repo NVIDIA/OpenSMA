@@ -345,7 +345,7 @@ package Pdk.Pldm.Fwupdate is
       Dl_Send_Time            : NvU32;                           --  request fw data time
       Dl_M0_Time              : NvU32;                           --  transfer 4k time
       Dl_M1_Time              : NvU32;                           --  erase/program 4k time
-      Trasnfer_Fail_CC : NvU8;                            --  record fail CC during download state
+      Transfer_Fail_CC : NvU8;                            --  record fail CC during download state
       Verify_Fail_CC          : NvU8;                            --  record fail cc for verify
       Current_Rate            : NvU8;                            --  current rate
       Limited_Rate : NvU8;                            --  limited rate 16 => 8 => 4 => 2 => 2 => 2 ...
@@ -356,6 +356,7 @@ package Pdk.Pldm.Fwupdate is
       Fw_Data_Buffer          : Arr_Pldm_Fw_Data_Buffer_Record; --  Fw data buffer
       Metadata                : Pldmfw_Metadata; --  Metadata version info
       Auth_Request_Id         : NvU32;                           --  authentication request id
+      Write_Fail_Retry        : NvU8;                            --  is write fail retry
    end record;
 
    pragma Convention (C, Pldm_Context);

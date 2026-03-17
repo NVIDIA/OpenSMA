@@ -43,8 +43,8 @@ public:
 
     // Handles I2C write to the device.
     // Parent task must pull and manage interrupts and output changes afterwards.
-    void i2c_write(std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-                   uint8_t                                                    data_length);
+    void i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                   uint8_t                                            data_length);
 
     // Returns the current channel
     // This is for parent class to route I2C signals internally

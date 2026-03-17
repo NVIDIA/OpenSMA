@@ -64,6 +64,12 @@ public:
     void           recover_spi_endpoint();
     bool           check_vbus();
 
+    // VCOM (UART bridge) stubs
+    static void  vcom_rearm_rx(void* handle, uint8_t* buffer);
+    static bool  vcom_send(void* handle, uint8_t* data, uint32_t length);
+    static void* get_vcom_handle();
+    static bool  is_vcom_ready();
+
     static usb_status_t
     usb_devicemctpcallback(class_handle_t handle, uint32_t event, void* param);
     static usb_status_t

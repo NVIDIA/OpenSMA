@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 #include "nv/flash/task.h"
 #include "nv/ipc/supervisor.h"
@@ -44,24 +45,13 @@ Flash::read(Address address, const std::span<uint8_t>& buffer, nv::ipc::Queue::U
              or (address + buffer.size() <= MaxAddress))) {
         return Status::InvalidParam;
     }
+    const uintptr_t address_ptr{address};
 
-    if (sys::ipc::is_in_isr()) {
-        memcpy(buffer.data(),
-               std::bit_cast<uint8_t*>(buffer.data() - buffer.data())
-                   + static_cast<size_t>(address),
-               buffer.size());
+    if (sys::ipc::is_in_isr() || ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Flash
+        || !sys::ipc::is_scheduler_run()) {
+        memcpy(buffer.data(), std::bit_cast<uint8_t*>(address_ptr), buffer.size());
         return Status::Ok;
     }
-
-#ifdef NV_COVERAGE
-    if (!sys::ipc::is_scheduler_run()) {
-        memcpy(buffer.data(),
-               std::bit_cast<uint8_t*>(buffer.data() - buffer.data())
-                   + static_cast<size_t>(address),
-               buffer.size());
-        return Status::Ok;
-    }
-#endif
 
     uint32_t buffer_length = 0;
     if (buffer.size() <= BufferSize) {
@@ -390,6 +380,20 @@ Status Flash::read_cmpa(const std::span<uint8_t>& buffer,
     uint32_t buffer_length = 0;
     if (buffer.size() <= BufferSize) {
         buffer_length = static_cast<uint32_t>(buffer.size());
+    }
+
+    const uint32_t CmpaBaseAddress = 0x1004000;
+    // Check for overflow before addition to pass coverity
+    if (offset > std::numeric_limits<uint32_t>::max() - CmpaBaseAddress) {
+        return Status::InvalidParam;
+    }
+    const uintptr_t address_ptr{CmpaBaseAddress + offset};
+
+    if (!nv::ipc::Supervisor::is_scheduler_run() || sys::ipc::is_in_isr()
+        || ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Flash
+        || ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Timer) {
+        memcpy(buffer.data(), std::bit_cast<uint8_t*>(address_ptr), buffer.size());
+        return Status::Ok;
     }
 
     const Request       Req = {.header = RequestHeader(RequestType::CmpaRead),

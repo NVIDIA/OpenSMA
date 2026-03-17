@@ -33,22 +33,23 @@ typedef struct
     uint8_t  root_hash[nv::spdm::crypto::Sha384HashSize];
 } CertchainheaderT;
 
-constexpr uint8_t  MaxSlots                = 8;
-constexpr uint16_t MaxCertChainLength      = 4096;
-constexpr uint16_t MaxSingleCertLength     = nv::spdm::certlib::MaxCertSize;
-constexpr uint16_t PrivateKeyLength        = 48;
-constexpr uint32_t DevUuidRamAddr          = 0x01100000u;
-constexpr uint32_t L3CertPhyAddr           = 0xec000;
-constexpr uint32_t L4CertRamAddr           = 0x20000060u;
-constexpr uint32_t L4PubKeyRamAddr         = 0x20000000u;
-constexpr uint32_t AkCertRamAddr0          = 0x200008F0u;
-constexpr uint32_t AkCertRamAddr1          = 0x20001980u;
-constexpr uint32_t AkSignatureRamAddr0     = 0x20002200u;
-constexpr uint32_t AkSignatureRamAddr1     = 0x20002260u;
-constexpr uint32_t AkPriKeyRamAddr0        = 0x20000860u;
-constexpr uint32_t AkPriKeyRamAddr1        = 0x200018F0u;
-constexpr uint32_t FmcOrdinalNumberRamAddr = 0x200022C0u;
-constexpr uint32_t L4CsrRamAddr            = 0x200010F0u;
+constexpr uint8_t  MaxSlots                   = 8;
+constexpr uint16_t MaxCertChainLength         = 4096;
+constexpr uint16_t MaxSingleCertLength        = nv::spdm::certlib::MaxCertSize;
+constexpr uint16_t PrivateKeyLength           = 48;
+constexpr uint32_t DevUuidRamAddr             = 0x01100000u;
+constexpr uint32_t L3CertPhyAddr              = 0xec000;
+constexpr uint32_t L4CertRamAddr              = 0x20000060u;
+constexpr uint32_t L4PubKeyRamAddr            = 0x20000000u;
+constexpr uint32_t AkCertRamAddr0             = 0x200008F0u;
+constexpr uint32_t AkCertRamAddr1             = 0x20001980u;
+constexpr uint32_t AkSignatureRamAddr0        = 0x20002200u;
+constexpr uint32_t AkSignatureRamAddr1        = 0x20002260u;
+constexpr uint32_t AkPriKeyRamAddr0           = 0x20000860u;
+constexpr uint32_t AkPriKeyRamAddr1           = 0x200018F0u;
+constexpr uint32_t FmcOrdinalNumberRamAddr    = 0x200022C0u;
+constexpr size_t   FmcOrdinalNumberStructSize = 0x5;
+constexpr uint32_t L4CsrRamAddr               = 0x200010F0u;
 
 constexpr nv::spdm::certlib::CertArray
     HardCodeL1Cert = (common::build::Mode == common::build::Modes::Dev)

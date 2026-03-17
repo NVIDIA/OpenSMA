@@ -35,7 +35,7 @@ sign-download-mbi:
 	# Generate PLDM fwpkg for mcu binary fw
 	$(ubs-build) "FWPKG" "$(UBS_TARGET_FWPKG)"
 
-	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --out $(UBS_TARGET_FWPKG)
+	${PLDMPKG} $(PLDMPKG_CFG) $(UBS_TARGET_SIGNED) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --compstamp "${COMP_STAMP}" --out $(UBS_TARGET_FWPKG)
 
 sign-download-sb:
 	if [ ! -f "$(SIGN_SB_REQ)" ]; then \
@@ -55,7 +55,7 @@ sign-download-sb:
 
 	@if [ -f "$(PLDMPKG_RECOVERY_CFG)" ]; then \
 		echo "Using project config: $(PLDMPKG_RECOVERY_CFG)"; \
-		${PLDMPKG} $(PLDMPKG_RECOVERY_CFG) $(UBS_TARGET_SB) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --out $(UBS_TARGET_SB_FWPKG); \
+		${PLDMPKG} $(PLDMPKG_RECOVERY_CFG) $(UBS_TARGET_SB) --apsku "${AP_SKU}" --ssdid "${SSDID}" --pkgver "${CHIP}PkgMcufw-${FW_VERSION}" --compver "${FW_VERSION}" --compstamp "${COMP_STAMP}" --out $(UBS_TARGET_SB_FWPKG); \
 	else \
 		echo "Not found config file, will not generate PLDM fwpkg for mcu recovery fw"; \
 	fi

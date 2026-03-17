@@ -81,6 +81,23 @@ bool Driver::enable_spi_rx()
 
 void Driver::recover_spi_endpoint() {}
 
+void Driver::vcom_rearm_rx(void* /* handle */, uint8_t* /* buffer */) {}
+
+bool Driver::vcom_send(void* /* handle */, uint8_t* /* data */, uint32_t /* length */)
+{
+    return false;
+}
+
+void* Driver::get_vcom_handle()
+{
+    return nullptr;
+}
+
+bool Driver::is_vcom_ready()
+{
+    return false;
+}
+
 }  // namespace sys::usb
 
 // NOLINTEND

@@ -50,6 +50,10 @@ enum class OobBus
     Spi0,
     Spi1,
     Spi2,
+    DsI2c4,
+    DsI2c5,
+    DsI2c6,
+    DsI2c7,
     End
 };
 

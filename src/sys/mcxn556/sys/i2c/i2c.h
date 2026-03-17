@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -21,8 +21,13 @@
 #include <fsl_lpi2c.h>
 
 #include "nv/i2c/port.h"
+#include "nv/i2c/common.h"
+#include "nv/i2c/slave_function.h"
 
 namespace sys::i2c {
+
+using nv::i2c::SlaveFunction;
+using nv::i2c::SlaveFunctionEntry;
 
 enum class I2cCustomizeCommand : uint8_t
 {
@@ -36,13 +41,29 @@ using I2cBuffer             = std::array<uint8_t, BufferSize>;
 class Driver
 {
 public:
-    void             bind(nv::i2c::Port port, void* task);
-    void             init();
-    void             start();
-    bool             write(std::span<uint8_t> data);
-    uint8_t          address();
-    bool             get_status(uint8_t address);
-    static IRQn_Type get_irq(nv::i2c::Port port);
+    /// Target context used by slave callbacks
+    struct TargetContex
+    {
+        I2cBuffer     buffer;
+        void*         task;
+        bool          transmit;
+        SlaveFunction function;
+    };
+
+    void               bind(nv::i2c::Port port, void* task);
+    void               init();
+    void               start(bool enable_target);
+    bool               write(std::span<uint8_t> data);
+    uint8_t            address();
+    static void        set_address(nv::i2c::Port port, uint8_t address);
+    bool               get_status(uint8_t address);
+    static IRQn_Type   get_irq(nv::i2c::Port port);
+    nv::i2c::I2cStatus i2c_read(uint8_t            address,
+                                std::span<uint8_t> buffer,
+                                nv::i2c::I2cFlags  flags = nv::i2c::I2cFlags::NoFlag);
+    nv::i2c::I2cStatus i2c_write(uint8_t            address,
+                                 std::span<uint8_t> buffer,
+                                 nv::i2c::I2cFlags  flags = nv::i2c::I2cFlags::NoFlag);
 
 private:
     struct Lpi2cHandle
@@ -57,14 +78,8 @@ private:
         void*     task;
     };
 
-    struct TargetContex
-    {
-        I2cBuffer buffer;
-        void*     task;
-        bool      transmit;
-    };
-
     LPI2C_Type*      _base;
+    nv::i2c::Port    _port;
     Lpi2cHandle      _lpi2c_handle;
     ControllerContex _controller_context;
     TargetContex     _target_context;
@@ -77,8 +92,15 @@ private:
                                            void*                  user_data);
     static void
     target_callback(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
+    static void
+    target_callback_lookup(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
+    static void
+    target_callback_eeprom(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
 };
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data);
+
+/// Lookup slave function based on port and address (defined in i2c.cpp with config access)
+SlaveFunction get_slave_function(nv::i2c::Port port, uint8_t address);
 
 }  // namespace sys::i2c

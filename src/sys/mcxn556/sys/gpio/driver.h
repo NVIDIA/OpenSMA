@@ -30,6 +30,20 @@ namespace sys::gpio {
 class Driver
 {
 public:
+    template<uint32_t port, uint32_t pin>
+    static void write(uint8_t data)
+    {
+        static_assert(is_pin_valid(port, pin), "Invalid pin");
+        GPIO_PinWrite(std::to_array(GPIO_BASE_PTRS)[port], pin, data);
+    }
+
+    template<uint32_t port, uint32_t pin>
+    static uint8_t read()
+    {
+        static_assert(is_pin_valid(port, pin), "Invalid pin");
+        return GPIO_PinRead(std::to_array(GPIO_BASE_PTRS)[port], pin);
+    }
+
 protected:
     static void init();
 
@@ -40,7 +54,13 @@ protected:
                                                                      Gpio4ValidMask,
                                                                      Gpio5ValidMask};
 
-    static bool is_pin_valid(nv::gpio::GpioPort port, nv::gpio::GpioPin pin);
+    constexpr static bool is_pin_valid(nv::gpio::GpioPort port, nv::gpio::GpioPin pin)
+    {
+        if (pin >= PinsPerPort || port >= std::size(GPIO_BASE_ADDRS)) {
+            return false;
+        }
+        return (ValidPinMasks[port] & (1U << pin)) != 0;
+    }
 
     static GPIO_Type* get_gpio_instance(nv::gpio::GpioPort port);
 

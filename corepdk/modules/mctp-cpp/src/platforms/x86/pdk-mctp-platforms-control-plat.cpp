@@ -20,15 +20,15 @@
 #include "app/pdk-mctp-app-enums.h"
 #include "app/pdk-mctp-app-packet-plat.h"
 #include "app/pdk-mctp-app-router-plat.h"
-#include "pdk-cmn-console.h"
 #include "pdk-mctp-platforms-enums.h"
+#include "pdk/cmn/log/log.h"
 
 void pdk::mctp::platforms::on_enumerate_plat()
 {
-    pdk::cmn::console::info("MCTP: Enumerate");
+    pdk::cmn::log::here().info("MCTP: Enumerate");
 }
 
 void pdk::mctp::platforms::on_routing_info_update_plat()
 {
-    pdk::cmn::console::info("MCTP: Update Routing Table");
+    pdk::cmn::log::here().info("MCTP: Update Routing Table");
 }

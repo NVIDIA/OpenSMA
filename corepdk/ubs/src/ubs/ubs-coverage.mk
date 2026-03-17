@@ -24,7 +24,8 @@ endif
 
 # -- sources ----------------------------------------------------------------------------------
 # add the coverage on exit hook
-UBS_SRCS += $(UBS_PATH_ROOT)/coverage/ubs-coverage.cpp 
+UBS_SRCS += $(UBS_PATH_ROOT)/coverage/ubs-coverage.cpp
+UBS_SRCS += $(UBS_CMN_LOG) $(UBS_CMN_FLOWCONTROL)
 
 # -- global defines ---------------------------------------------------------------------------
 GD_UBS_COVERAGE := 1

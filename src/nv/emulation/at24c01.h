@@ -101,8 +101,8 @@ public:
      * @param i2c_data Array containing the write data (first byte is address)
      * @param data_length Number of bytes to write (including address byte)
      */
-    void i2c_write(const std::array<uint8_t, sys::i2c::I2CSlaveDriver::BufferSize>& i2c_data,
-                   uint8_t data_length);
+    void i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                   uint8_t                                                  data_length);
 
     /**
      * @brief Get the current memory contents

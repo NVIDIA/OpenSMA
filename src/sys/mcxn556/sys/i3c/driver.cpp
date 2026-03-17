@@ -24,6 +24,8 @@
 #include "nv/i3c/task.h"
 #include "nv/logger/log.h"
 #include "nv/nv.h"
+#include "fsl_i3c_edma.h"
+#include "sys/smartdma/driver.h"
 
 namespace {
 
@@ -128,6 +130,9 @@ nv::i3c::Driver::Driver(
 , _event(nv::ipc::Event::make(event_id))
 , _is_gpu(is_gpu)
 {
+#ifdef CPU_MCXN556SCDF
+    static_assert(nv::ipc::EnableSmartDMA, "SmartDMA is not enabled for MCXN556SCDF");
+#endif
     I3C_MasterGetDefaultConfig(&_master_config);
     _master_config.baudRate_Hz.i2cBaud          = freq.i2c;
     _master_config.baudRate_Hz.i3cPushPullBaud  = freq.i3c_pp;
@@ -346,6 +351,10 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
         nv::logger::info(nv::logger::Event::I3CSetAddr,
                          {static_cast<uint8_t>(list[index].dynamicAddr)});
     }
+    if (count != address_list.size() && _is_gpu == false) {
+        logger::info(logger::Event::I3CDaaMismatch, {count, address_list.size()});
+        return false;
+    }
     return true;
 }
 
@@ -431,6 +440,9 @@ nv::i3c::Driver::Status nv::i3c::Driver::transfer(void* args, uint8_t& length)
             continue;
         }
         if (!events.value()) {
+            if constexpr (nv::ipc::EnableSmartDMA) {
+                sys::smartdma::Driver::log_status(_i3c_m_handle);
+            }
             status = Status::Timeout;
             task.delay(10ms);
         }
@@ -442,7 +454,18 @@ void nv::i3c::Driver::on_ibi(void* args)
 {
     auto& task   = *static_cast<nv::i3c::Task*>(_task);
     auto& handle = *static_cast<i3c_master_edma_handle_t*>(args);
-    task.on_ibi(handle.ibiAddress, std::span<uint8_t>(handle.ibiBuff, handle.ibiPayloadSize));
+    if constexpr (nv::ipc::EnableSmartDMA) {
+        auto instance = I3C_GetInstance(handle.base);
+        auto ibi_data = sys::smartdma::Driver::get_ibi_data(instance);
+        task.on_ibi(
+            ibi_data->address,
+            std::span<volatile uint8_t>(static_cast<volatile uint8_t*>(&ibi_data->buf[0]),
+                                        static_cast<size_t>(ibi_data->payload_size)));
+    }
+    else {
+        task.on_ibi(handle.ibiAddress,
+                    std::span<uint8_t>(handle.ibiBuff, handle.ibiPayloadSize));
+    }
 }
 
 void nv::i3c::Driver::set_event(Event event)
@@ -663,4 +686,53 @@ bool nv::i3c::Driver::gpu_query_i3c_mode(uint8_t address, bool& i3c)
         default: result = false;
     }
     return result;
+}
+
+bool nv::i3c::Driver::gpu_configure_cms1(uint8_t address)
+{
+    constexpr uint8_t  Command = 0x29;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    write_buffer[1] = 0x06;
+    write_buffer[2] = 0x01;
+    write_buffer[3] = 0x00;
+    write_buffer[4] = 0x00;
+    write_buffer[5] = 0x00;
+    write_buffer[6] = 0x00;
+    write_buffer[7] = 0x00;
+    auto status     = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 8),
+                      std::span<uint8_t>(read_buffer.data(), 0));
+    return status == nv::i2c::I2cStatus::Ok ? true : false;
+}
+
+bool nv::i3c::Driver::gpu_program_cms1(uint8_t address, std::span<uint8_t> buffer)
+{
+    constexpr uint8_t  Command = 0x2b;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    write_buffer[1] = static_cast<uint8_t>(buffer.size());
+    std::memcpy(write_buffer.data() + 2, buffer.data(), buffer.size());
+    auto status = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 2 + buffer.size()),
+                      std::span<uint8_t>(read_buffer.data(), 0));
+    return status == nv::i2c::I2cStatus::Ok ? true : false;
+}
+
+bool nv::i3c::Driver::gpu_read_cms1(uint8_t address, std::span<uint8_t> buffer)
+{
+    constexpr uint8_t  Command = 0x2b;
+    nv::i2c::I2cBuffer write_buffer{};
+    nv::i2c::I2cBuffer read_buffer{};
+    write_buffer[0] = Command;
+    auto status     = i2c(address,
+                      std::span<uint8_t>(write_buffer.data(), 1),
+                      std::span<uint8_t>(read_buffer.data(), buffer.size() + 1));
+    if (status == nv::i2c::I2cStatus::Ok) {
+        std::memcpy(buffer.data(), read_buffer.data() + 1, buffer.size());
+        return true;
+    }
+    return false;
 }

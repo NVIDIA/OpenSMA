@@ -59,4 +59,9 @@ uint32_t Driver::get_auth_result()
     return 0;
 }
 
+void Driver::set_stack_cookie()
+{
+    return;
+}
+
 // NOLINTEND
