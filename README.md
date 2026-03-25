@@ -48,7 +48,7 @@ tar -xvzf SDK_25_09_00_MCXN556S.tar.gz -C libexec/sdk/SDK_25_09_00_MCXN556S
 ### MCU SDK ###
 ```
 cd libexec/sdk/SDK_25_09_00_MCXN556S
-patch -p1 -N < ../../patch/mcu.patch
+xz -dc ../../patch/mcu.patch.xz | patch -p1 -N
 ```
 
 ## Build and Sign FW ##

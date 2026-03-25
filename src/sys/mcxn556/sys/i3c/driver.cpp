@@ -36,14 +36,18 @@ static void ibi_callback([[maybe_unused]] I3C_Type* base,
 {
     auto& driver = *static_cast<nv::i3c::Driver*>(handle->userData);
     if (ibi_state != kI3C_IbiReady) {
-        // NOLINTNEXTLINE: use nvlog instead
-        DbgConsole_Printf("Ignore IBI, state is %d\n", ibi_state);
+        nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiState.unique_id,
+                                         nv::logger::Level::Info,
+                                         {static_cast<uint8_t>(ibi_state)});
         return;
     }
     switch (ibi_type) {
         case kI3C_IbiNormal: driver.on_ibi(static_cast<void*>(handle)); break;
-        // NOLINTNEXTLINE: use nvlog instead
-        default: DbgConsole_Printf("Ignore IBI, type is %d\n", ibi_type); return;
+        default:
+            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiType.unique_id,
+                                             nv::logger::Level::Info,
+                                             {static_cast<uint8_t>(ibi_type)});
+            return;
     }
 }
 

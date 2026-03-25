@@ -39,7 +39,7 @@ build:
     - ln -sf /sdk/SDK_25_09_00_MCXN556S ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
     # Patch SDK_25_09_00_MCXN556S
     - cd ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
-    - patch -p1 -N < ${CI_PROJECT_DIR}/libexec/patch/mcu.patch
+    - xz -dc ${CI_PROJECT_DIR}/libexec/patch/mcu.patch.xz | patch -p1 -N
     # Create make symlink
     - mkdir -p ${CI_PROJECT_DIR}/corepdk/ubs/bin
     - ln -sf /usr/bin/make ${CI_PROJECT_DIR}/corepdk/ubs/bin/make

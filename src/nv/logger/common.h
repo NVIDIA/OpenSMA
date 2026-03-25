@@ -151,6 +151,8 @@ struct Event
     static constexpr EventStructItem I3CSmartDmaDebug      = {0x0616, Level::Info};
     static constexpr EventStructItem I3CTxOverThreshold    = {0x0618, Level::Info};
     static constexpr EventStructItem I3CDaaMismatch        = {0x0619, Level::Error};
+    static constexpr EventStructItem I3CIgnoreIbiState     = {0x061a, Level::Info};
+    static constexpr EventStructItem I3CIgnoreIbiType      = {0x061b, Level::Info};
     // MCTP
     static constexpr EventStructItem MctpApPgoodEventTrigger           = {0x0700, Level::Info};
     static constexpr EventStructItem MctpApPgoodGpioState              = {0x0701, Level::Info};
