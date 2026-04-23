@@ -51,9 +51,8 @@ bool Vendor::process(const Packet& rx, Packet& tx)
     bool  result       = true;
 
     switch (command_code) {
-        case VdmCmd::QueryBootStatus: break;
-        case VdmCmd::DownloadLog    : on_download_log(rx, tx); break;
-        case VdmCmd::SelfTest       : on_self_test(rx, tx); break;
+        case VdmCmd::DownloadLog: on_download_log(rx, tx); break;
+        case VdmCmd::SelfTest   : on_self_test(rx, tx); break;
         case VdmCmd::BackgroundCopy:
             if constexpr (nv::common::build::IsStreamBoot == false) {
                 on_background_copy(rx, tx);
@@ -85,8 +84,7 @@ bool Vendor::action(const Packet& rx, Packet& tx) const
     auto  command_code = static_cast<nv::mctp::VdmCmd>(vdr.command_code);
 
     switch (command_code) {
-        case VdmCmd::QueryBootStatus: break;
-        case VdmCmd::SelfTest       : break;
+        case VdmCmd::SelfTest: break;
         case VdmCmd::BackgroundCopy:
             if constexpr (nv::common::build::IsStreamBoot == false) {
                 action_background_copy(rx, tx);
@@ -766,11 +764,11 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 vtx.data[1] = InvalidRequestType;
                 break;
         }
-        if (vtx.data[1] != ProgramSuccess) {
-            vtx.completion_code = Ccode::ErrorGeneral;
-        }
-        return;
     }
+    if (vtx.data[1] != ProgramSuccess) {
+        vtx.completion_code = Ccode::ErrorGeneral;
+    }
+    return;
 }
 void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
 {

@@ -63,7 +63,7 @@ void LstpTask::entrypoint(void* params)
 
 [[noreturn]] void LstpTask::start()
 {
-    LstpGpioInit();
+    _irq_config.fill(LstpGpioIrqConfig::IrqDisabled);
 
     nv::bootloader::Driver::set_task_booted(_boot_event);
     auto& event = nv::ipc::Event::make(nv::ipc::EventId::Lstp);
@@ -88,6 +88,7 @@ void LstpTask::entrypoint(void* params)
 /*****************************************************
  * Process LSTP Requests from USB
  *****************************************************/
+
 LstpStatus LstpTask::submit_gpio_req(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
 {
     const auto& req_hdr     = from<LstpHdr>(req_buffer.data());
@@ -152,9 +153,9 @@ void LstpTask::process_gpio_req()
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(req.gpio_index));
-                uint8_t value          = 0;
-                auto    gpio_status    = nv::gpio::Driver::read(port, pin, value);
+                const auto& pin_info = PinConfigs.at(req.gpio_index);
+                uint8_t     value    = 0;
+                auto gpio_status = nv::gpio::Driver::read(pin_info.port, pin_info.pin, value);
                 if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
                     send_resp(0, LstpStatus_from(gpio_status));
                     return;
@@ -178,14 +179,14 @@ void LstpTask::process_gpio_req()
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto& pin_config = PinConfigs.at(req.gpio_index);
+                const auto& [port, pin, pin_config, _] = PinConfigs.at(req.gpio_index);
+                (void)_;
                 if (pin_config.direction != LstpGpioDirection::Output) {
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(req.gpio_index));
-                auto write_value       = static_cast<uint8_t>(req.value);
-                auto gpio_status       = nv::gpio::Driver::write(port, pin, write_value);
+                auto write_value = static_cast<uint8_t>(req.value);
+                auto gpio_status = nv::gpio::Driver::write(port, pin, write_value);
                 if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
                     send_resp(0, LstpStatus_from(gpio_status));
                     return;
@@ -221,7 +222,7 @@ void LstpTask::process_gpio_req()
                 return;
             }
             auto& resp = from<LstpGpioGetIrqConfigResponse>(&resp_buffer.data()[resp_offset]);
-            resp.irq_type  = _irq_states.at(req.gpio_index);
+            resp.irq_type  = _irq_config.at(req.gpio_index);
             resp_offset   += sizeof(LstpGpioGetIrqConfigResponse);
             break;
         }
@@ -235,12 +236,15 @@ void LstpTask::process_gpio_req()
                 send_resp(0, LstpStatus::Error);
                 return;
             }
-            const auto& pin_config = PinConfigs.at(req.gpio_index);
+            const auto& [port, pin, pin_config, allow_set_irq] = PinConfigs.at(req.gpio_index);
+            if (!allow_set_irq) {
+                send_resp(0, LstpStatus::NotSupported);
+                return;
+            }
             if (pin_config.direction != LstpGpioDirection::Input) {
                 send_resp(0, LstpStatus::Error);
                 return;
             }
-            const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(req.gpio_index));
             nv::gpio::InterruptSelect irq_sel = nv::gpio::InterruptSelect::InterruptSelect0;
             for (const auto& irq_config : nv::ipc::GpioInterruptSetup) {
                 if (std::get<0>(irq_config) == port && std::get<1>(irq_config) == pin) {
@@ -254,7 +258,7 @@ void LstpTask::process_gpio_req()
                 send_resp(0, LstpStatus_from(gpio_status));
                 return;
             }
-            _irq_states.at(req.gpio_index) = req.irq_type;
+            _irq_config.at(req.gpio_index) = req.irq_type;
             break;
         }
         default: send_resp(0, LstpStatus::NotSupported); return;
@@ -269,9 +273,13 @@ void LstpTask::process_gpio_req()
 
 void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
 {
-    uint8_t value          = 0;
-    const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(gpio_idx));
-    nv::gpio::Driver::read(port, pin, value);
+    if (!nv::usb::Task::is_lstp_device_connected()) {
+        return;
+    }
+
+    uint8_t     value    = 0;
+    const auto& pin_info = PinConfigs.at(gpio_idx);
+    nv::gpio::Driver::read(pin_info.port, pin_info.pin, value);
 
     LstpGpioIrqEventRequest req{};
     req.gpio_index = gpio_idx;
@@ -289,20 +297,39 @@ void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
 
 void LstpTask::process_gpio_irq()
 {
-    const LstpGpioIrqEventRequest event{};
+    LstpGpioIrqEventRequest event{};  // NOLINT(misc-const-correctness) recv() writes into event
+                                      // via Queue::Item
     auto  item      = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&event), sizeof(event));
     auto& irq_queue = nv::ipc::Queue::make(nv::ipc::QueueId::LstpGpioIrq);
 
+    // Find GPIO channel ID (assuming single GPIO channel)
+    const uint8_t ch_id = GetFirstChannelId(LstpChannels, LstpChannelType::Gpio);
+    if (ch_id == LstpNumChannels) {
+        return;
+    }
+
     while (irq_queue.size() > 0) {
-        if (irq_queue.recv(item, std::chrono::microseconds(0)) == nv::ipc::Queue::Status::Ok) {
-            LstpRouter::send_gpio_irq_event(event.gpio_index,
-                                            static_cast<uint8_t>(event.value));
-        }
-        else {
+        if (irq_queue.recv(item, std::chrono::microseconds(0)) != nv::ipc::Queue::Status::Ok) {
             break;
         }
+        if (event.value == LstpGpioState::High
+            && !(_irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Rising
+                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::BothEdge
+                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::High)) {
+            continue;
+        }
+        if (event.value == LstpGpioState::Low
+            && !(_irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Falling
+                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::BothEdge
+                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Low)) {
+            continue;
+        }
+        LstpRouter::send_gpio_irq_event(
+            ch_id, event.gpio_index, static_cast<uint8_t>(event.value));
     }
 }
+
+/*****************************************************/
 
 void LstpTask::LstpGpioInit()
 {
@@ -315,8 +342,8 @@ void LstpTask::LstpGpioInit()
 
     /* Initialize GPIOs from config */
     for (size_t i = 0; i < LstpGpioNum; ++i) {
-        const auto& pin_config = PinConfigs.at(i);
-        const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(i));
+        const auto& [port, pin, pin_config, _] = PinConfigs.at(i);
+        (void)_;
         auto direction = (pin_config.direction == LstpGpioDirection::Output) ? Direction::Output
                                                                              : Direction::Input;
         auto state     = (pin_config.default_output == LstpGpioState::High) ? GpioState::High
@@ -337,27 +364,6 @@ void LstpTask::LstpGpioInit()
 
         GpioDriver::init_pin(port, pin, direction, state);
         GpioDriver::init_pin_cfg(port, pin, pull_dir, pull_strength, open_drain);
-    }
-
-    /* Initialize interrupt GPIOs from config */
-    _irq_states.fill(LstpGpioIrqConfig::IrqDisabled);
-    for (size_t gpio_idx = 0; gpio_idx < LstpGpioNum; ++gpio_idx) {
-        const auto& pin_config = PinConfigs.at(gpio_idx);
-        if (pin_config.direction == LstpGpioDirection::Input) {
-            const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(gpio_idx));
-            for (const auto& irq_config : nv::ipc::GpioInterruptSetup) {
-                auto irq_port = std::get<0>(irq_config);
-                auto irq_pin  = std::get<1>(irq_config);
-                auto irq_det  = std::get<2>(irq_config);
-                auto irq_sel  = std::get<3>(irq_config);
-                if (irq_port == port && irq_pin == pin) {
-                    auto lstp_irq_det        = LstpGpioIrqConfig_from(irq_det);
-                    _irq_states.at(gpio_idx) = lstp_irq_det;
-                    GpioDriver::init_interrupt(irq_port, irq_pin, irq_det, irq_sel);
-                    break;
-                }
-            }
-        }
     }
 }
 }  // namespace nv::lstp

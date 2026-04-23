@@ -16,9 +16,11 @@
  * limitations under the License.
  */
 #include "nv/common/debug.h"
+#include "nv/gpio/driver.h"
 #include "nv/iox/task.h"
 
 #include <bit>
+#include <cstdint>
 #include <span>
 #include <climits>
 #include <cstring>
@@ -31,8 +33,6 @@
 #include "nv/usb/task.h"
 #include "sys/i2c/utils.h"
 #include "nv/iox/common.h"
-
-using namespace std::chrono_literals;
 
 namespace nv::iox {
 
@@ -73,6 +73,7 @@ Task::Task() : ipc::Task(ipc::TaskId::Iox, "Iox"), ioexp()
             }
         }
     }
+    sync_virtual_gpio_shadow();
 }
 
 [[noreturn]] void Task::main()
@@ -100,6 +101,9 @@ Task::Task() : ipc::Task(ipc::TaskId::Iox, "Iox"), ioexp()
                 break;
             case RequestType::GpioSpoofingUpdate:
                 handle_gpio_spoofing_update(std::span<uint8_t>(request.data));
+                break;
+            case RequestType::FilterUpdate:
+                handle_filter_update(std::span<uint8_t>(request.data));
                 break;
             default:
                 nv::error("Iox: Unknown request type %d\n", static_cast<int>(request.type));
@@ -179,7 +183,8 @@ bool Task::send_i2c_request(ipchandler::Id    src_id,
 bool Task::send_vrgpio_request(uint8_t                  address,
                                Operation                operation,
                                std::span<const uint8_t> pins,
-                               std::span<const uint8_t> vals)
+                               std::span<const uint8_t> vals,
+                               bool                     trigger_nsm_event)
 {
     // Create request
     Task::Request request{};
@@ -209,7 +214,9 @@ bool Task::send_vrgpio_request(uint8_t                  address,
     memcpy(&vrGpioRequest->pinVals[0], pins.data(), pins.size());
     memcpy(&vrGpioRequest->pinVals[0] + pins.size(), vals.data(), vals.size());
 
-    nv::mctp::Nsm::VirtualGpioEventTrigger(pins, vals);
+    if (trigger_nsm_event) {
+        nv::mctp::Nsm::VirtualGpioEventTrigger(pins, vals);
+    }
 
     // Create queue item with the full request size
     auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
@@ -301,6 +308,7 @@ void Task::handle_vrgpio_request(std::span<uint8_t> buffer)
         nv::error("Iox Write virtual GPIO failed\n");
         return;
     }
+    sync_virtual_gpio_shadow();
 }
 
 void Task::handle_i2c_request(std::span<uint8_t> buffer)
@@ -380,6 +388,24 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
                     nv::error("Iox Read failed\n");
                     break;
                 }
+
+                if (regn == static_cast<uint8_t>(Register::InputPort0)
+                    || regn == static_cast<uint8_t>(Register::InputPort1)) {
+                    apply_spoofing_to_input_port(offset, regn, read_buffer.at(i));
+                }
+
+                if (filter_en
+                    && (regn == static_cast<uint8_t>(Register::InputPort0)
+                        || regn == static_cast<uint8_t>(Register::InputPort1))) {
+                    for (uint8_t bit = 0; bit < 8; ++bit) {
+                        const auto& config = nv::ipc::IoxConfigs.at(offset).pinConfig.at(
+                            regn * 8 + bit);
+                        if (config.filter == FilterEnable::Enable) {
+                            read_buffer.at(i) &= ~(1U << bit);
+                            read_buffer.at(i) |= static_cast<uint8_t>(config.defaultVal) << bit;
+                        }
+                    }
+                }
             }
         }
     }
@@ -390,6 +416,9 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
                   WriteLength,
                   ReadLength,
                   static_cast<uint8_t>(status));
+    }
+    else {
+        sync_virtual_gpio_shadow();
     }
 
     if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
@@ -403,8 +432,8 @@ void Task::handle_gpio_spoofing_update(std::span<uint8_t> buffer)
 {
     auto* update = std::bit_cast<Task::GpioSpoofingUpdate*>(buffer.data());
 
-    // Convert Task::GpioSpoofingUpdate::Entry to SpoofingEntry array
-    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries> spoofEntries{};
+    spoofingActive  = update->spoofingActive;
+    numSpoofEntries = update->numEntries;
     for (uint8_t i = 0; i < update->numEntries && i < spoofEntries.size(); i++) {
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
         spoofEntries.at(i).gpioIndex = update->entries[i].gpioIndex;
@@ -412,9 +441,56 @@ void Task::handle_gpio_spoofing_update(std::span<uint8_t> buffer)
         spoofEntries.at(i).activated = update->entries[i].activated;
     }
 
-    // Update all IOX expander instances with the three parameters
-    for (auto& iox : ioexp) {
-        iox.setSpoofingConfig(update->spoofingActive, update->numEntries, spoofEntries);
+    sync_virtual_gpio_shadow();
+}
+
+void Task::apply_spoofing_to_input_port(uint8_t iox_offset, uint8_t regn, uint8_t& data)
+{
+    if (!spoofingActive) {
+        return;
+    }
+
+    const uint8_t pin_offset = (regn == static_cast<uint8_t>(Register::InputPort0)) ? 0U : 8U;
+
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+        const auto& pin_cfg = nv::ipc::IoxConfigs.at(iox_offset).pinConfig.at(pin_offset + bit);
+        const auto  port    = pin_cfg.port;
+        const auto  pin     = pin_cfg.pin;
+
+        // Only input GPIOs and virtual GPIOs are eligible for spoofing
+        if (port != nv::iox::vrPort) {
+            nv::gpio::Direction dir = nv::gpio::Direction::Input;
+            if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok
+                || dir != nv::gpio::Direction::Input) {
+                continue;
+            }
+        }
+
+        // Find the GPIO index in GpioSetup
+        uint16_t gpio_index = UINT16_MAX;
+        for (uint16_t g = 0; g < nv::ipc::GpioNum; ++g) {
+            if (std::get<0>(nv::ipc::GpioSetup.at(g)) == port
+                && std::get<1>(nv::ipc::GpioSetup.at(g)) == pin) {
+                gpio_index = g;
+                break;
+            }
+        }
+
+        const uint8_t default_val = (pin_cfg.val == nv::gpio::GpioState::Low) ? 0U : 1U;
+
+        bool spoofed = false;
+        for (uint8_t i = 0; i < numSpoofEntries && i < spoofEntries.size(); ++i) {
+            if (spoofEntries.at(i).activated && spoofEntries.at(i).gpioIndex == gpio_index) {
+                data    = (data & ~(1U << bit)) | (((default_val ^ 1U) & 0x01U) << bit);
+                spoofed = true;
+                break;
+            }
+        }
+
+        if (!spoofed) {
+            // Spoofing active but GPIO not in list — return default value
+            data = (data & ~(1U << bit)) | (default_val << bit);
+        }
     }
 }
 
@@ -451,6 +527,75 @@ bool Task::send_gpio_spoofing_update(bool                           spoofingActi
     }
 
     return true;
+}
+
+void Task::sync_virtual_gpio_shadow()
+{
+    if constexpr (IoxNum == 0) {
+        return;
+    }
+
+    constexpr uint16_t invalidIndex = UINT16_MAX;
+
+    for (size_t i = 0; i < IoxNum; ++i) {
+        const auto& cfg = nv::ipc::IoxConfigs.at(i);
+        for (uint8_t j = 0; j < pinNum; ++j) {
+            const auto& pc = cfg.pinConfig.at(j);
+            if (pc.port != nv::iox::vrPort) {
+                continue;
+            }
+
+            uint16_t gpio_index = invalidIndex;
+            for (uint16_t g = 0; g < nv::ipc::GpioNum; ++g) {
+                const auto& gc = nv::ipc::GpioSetup.at(g);
+                if (std::get<0>(gc) == pc.port && std::get<1>(gc) == pc.pin) {
+                    gpio_index = g;
+                    break;
+                }
+            }
+            if (gpio_index >= nv::ipc::GpioNum) {
+                continue;
+            }
+
+            const Register reg = (j < 8U) ? Register::InputPort0 : Register::InputPort1;
+            const uint8_t  bit = (j < 8U) ? j : static_cast<uint8_t>(j - 8U);
+            uint8_t        val = 0;
+            if (ioexp.at(i).read_reg(reg, val, static_cast<uint8_t>(i))
+                != nv::iox::Status::Ok) {
+                continue;
+            }
+            const auto level = static_cast<uint8_t>((val >> bit) & 0x01U);
+            nv::gpio::Driver::push_virtual_gpio_level(gpio_index, level);
+        }
+    }
+}
+
+bool Task::send_filter_update(bool enable)
+{
+    Task::Request request{};
+    request.type = Task::RequestType::FilterUpdate;
+
+    auto* payload = std::bit_cast<Task::FilterUpdateRequest*>(static_cast<void*>(request.data));
+    payload->filterEnable = enable;
+
+    auto request_item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request),
+                                             sizeof(Task::Request));
+
+    nv::ipc::Queue& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::Iox);
+    auto            status = (sys::ipc::is_in_isr() ? queue.send_isr(request_item)
+                                                    : queue.send(request_item));
+    if (status != nv::ipc::Queue::Status::Ok) {
+        return false;
+    }
+
+    return true;
+}
+
+void Task::handle_filter_update(std::span<uint8_t> buffer)
+{
+    auto* payload = std::bit_cast<Task::FilterUpdateRequest*>(
+        static_cast<void*>(buffer.data()));
+    filter_en = payload->filterEnable;
 }
 
 }  // namespace nv::iox

@@ -75,10 +75,37 @@ extern void vPortCancelThread(void* pxTaskToDelete);
 #define portTASK_FUNCTION_PROTO(vFunction, pvParameters) void vFunction(void* pvParameters)
 #define portTASK_FUNCTION(vFunction, pvParameters)       void vFunction(void* pvParameters)
 #define portMEMORY_BARRIER()                             __asm volatile("" ::: "memory")
+#define portPRIVILEGE_BIT                                ((UBaseType_t)0x0)
 
 extern unsigned long ulPortGetRunTime();
 #define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS() /* no-op */
 #define portGET_RUN_TIME_COUNTER_VALUE()         ulPortGetRunTime()
+
+// ARM Cortex-M intrinsic stubs (no-op on x86)
+#ifndef __DSB
+#define __DSB() ((void)0)
+#endif
+#ifndef __ISB
+#define __ISB() ((void)0)
+#endif
+#ifndef __DMB
+#define __DMB() ((void)0)
+#endif
+#ifndef __NOP
+#define __NOP() ((void)0)
+#endif
+#ifndef __disable_irq
+#define __disable_irq() ((void)0)
+#endif
+#ifndef __enable_irq
+#define __enable_irq() ((void)0)
+#endif
+#ifndef __get_PRIMASK
+#define __get_PRIMASK() (0U)
+#endif
+#ifndef __set_PRIMASK
+#define __set_PRIMASK(x) ((void)(x))
+#endif
 
 #ifdef __cplusplus
 }

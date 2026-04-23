@@ -55,6 +55,7 @@ enum class Ccode : uint8_t
     ErrorNotReady                = 0x04,
     ErrorUnsupportedCmd          = 0x05,
     ErrorUnsupportedMsgType      = 0x06,
+    ErrorInvalidOcpVersion       = 0x07,
     ErrorInsufficientSpace       = 0x80,  // Ccode for RoutInfoUpdate
     ErrorUpdateDbFail            = 0x81,
     ErrorInvalidStateForCommand  = 0x80,  // ImageCopyControl (NSM T6)
@@ -88,6 +89,12 @@ enum class Rcode : uint16_t
     ImageCopyCompleted             = 0x106,
     FlashWearMitigation            = 0x107,
     IncompleteComponentSet         = 0x108,
+
+    // RCode for Ccode ErrorInvalidData
+    InvalidSensorId        = 0x200,
+    InvalidThreshold       = 0x201,
+    InvalidSensorNumber    = 0x202,  // Leak Detection
+    InvalidThresholdNumber = 0x203,  // Leak Detection
 };
 
 enum class VdmCmd : uint8_t

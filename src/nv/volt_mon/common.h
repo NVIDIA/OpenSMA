@@ -59,12 +59,8 @@ enum class Status : uint8_t
     // error code
     AdcOneShotConvTimeout,
     AdcIsrNoValidReading,
-    AdcIsrNoValidSensorId,
-    InvalidAdcInstance,
     InvalidSensorId,
-    NoValidSensor,
     InvalidThreshold,
-    InvalidSensorInfoSize,
     NoMatchedSensorId,
     AdcOneShotConversionOnGoing,
 };

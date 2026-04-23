@@ -33,6 +33,7 @@ enum class TelemetryType : uint8_t
     ProductSpecific = 3,
     Gpio            = ProductSpecific,
     Cpld            = ProductSpecific + 1,
+    LeakDetect      = ProductSpecific + 2,
     Reserved        = 0xFF
 };
 

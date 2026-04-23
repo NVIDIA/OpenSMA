@@ -118,7 +118,7 @@ void Task::get_interface_info(PldmContextRecord&   pldm_context,
     }
 }
 
-bool Task::is_background_copy_automatic()
+bool Task::is_background_copy_automatic(bool log_init_setup)
 {
     flash::Data background_copy_policy{};
     flash::Data background_copy_policy_one_time{};
@@ -138,9 +138,11 @@ bool Task::is_background_copy_automatic()
     (void)flash::Flash::set_data(flash::Key::PdsBackgroundSetupOneTime,
                                  static_cast<flash::Data>(BackgroundCopyPolicy::Default));
 
-    nv::logger::info(nv::logger::Event::BackgroundCopyInitSetup,
-                     {static_cast<uint8_t>(background_copy_policy & UINT8_MAX),
-                      static_cast<uint8_t>(background_copy_policy_one_time & UINT8_MAX)});
+    if (log_init_setup) {
+        nv::logger::info(nv::logger::Event::BackgroundCopyInitSetup,
+                         {static_cast<uint8_t>(background_copy_policy & UINT8_MAX),
+                          static_cast<uint8_t>(background_copy_policy_one_time & UINT8_MAX)});
+    }
 
     // priority one time setup
     if (background_copy_policy_one_time
@@ -334,7 +336,7 @@ Task::Task()
 
             flash::Data update_state{};
             flash::Data allow_bg_copy{};
-            const bool  is_bgcopy_automatic = is_background_copy_automatic();
+            const bool  is_bgcopy_automatic = is_background_copy_automatic(true);
             auto        flash_status        = flash::Flash::get_data(flash::Key::PdsUpdateState,
                                                        update_state);
             if (flash_status != flash::Status::Ok) {
@@ -408,7 +410,8 @@ Task::Task()
                     } break;
                     case RequestType::AuthApFinish: {
                         uint8_t verify_cc = 0;
-                        get_ap_authentication_result(request.buffer[0], verify_cc);
+                        get_ap_authentication_result(
+                            pldm_context.comp_id, request.buffer[0], verify_cc);
                         ada_pldmfw_authenticate_handler(&pldm_context, verify_cc);
                     } break;
                     default: break;

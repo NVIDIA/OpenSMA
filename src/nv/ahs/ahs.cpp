@@ -66,6 +66,7 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
 , e1s_pin_in(config.input_pins)
 , e1s_pin_out(config.output_pins)
 , pgood_vals{}
+, pgood_valid_vals{}
 , prsntL_vals{}
 , perstL_vals{}
 {
@@ -88,6 +89,7 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
 
     // Initialize status arrays with default values
     pgood_vals.fill(false);
+    pgood_valid_vals.fill(false);
     prsntL_vals.fill(true);
     perstL_vals.fill(true);
 
@@ -129,6 +131,13 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
                                          nv::gpio::InterruptDetection::InterruptBothEdge,
                                          nv::gpio::InterruptSelect::InterruptSelect1);
 
+        if (EnablePerstLMonitoring) {
+            nv::gpio::Driver::init_interrupt(e1s_pin_in.at(bankDriveIndex).perst_l_port,
+                                             e1s_pin_in.at(bankDriveIndex).perst_l_pin,
+                                             nv::gpio::InterruptDetection::InterruptBothEdge,
+                                             nv::gpio::InterruptSelect::InterruptSelect1);
+        }
+
         // Trigger initial GPIO interrupt handling to establish baseline state
         gpio_interrupt(e1s_pin_in.at(bankDriveIndex).prsnt_l_port,
                        e1s_pin_in.at(bankDriveIndex).prsnt_l_pin,
@@ -158,6 +167,7 @@ AHS::AHS()
 , e1s_pin_in()
 , e1s_pin_out()
 , pgood_vals{}
+, pgood_valid_vals{}
 , prsntL_vals{}
 , perstL_vals{}
 {
@@ -251,7 +261,8 @@ void AHS::adc_interrupt([[maybe_unused]] sys::adc::AdcPeripheral peripheral,
     pgood_vals.at(driveIndex) = value > nhp::PgoodThreshold;
 
     // If power good status changed, trigger GPIO interrupt handling
-    if (pgood_vals.at(driveIndex) != oldPgood) {
+    if ((pgood_vals.at(driveIndex) != oldPgood) || !pgood_valid_vals.at(driveIndex)) {
+        pgood_valid_vals.at(driveIndex) = true;
         gpio_interrupt(0U, 0U, driveIndex);
     }
 }
@@ -386,6 +397,11 @@ void AHS::hotSwapTimerInterrupt(uint8_t driveIndex)
             pgood_vals.at(driveIndex), prsntL_vals.at(driveIndex), perstL, true);
 }
 
+void AHS::peripheral_recovery()
+{
+    i2c_driver.peripheral_recovery();
+}
+
 /**
  * @brief Updates the interrupt pin state based on IO expander status
  *
@@ -417,6 +433,9 @@ void AHS::updateInterruptPin()
  */
 void AHS::updateHotSwap(uint8_t driveIndex)
 {
+    if (!pgood_valid_vals.at(driveIndex)) {
+        return;
+    }
     const bool perstL = EnablePerstLMonitoring ? perstL_vals.at(driveIndex) : true;
     e1s_hssms.at(driveIndex)
         ->updateStateMachine(pgood_vals.at(driveIndex), prsntL_vals.at(driveIndex), perstL);

@@ -78,24 +78,11 @@ constexpr bool EnableLstp = true;
 
 namespace nv::lstp {
 
-constexpr uint16_t LstpGpioNum = 2;
+constexpr uint8_t  LstpNumChannels = 5;
+constexpr uint16_t LstpGpioNum     = 2;
 
 // clang-format off
-constexpr inline std::array<LstpGpioConfig, LstpGpioNum> PinConfigs{
-    {
-        {{"GPIO_LED"},LstpGpioDirection::Output,LstpGpioState::High,LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::NoPull,0,10,100,100,0,0,0},
-        {{"GPIO_INT"},LstpGpioDirection::Input, LstpGpioState::Low, LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::PullUp,0,10,100,100,0,0,0},
-    }
-};
-// clang-format on
-
-/** Maps LSTP PinConfigs idx to GpioSetup idx: PinConfigs[i] <-> GpioSetup[LstpGpioMap[i]] */
-constexpr inline std::array<uint8_t, LstpGpioNum> LstpGpioMap = {0, 1};
-
-constexpr uint8_t LstpNumChannels = 5;
-
-// clang-format off
-constexpr std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
+constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
     LstpChannelEntry{
         LstpChannelInfo{LstpChannelType::Management, 0, "MCU"},
         LstpManagementConfig{LSTP_VERSION, LstpNumChannels}
@@ -140,6 +127,9 @@ constexpr bool EnableSmartDMA = true;
 constexpr bool EnableSmartDMA = false;
 #endif
 
+// After USB bus reset while enumerated, record mailbox and soft-reset
+constexpr bool EnableUsbPortResetSelfReset = false;
+
 /// All Tasks must be part of this enum.
 enum class TaskId
 {
@@ -155,7 +145,6 @@ enum class TaskId
 #endif
     Pldm,
     Logger,
-    Spdm,
     Ssif,
     Ipc0,
     Ipc1,
@@ -164,6 +153,8 @@ enum class TaskId
     Flash      = Privileged + 1,
     I3c0       = Privileged + 2,
     Spi0       = Privileged + 3,
+    Diag       = Privileged + 4,
+    Spdm       = Privileged + 5,
     EndPrivileged,
     End   = EndPrivileged,
     Timer = End,
@@ -186,7 +177,6 @@ constexpr inline std::array<TaskInfo, int(TaskId::KernelEnd) + 1> TaskInfos{
 #endif
     TaskInfo{    TaskId::Pldm,    CoreId::Core0},
     TaskInfo{  TaskId::Logger,    CoreId::Core0},
-    TaskInfo{    TaskId::Spdm,    CoreId::Core0},
     TaskInfo{    TaskId::Ssif,    CoreId::Core0},
     TaskInfo{    TaskId::Ipc0,    CoreId::Core0},
     TaskInfo{    TaskId::Ipc1,    CoreId::Core1},
@@ -194,6 +184,8 @@ constexpr inline std::array<TaskInfo, int(TaskId::KernelEnd) + 1> TaskInfos{
     TaskInfo{   TaskId::Flash,    CoreId::Core0},
     TaskInfo{    TaskId::I3c0,    CoreId::Core0},
     TaskInfo{    TaskId::Spi0,    CoreId::Core0},
+    TaskInfo{    TaskId::Diag,    CoreId::Core0},
+    TaskInfo{    TaskId::Spdm,    CoreId::Core0},
     TaskInfo{   TaskId::Timer, CoreId::Abstract},
     TaskInfo{    TaskId::Idle, CoreId::Abstract},
     TaskInfo{ TaskId::Invalid,  CoreId::Invalid}
@@ -317,6 +309,7 @@ enum class EventId
     Spi2Event,
     LogEvent,
     SpdmTask,
+    DiagEvent,
     TaskBootStatus,
     TaskAliveStatus,
     Spi0EdmaDriverEvent,
@@ -342,6 +335,7 @@ constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
     EventInfo{          EventId::Spi2Event, get_core_from_task(TaskId::Invalid)},
     EventInfo{           EventId::LogEvent,  get_core_from_task(TaskId::Logger)},
     EventInfo{           EventId::SpdmTask,                        CoreId::Both},
+    EventInfo{          EventId::DiagEvent,    get_core_from_task(TaskId::Diag)},
     EventInfo{     EventId::TaskBootStatus,                       CoreId::Core0},
     EventInfo{    EventId::TaskAliveStatus,                        CoreId::Both},
     EventInfo{EventId::Spi0EdmaDriverEvent,    get_core_from_task(TaskId::Spi0)},
@@ -404,6 +398,8 @@ constexpr uint8_t UpStreamNum             = 2;
 constexpr uint8_t DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
 constexpr uint8_t RoutingInfoUpdateSize   = 4;
 constexpr uint8_t RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
+constexpr bool    EnableEndpointStatusChangeDebounce = false;
+constexpr auto    EndpointStatusChangePeriodMs       = 0;
 
 constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos{
     // Use MCU pg540 as downstream which address is 0x40
@@ -515,28 +511,46 @@ enum class TimerId
     Ap3Status,
     EepromUpdate,
     I2c3RepeatedStartTimeout,
+    EndpointStatusChangeStart,
+    EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     End
 };
 
 using TimerInfo = std::tuple<TimerId, CoreId>;
 
-constexpr inline std::array<TimerInfo, int(TimerId::End)> TimerInfos{
-    TimerInfo{           TimerId::MctpEnumerate,    get_core_from_task(TaskId::Mctp)},
-    TimerInfo{                    TimerId::Pldm,    get_core_from_task(TaskId::Pldm)},
-    TimerInfo{             TimerId::PerfMonitor,                       CoreId::Core0},
-    TimerInfo{   TimerId::MctpApPowerGoodEngage,    get_core_from_task(TaskId::Mctp)},
-    TimerInfo{              TimerId::Bootloader,                       CoreId::Core0},
-    TimerInfo{         TimerId::RuntimeWatchDog,                       CoreId::Core0},
-    TimerInfo{              TimerId::Gpu1Seneor, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{              TimerId::Gpu2Seneor, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{               TimerId::SmbSensor, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{       TimerId::SmbusCacheRefresh,    get_core_from_task(TaskId::Mctp)},
-    TimerInfo{               TimerId::Ap1Status, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{               TimerId::Ap2Status, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{               TimerId::Ap3Status, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{            TimerId::EepromUpdate, get_core_from_task(TaskId::Invalid)},
-    TimerInfo{TimerId::I2c3RepeatedStartTimeout,    get_core_from_task(TaskId::I2c3)}
-};
+namespace {
+constexpr auto make_timer_infos()
+{
+    std::array<TimerInfo, int(TimerId::End)> infos{};
+    int                                      idx = 0;
+
+    infos[idx++] = TimerInfo{TimerId::MctpEnumerate, get_core_from_task(TaskId::Mctp)};
+    infos[idx++] = TimerInfo{TimerId::Pldm, get_core_from_task(TaskId::Pldm)};
+    infos[idx++] = TimerInfo{TimerId::PerfMonitor, CoreId::Core0};
+    infos[idx++] = TimerInfo{TimerId::MctpApPowerGoodEngage, get_core_from_task(TaskId::Mctp)};
+    infos[idx++] = TimerInfo{TimerId::Bootloader, CoreId::Core0};
+    infos[idx++] = TimerInfo{TimerId::RuntimeWatchDog, CoreId::Core0};
+    infos[idx++] = TimerInfo{TimerId::Gpu1Seneor, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::Gpu2Seneor, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::SmbSensor, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::SmbusCacheRefresh, get_core_from_task(TaskId::Mctp)};
+    infos[idx++] = TimerInfo{TimerId::Ap1Status, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::Ap2Status, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::Ap3Status, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::EepromUpdate, get_core_from_task(TaskId::Invalid)};
+    infos[idx++] = TimerInfo{TimerId::I2c3RepeatedStartTimeout,
+                             get_core_from_task(TaskId::I2c3)};
+    for (int i = 0; i < DownStreamNum; ++i) {
+        infos[idx++] = TimerInfo{
+            static_cast<TimerId>(static_cast<int>(TimerId::EndpointStatusChangeStart) + i),
+            get_core_from_task(TaskId::Mctp)};
+    }
+
+    return infos;
+}
+}  // namespace
+
+constexpr inline std::array<TimerInfo, int(TimerId::End)> TimerInfos = make_timer_infos();
 
 using I2cTimerInfo = std::tuple<TimerId, QueueId>;
 
@@ -620,13 +634,13 @@ constexpr inline std::array<GpioInterruptConfig, GpioInterruptNum> GpioInterrupt
                         nv::gpio::InterruptDetection::InterruptRising,
                         nv::gpio::InterruptSelect::InterruptSelect0}, //  GA_GPIO10_IROT_AP_BOOT_COMPLETE
     GpioInterruptConfig{            4,
-                        15, nv::gpio::InterruptDetection::InterruptRising,
+                        15,   nv::gpio::InterruptDetection::InterruptRising,
                         nv::gpio::InterruptSelect::InterruptSelect0}, //  THERM_OVERT
     GpioInterruptConfig{            4,
-                        20, nv::gpio::InterruptDetection::InterruptRising,
+                        20,   nv::gpio::InterruptDetection::InterruptRising,
                         nv::gpio::InterruptSelect::InterruptSelect0},
     GpioInterruptConfig{GPIO_INT_PORT,
-                        GPIO_INT_PIN, nv::gpio::InterruptDetection::InterruptRising,
+                        GPIO_INT_PIN, nv::gpio::InterruptDetection::InterruptDisabled,
                         nv::gpio::InterruptSelect::InterruptSelect0},
 };  // PS_BOARD_PGOOD
 
@@ -710,6 +724,7 @@ struct I2cVirtualAddressMappingTableItem
     QueueId               queue_id;
     nv::ipchandler::Id    ipchandler_id;
     I2cDynamicAddressType dynamic_address_type = I2cDynamicAddressType::NotDynamicType;
+    bool                  need_debug_token     = false;
 };
 
 namespace {
@@ -819,6 +834,7 @@ constexpr bool I2cTransparent = false;
 constexpr bool                                          EnableIoxEmulation = false;
 constexpr inline size_t                                 IoxNum             = 0;
 constexpr inline uint8_t                                IoxI2cBaseAddr     = 0x50;
+constexpr uint32_t                                      IoxFilterSeconds   = 0;
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
@@ -850,6 +866,18 @@ constexpr uint32_t EepromUpdateTimerUs = 0;
 
 }  // namespace nv::ipc
 
+namespace nv::lstp {
+using namespace nv::ipc;
+// clang-format off
+constexpr inline std::array<LstpGpioPinInfo, LstpGpioNum> PinConfigs{
+    {
+        {GPIO_LED_PORT,GPIO_LED_PIN,{{"GPIO_LED"},LstpGpioDirection::Output,LstpGpioState::High,LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::NoPull,0,10,100,100,0,0,0}},
+        {GPIO_INT_PORT,GPIO_INT_PIN,{{"GPIO_INT"},LstpGpioDirection::Input, LstpGpioState::Low, LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::PullUp,0,10,100,100,0,0,0},true},
+    }
+};
+// clang-format on
+}  // namespace nv::lstp
+
 namespace nv::mctp {
 
 /** function to add/remove NSM Message Types
@@ -867,7 +895,7 @@ config_nsm_types([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNu
 constexpr void
 config_nsm_type0_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
 {
-    // Default does nothing
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetDeviceCapabilitiesV2));
 }
 
 /** function to add/remove NSM T2 Command Codes
@@ -967,15 +995,6 @@ constexpr uint8_t I2cTempSensorSize = 0;
 NV_SHARED_DATA inline std::array<nv::i2c::I2cTempSensorConfig, I2cTempSensorSize>
     I2cTempSensorList{};
 
-//********************* Write Protection Configuration *********************/
-
-constexpr auto WriteProtectionSize = 0;
-constexpr inline std::array<nv::mctp::WriteProtectionGpioConfig, WriteProtectionSize>
-    WriteProtectionList{};
-
-static_assert(WriteProtectionList.size() == WriteProtectionSize,
-              "WriteProtectionList size mismatch");
-
 }  // namespace nv::mctp
 
 namespace nv::pldm {
@@ -994,13 +1013,14 @@ namespace nv::pldm {
 // };
 
 // AP component ID Information
-constexpr uint8_t                          ApNum            = 0;
-constexpr std::array<uint16_t, ApNum>      AllApComponentId = {{}};
-constexpr inline std::array<FwInfo, ApNum> FwInfoList{{}};
+constexpr uint8_t                          ApNum            = 1;
+constexpr std::array<uint16_t, ApNum>      AllApComponentId = {{COMP_HPDO}};
+constexpr inline std::array<FwInfo, ApNum> FwInfoList{{{COMP_HPDO, 0xFFFFFFF0, 0x0, 0x0, 0x0}}};
 static_assert(ApNum < NV_PLDM_MAX_COMPONENT_SIZE, "ApNum should be less than 3");
 }  // namespace nv::pldm
 
 namespace nv::i2c {
+constexpr bool EnableI2cPeripheralRecovery = false;
 
 // Error Injection configuration: explicit count for I2C and IOX
 constexpr size_t NV_I2C_ERROR_INJECTION_PORTS = 0;  // Number of I2C handlers configured for

@@ -138,31 +138,6 @@ Ccode handle_get_soc_therm_brake_enabled(NsmPktResp& ntx)
     return Ccode::Success;
 }
 
-Ccode handle_get_supported_device_modes(NsmPktResp& ntx)
-{
-    // Response structure for GetSupportedDeviceModes (0x84)
-    struct [[gnu::packed]] Response
-    {
-        uint32_t                handle;
-        uint32_t                mode_count;
-        std::array<uint32_t, 5> modes;
-    };
-
-    auto& response = *std::bit_cast<Response*>(&ntx.data[0]);
-
-    response.handle     = 0;  // All modes fit in one response
-    response.mode_count = 5;
-    response.modes[0]   = static_cast<uint32_t>(DeviceModeIndex::MaxACPowerRampRate);
-    response.modes[1]   = static_cast<uint32_t>(DeviceModeIndex::SoCPowerSmoothEnabled);
-    response.modes[2]   = static_cast<uint32_t>(
-        DeviceModeIndex::SoCPowerSmoothCurrentPresetIndex);
-    response.modes[3] = static_cast<uint32_t>(DeviceModeIndex::SoCPowerBrakeEnabled);
-    response.modes[4] = static_cast<uint32_t>(DeviceModeIndex::SoCThermBrakeEnabled);
-
-    ntx.data_size = sizeof(Response);
-    return Ccode::Success;
-}
-
 // ============================================================================
 // Type-5: Set Device Mode Settings handlers (strong implementations)
 // ============================================================================
@@ -246,16 +221,16 @@ Ccode handle_get_rack_power_smoothing_param(NsmPktResp& ntx)
     std::array<uint32_t, PARAM_COUNT> params{};
     PowerSmoothing::GetPresetParameters(active_preset, params);
 
-    // Only return non-TestHook tuning parameters (0-19)
-    // TestHook parameters (40-42) require TestHook command with debug token
+    // Only return non-TestHook tuning parameters (0 .. MaxTuningParams-1)
+    // TestHook parameters (40-44) require TestHook command with debug token
     const auto max_tuning = static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams);
 
-    response.numParams       = max_tuning;  // Return 20 params (0-19)
+    response.numParams       = max_tuning;
     response.currentPresetId = active_preset;
     response.resvd           = 0;
 
     for (uint8_t i = 0; i < max_tuning; i++) {
-        // Array indices 0-19 map directly to param IDs 0-19
+        // Array indices map directly to param IDs 0 .. MaxTuningParams-1
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
         response.paramArray[i] = params[i];
     }
@@ -270,8 +245,8 @@ Ccode handle_set_rack_power_smoothing_param(uint8_t  preset_id,
 {
     using namespace nv::soc_pwr_smoothing;
 
-    // Reject TestHook parameters (40-42) - they require TestHook command with debug token
-    // Also rejects reserved gap (20-39)
+    // Reject TestHook parameters (40-44) - they require TestHook command with debug token
+    // Also rejects reserved gap (indices >= MaxTuningParams that are not TestHook)
     if (param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams)) {
         return Ccode::ErrorInvalidData;
     }
@@ -294,17 +269,17 @@ Ccode handle_get_rack_power_smoothing_testhook(NsmPktResp& ntx)
     std::array<uint32_t, PARAM_COUNT> params{};
     PowerSmoothing::GetPresetParameters(active_preset, params);
 
-    // Only return TestHook parameters (40-42)
+    // Only return TestHook parameters (40-44)
     const auto testhook_start = static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart);
     const auto testhook_end   = static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount);
     const auto testhook_count = testhook_end - testhook_start;
 
-    response.numParams       = testhook_count;  // 3 params (40-42)
+    response.numParams       = testhook_count;  // 5 params (40-44)
     response.currentPresetId = active_preset;
     response.resvd           = 0;
 
     for (uint8_t i = 0; i < testhook_count; i++) {
-        // Array indices 40-42 map directly to param IDs 40-42
+        // Array indices 0.. map to param IDs TestHookParamsStart ..
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
         response.paramArray[i] = params[testhook_start + i];
     }
@@ -319,7 +294,7 @@ Ccode handle_set_rack_power_smoothing_testhook(uint8_t  preset_id,
 {
     using namespace nv::soc_pwr_smoothing;
 
-    // Validate parameter ID is in TestHook range (40-42)
+    // Validate parameter ID is in TestHook range (40-44)
     if (param_id < static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart)
         || param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount)) {
         return Ccode::ErrorInvalidData;
@@ -564,4 +539,66 @@ Ccode handle_get_adc_calibration_results(NsmPktResp& ntx)
     return Ccode::Success;
 }
 
+Ccode handle_adc_calib_set_loopback_dac_code(uint16_t dac_code)
+{
+    if (!nv::soc_pwr_smoothing::adc_calib_set_loopback_dac_code(dac_code)) {
+        return Ccode::ErrorI2CError;
+    }
+    return Ccode::Success;
+}
+
+Ccode handle_get_power_smooth_raw_readback(uint8_t readback_id, NsmPktResp& ntx)
+{
+    using nv::mctp::PwrSmoothRawReadbackId;
+
+    uint16_t raw = 0;
+    switch (static_cast<PwrSmoothRawReadbackId>(readback_id)) {
+        case PwrSmoothRawReadbackId::SocAdcRaw:
+            raw = nv::soc_pwr_smoothing::PowerSmoothing::get_last_adc_raw();
+            break;
+        case PwrSmoothRawReadbackId::EdppDacRaw:
+            raw = nv::soc_pwr_smoothing::PowerSmoothing::get_last_edpp_dac_raw();
+            break;
+        case PwrSmoothRawReadbackId::IsinkDacRaw:
+            raw = nv::soc_pwr_smoothing::PowerSmoothing::get_last_isink_dac_raw();
+            break;
+        default: return Ccode::ErrorInvalidData;
+    }
+
+    auto& response    = *std::bit_cast<NsmTFFGetPowerSmoothRawReadbackRes*>(&ntx.data[0]);
+    response.raw_code = raw;
+    response.resvd    = 0;
+    ntx.data_size     = sizeof(NsmTFFGetPowerSmoothRawReadbackRes);
+    return Ccode::Success;
+}
+
 }  // namespace nv::mctp::nsm_pwr_smoothing_handlers
+
+namespace nv::mctp {
+
+Ccode handle_get_supported_device_modes(NsmPktResp& ntx)
+{
+    // Response structure for GetSupportedDeviceModesV2 (0x84)
+    struct [[gnu::packed]] Response
+    {
+        uint32_t                handle;
+        uint32_t                mode_count;
+        std::array<uint32_t, 5> modes;
+    };
+
+    auto& response = *std::bit_cast<Response*>(&ntx.data[0]);
+
+    response.handle     = 0;  // All modes fit in one response
+    response.mode_count = 5;
+    response.modes[0]   = static_cast<uint32_t>(DeviceModeIndex::MaxACPowerRampRate);
+    response.modes[1]   = static_cast<uint32_t>(DeviceModeIndex::SoCPowerSmoothEnabled);
+    response.modes[2]   = static_cast<uint32_t>(
+        DeviceModeIndex::SoCPowerSmoothCurrentPresetIndex);
+    response.modes[3] = static_cast<uint32_t>(DeviceModeIndex::SoCPowerBrakeEnabled);
+    response.modes[4] = static_cast<uint32_t>(DeviceModeIndex::SoCThermBrakeEnabled);
+
+    ntx.data_size = sizeof(Response);
+    return Ccode::Success;
+}
+
+}  // namespace nv::mctp

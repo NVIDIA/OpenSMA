@@ -33,6 +33,7 @@
 #endif
 
 #include "nv/i2c/lattice_driver.h"
+#include "nv/bootloader.h"
 #include "nv/common/build.h"
 #include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/datastore.h"
@@ -55,6 +56,12 @@ constexpr std::array<
         0x9f, 0x2c, 0x47, 0xdb, 0xaf, 0x6c, 0x90, 0x5c, 0x5c, 0x61, 0xce, 0x34, 0xdc, 0x69,
         0xb3, 0xa1, 0xd3, 0x74, 0xae, 0x3f, 0xed, 0x55, 0x80, 0xe3, 0x9a, 0x05};
 // clang-format on
+
+nv::flash::Address get_token_flash_address()
+{
+    return nv::flash::Flash::get_flash_address(sys::flash::config::DebugTokenSpiOffset,
+                                               nv::bootloader::Driver::current_boot_index());
+}
 
 namespace {
 
@@ -479,7 +486,8 @@ TokenErrorCode check_debug_token_type_enabled(Type token_type)
     }
 
     // Read TLV token from flash
-    std::array<uint8_t, ReasonableSize> token_buffer = {};
+    std::array<uint8_t, ReasonableSize> token_buffer  = {};
+    const auto                          token_address = get_token_flash_address();
 
     // Read token from flash in chunks
     constexpr uint32_t FlashReadChunkSize = nv::flash::BufferSize;
@@ -490,7 +498,8 @@ TokenErrorCode check_debug_token_type_enabled(Type token_type)
         const uint32_t chunk_size = FlashReadChunkSize;
 
         auto flash_status = nv::flash::Flash::read(
-            SpiOffset + offset, std::span<uint8_t>{token_buffer.data() + offset, chunk_size});
+            token_address + offset,
+            std::span<uint8_t>{token_buffer.data() + offset, chunk_size});
 
         if (flash_status != nv::flash::Status::Ok) {
             return TokenErrorCode::TokenStorageError;
@@ -787,7 +796,8 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     }
 
     // Erase the token area in SPI flash
-    auto flash_status = flash::Flash::erase(SpiOffset);
+    const auto token_address = get_token_flash_address();
+    auto       flash_status  = flash::Flash::erase(token_address);
     if (flash_status != flash::Status::Ok) {
         return TokenErrorCode::TokenStorageError;
     }
@@ -810,9 +820,9 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     if (aligned_size > 0) {
         const std::span<const uint8_t> aligned_chunk{token_span.data(),
                                                      static_cast<size_t>(aligned_size)};
-        flash_status = flash::Flash::write(SpiOffset, aligned_chunk);
+        flash_status = flash::Flash::write(token_address, aligned_chunk);
         if (flash_status != flash::Status::Ok) {
-            (void)flash::Flash::erase(SpiOffset);
+            (void)flash::Flash::erase(token_address);
             return TokenErrorCode::TokenStorageError;
         }
     }
@@ -824,9 +834,9 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
 
         const std::span<const uint8_t> padded_chunk{padded_buffer.data(),
                                                     static_cast<size_t>(PhraseSize)};
-        flash_status = flash::Flash::write(SpiOffset + aligned_size, padded_chunk);
+        flash_status = flash::Flash::write(token_address + aligned_size, padded_chunk);
         if (flash_status != flash::Status::Ok) {
-            (void)flash::Flash::erase(SpiOffset);
+            (void)flash::Flash::erase(token_address);
             return TokenErrorCode::TokenStorageError;
         }
     }
@@ -843,7 +853,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
                 auto unlock_status = nv::ap_operation::modify_cpld_debug_status(true);
                 if (unlock_status != nv::ap_operation::ApOperationErrorCode::Success) {
                     nv::error("Failed to set CPLD unlock: status=%d\n", unlock_status);
-                    (void)flash::Flash::erase(SpiOffset);
+                    (void)flash::Flash::erase(token_address);
                     return TokenErrorCode::TokenStorageError;
                 }
             }
@@ -875,7 +885,7 @@ TokenErrorCode erase_installed_dbg_token_tlv()
 {
     // Check if TLV token exists in flash before erasing
     if (is_dbg_token_tlv_in_flash()) {
-        auto flash_status = flash::Flash::erase(SpiOffset);
+        auto flash_status = flash::Flash::erase(get_token_flash_address());
 
         if (flash_status != flash::Status::Ok) {
             return TokenErrorCode::TokenStorageError;
@@ -922,7 +932,8 @@ bool is_dbg_token_tlv_in_flash()
 {
     std::array<uint8_t, 64> tmp                = {};
     uint32_t                expected_magic_num = 0;
-    auto                    flash_status       = flash::Flash::read(SpiOffset, tmp);
+    const auto              token_address      = get_token_flash_address();
+    auto                    flash_status       = flash::Flash::read(token_address, tmp);
 
     if (flash_status != flash::Status::Ok) {
         return false;
@@ -946,6 +957,38 @@ bool is_dbg_token_tlv_in_flash()
     const TokenErrorCode result = validate_tlv_field(
         tmp_span, TlvType::TokenIdentifier, expected_magic_check);
     return (result == TokenErrorCode::NoErrorCode);
+}
+
+bool is_debug_token_subtype_enabled_cached(Type token_type, uint32_t token_subtype_bit)
+{
+    if (token_subtype_bit == 0U) {
+        return false;
+    }
+
+    nv::flash::Data cached_token_type_bitmap = 0;
+    const auto      type_status              = nv::flash::Flash::get_data(
+        nv::flash::Key::NpdsDebugTokenAuthenticated, cached_token_type_bitmap);
+    if (type_status != nv::flash::Status::Ok) {
+        return false;
+    }
+
+    const auto type_u32 = static_cast<uint32_t>(token_type);
+    if (type_u32 == 0U || (cached_token_type_bitmap & type_u32) == 0U) {
+        return false;
+    }
+
+    const nv::flash::Key subtype_key = get_subtype_npds_key(type_u32);
+    if (subtype_key == nv::flash::Key::NpdsInvalid) {
+        return false;
+    }
+
+    nv::flash::Data cached_subtype_bitmap = 0;
+    const auto subtype_status = nv::flash::Flash::get_data(subtype_key, cached_subtype_bitmap);
+    if (subtype_status != nv::flash::Status::Ok) {
+        return false;
+    }
+
+    return (cached_subtype_bitmap & token_subtype_bit) != 0U;
 }
 
 TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token_subtype)

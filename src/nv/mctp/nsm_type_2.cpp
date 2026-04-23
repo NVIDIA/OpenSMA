@@ -41,6 +41,18 @@ bool validatePcieLinkResetValue(uint8_t device_index)
 
 }  // namespace nsm_type2
 
+namespace nsm_type2 {
+
+__attribute__((weak)) NsmStatus platform_assert_pcie_fundamental_reset(uint8_t device_index,
+                                                                       uint8_t action)
+{
+    (void)device_index;
+    (void)action;
+    return NsmStatus::NotSupported;
+}
+
+}  // namespace nsm_type2
+
 bool Nsm::process_pci_links(const Packet& rx, Packet& tx)
 {
     using cmd = nv::mctp::NsmPciLinksCmdCode;
@@ -99,16 +111,21 @@ void Nsm::on_pci_links_assert_pcie_fundamental_reset(const Packet& rx, Packet& t
         return;
     }
 
+    auto status = nsm_type2::platform_assert_pcie_fundamental_reset(request.device_index,
+                                                                    request.action);
+    if (status == NsmStatus::I2cBusError) {
+        fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+        return;
+    }
+    else if (status == NsmStatus::NotSupported) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return;
+    }
+
     auto& ntx             = NsmPktResp::from(tx);
     ntx.data_size         = 0;
     ntx.completion_code   = Ccode::Success;
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
-
-    // TODO: Implement Assert PCIe Fundamental reset
-    fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
-    nv::info("%s() There is no payload, returning Ccode::ErrorUnsupportedCmd=%d\n",
-             __func__,
-             Ccode::ErrorUnsupportedCmd);
 }
 
 }  // namespace nv::mctp

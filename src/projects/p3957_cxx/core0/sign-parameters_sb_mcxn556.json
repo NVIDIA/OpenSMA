@@ -1,0 +1,50 @@
+{
+    "mbi": false,
+    "sb4": true,
+    "keySet":"s14",
+    "mbiconfig": {
+        "outputImageExecutionAddress": "0x0",
+        "fuse_version": 0,
+        "imageVersion": "0x0"
+    },
+    "sb4config": {
+        "commands": [
+            {
+                "checkFwVersion": {
+                    "value": 0,
+                    "counterId": "secure"
+                }
+            },
+            {
+                "erase": {
+                    "address": 0,
+                    "size": "0x00060000"
+                }
+            },
+            {
+                "erase": {
+                    "address": "0x00080000",
+                    "size": "0x00060000"
+                }
+            },
+            {
+                "erase": {
+                    "address": "0x000EE000",
+                    "size": "0x00002000"
+                }
+            },
+            {
+                "erase": {
+                    "address": "0x000F0000",
+                    "size": "0x0000E000"
+                }
+            },
+            {
+                "load": {
+                    "address": 0,
+                    "file": "signed_mbi.bin"
+                }
+            }
+        ]
+    }
+}

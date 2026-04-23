@@ -94,6 +94,20 @@ void Nsm::process_nv_internal(const Packet& rx, Packet& tx)
             }
             return unsupported_command();
 
+        case cmd::AdcCalibSetLoopbackDacCode:
+            if constexpr (is_cmd_set(NsmMsgType::NvInternal, cmd::AdcCalibSetLoopbackDacCode)) {
+                on_nv_internal_adcCalibSetLoopbackDacCode(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::GetPowerSmoothRawReadback:
+            if constexpr (is_cmd_set(NsmMsgType::NvInternal, cmd::GetPowerSmoothRawReadback)) {
+                on_nv_internal_getPowerSmoothRawReadback(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
         default: return unsupported_command();
     }
 }
@@ -356,6 +370,84 @@ void Nsm::on_nv_internal_getAdcCalibrationResults(const Packet& rx, Packet& tx)
 
     // Use handler - gets calibration results
     auto result = nsm_pwr_smoothing_handlers::handle_get_adc_calibration_results(ntx);
+    if (result != Ccode::Success) {
+        fill_error_packet(result, rx, tx);
+        return;
+    }
+
+    ntx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + ntx.data_size;
+}
+
+void Nsm::on_nv_internal_adcCalibSetLoopbackDacCode(const Packet& rx, Packet& tx)
+{
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+    auto& nrx = NsmPktReq::from(rx);
+
+    if (nrx.ocp_version != 1) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    static_assert(sizeof(NsmTFFAdcCalibSetLoopbackDacCodeReq) <= UINT8_MAX,
+                  "Request size exceeds uint8_t range for is_input_length_valid");
+
+    if (!is_input_length_valid(rx, sizeof(NsmTFFAdcCalibSetLoopbackDacCodeReq))) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    if (nrx.data_size != sizeof(NsmTFFAdcCalibSetLoopbackDacCodeReq)) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    NsmTFFAdcCalibSetLoopbackDacCodeReq request{};
+    std::memcpy(&request, &nrx.data[0], sizeof(request));
+
+    auto result = nsm_pwr_smoothing_handlers::handle_adc_calib_set_loopback_dac_code(
+        request.dac_code);
+
+    auto& ntx = NsmPktResp::from(tx);
+    if (result == Ccode::Success) {
+        ntx.data_size       = 0;
+        ntx.completion_code = Ccode::Success;
+    }
+    else {
+        ntx.completion_code = result;
+    }
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
+}
+
+void Nsm::on_nv_internal_getPowerSmoothRawReadback(const Packet& rx, Packet& tx)
+{
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+    auto& nrx = NsmPktReq::from(rx);
+
+    if (nrx.ocp_version != 1) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    static_assert(sizeof(NsmTFFGetPowerSmoothRawReadbackReq) <= UINT8_MAX,
+                  "Request size exceeds uint8_t range for is_input_length_valid");
+
+    if (!is_input_length_valid(rx, sizeof(NsmTFFGetPowerSmoothRawReadbackReq))
+        || nrx.data_size != sizeof(NsmTFFGetPowerSmoothRawReadbackReq)) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    NsmTFFGetPowerSmoothRawReadbackReq request{};
+    std::memcpy(&request, &nrx.data[0], sizeof(request));
+    const uint8_t readback_id = request.readback_id;
+
+    auto& ntx = NsmPktResp::from(tx);
+
+    auto result = nsm_pwr_smoothing_handlers::handle_get_power_smooth_raw_readback(readback_id,
+                                                                                   ntx);
     if (result != Ccode::Success) {
         fill_error_packet(result, rx, tx);
         return;

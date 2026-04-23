@@ -23,6 +23,8 @@
 #include <type_traits>
 #include <variant>
 
+#include "nv/gpio/common.h"
+
 namespace nv::lstp {
 
 template<typename T>
@@ -213,6 +215,14 @@ struct [[gnu::packed]] LstpGpioConfig
     uint8_t                                RSVD_2;
 };
 static_assert(sizeof(LstpGpioConfig) == 48U, "LstpGpioConfig size is not 48 bytes");
+
+struct [[gnu::packed]] LstpGpioPinInfo
+{
+    gpio::GpioPort port;
+    gpio::GpioPin  pin;
+    LstpGpioConfig config;
+    bool           allow_set_irq = false;  // optional field in PinConfigs, default false
+};
 
 enum class LstpGpioIrqConfig : uint8_t
 {

@@ -44,7 +44,9 @@ public:
         SFXP22_10 soc_percent_avg;
         SFXP22_10 edpp_offset_avg;
         SFXP22_10 isink_offset_avg;
-        uint16_t  last_adc_raw;  // Last raw ADC code for calibration
+        uint16_t  last_adc_raw;        // Last raw SoC ADC code (calibration / readback)
+        uint16_t  last_edpp_dac_raw;   // Last code written to EDPP offset DAC (shadow)
+        uint16_t  last_isink_dac_raw;  // Last code written to ISINK offset DAC (shadow)
     };
 
     struct TelemetryAccumulators
@@ -158,19 +160,28 @@ inline void PowerManager::run_iteration()
     isink_offset_sma_ch.evaluate(
         {.percent = isink_offset, .percent_averaged = public_connectors.isink_offset_avg});
 
-    // Override EDPP offset output if test hook is enabled (param 21)
+    // Override EDPP offset output if test hook is enabled (param 41); param 43 DAC wins if
+    // enabled
     if (config.override_edpp_offset.enabled) {
         edpp_offset = config.override_edpp_offset.value;
     }
 
-    // Override ISINK offset output if test hook is enabled (param 22)
+    // Override ISINK offset output if test hook is enabled (param 42); param 44 DAC wins if
+    // enabled
     if (config.override_isink_offset.enabled) {
         isink_offset = config.override_isink_offset.value;
     }
 
-    edpp_offset_dac_dev.evaluate({.percent = edpp_offset});
+    edpp_offset_dac_dev.evaluate({.percent              = edpp_offset,
+                                  .raw_override_enabled = config.override_edpp_dac_raw.enabled,
+                                  .raw_override_dac     = config.override_edpp_dac_raw.dac_raw,
+                                  .last_dac_raw         = public_connectors.last_edpp_dac_raw});
 
-    isink_offset_dac_dev.evaluate({.percent = isink_offset});
+    isink_offset_dac_dev.evaluate(
+        {.percent              = isink_offset,
+         .raw_override_enabled = config.override_isink_dac_raw.enabled,
+         .raw_override_dac     = config.override_isink_dac_raw.dac_raw,
+         .last_dac_raw         = public_connectors.last_isink_dac_raw});
 
     power_brake_gpio_dev.evaluate({.assert = public_connectors.assert_power_brake});
 

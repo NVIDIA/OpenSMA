@@ -12,7 +12,7 @@ apt-get update && apt-get install -y --no-install-recommends \
         openssh-client clang-tidy-18 clang-format-18 \
         lcov gcc-13 g++-13 \
         doxygen graphviz asciidoctor asciidoc gem javacc ruby-rouge \
-        file dos2unix less patch
+        file dos2unix less patch xz-utils
 ```
 2. Install python package
 ```
@@ -51,12 +51,12 @@ cd libexec/sdk/SDK_25_09_00_MCXN556S
 xz -dc ../../patch/mcu.patch.xz | patch -p1 -N
 ```
 
-## Build and Sign FW ##
+## Build FW ##
 Artifact will be generated under `build` folder
 
 ### MCU FW ###
 ```
-./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel SIGN_KEYSET=local RUN_LOCAL=1
+./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel RUN_LOCAL=1 BUILD_ONLY=1
 ```
 
 ## Use Docker ##
@@ -68,5 +68,5 @@ docker build -f ./libexec/ubs.dockerfile -t opensma .
 # Run Docker image
 docker run --rm -it --user=${UID}:${GID} -v $(pwd):/opensma opensma
 # Build and sign FW
-./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel SIGN_KEYSET=local RUN_LOCAL=1
+./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel RUN_LOCAL=1 BUILD_ONLY=1
 ```

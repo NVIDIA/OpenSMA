@@ -44,19 +44,29 @@ enum class RackPwrSmoothParams : uint8_t
     IsinkSecondaryKp               = 17,
     IsinkSecondaryKi               = 18,
     IsinkSecondaryKd               = 19,
-    // End of currently defined tuning parameters
-    MaxTuningParams = 20,
+    EdppResidencyEwmaTau           = 20,  // float32 seconds, wire as uint32_t bits
+    IsinkResidencyEwmaTau          = 21,  // float32 seconds, wire as uint32_t bits
+    EdppIntegralMin                = 22,
+    EdppIntegralMax                = 23,
+    EdppOutputMax                  = 24,
+    IsinkIntegralMin               = 25,
+    IsinkIntegralMax               = 26,
+    IsinkOutputMax                 = 27,
+    MaxTuningParams                = 28,
 
-    // RESERVED: Values 20-39 are reserved for future tuning parameters
+    // RESERVED: Values 28-39 are reserved for future tuning parameters
     // This gap allows adding more regular params without breaking backward compatibility
     // for TestHook parameters
 
     // TestHook-only parameters (debug token protected) - START AT 40
-    TestHookParamsStart       = 40,
-    OverrideSoCInput          = 40,
-    OverrideEdppOffsetOutput  = 41,
+    TestHookParamsStart      = 40,
+    OverrideSoCInput         = 40,
+    OverrideEdppOffsetOutput = 41,  // Percent override (0–100.00%); see OverrideParam.value /
+                                    // 100
     OverrideIsinkOffsetOutput = 42,
-    MaxParamCount             = 43,
+    OverrideEdppDacRaw        = 43,  // Raw 12-bit DAC; if enabled wins vs param 41
+    OverrideIsinkDacRaw       = 44,  // Raw 12-bit DAC; if enabled wins vs param 42
+    MaxParamCount             = 45,
 };
 
 // Rack Power Smoothing Telemetry Types
@@ -83,8 +93,9 @@ struct [[gnu::packed]] NsmTFFGetRackPwrSmoothParamRes
 // SetRackPowerSmoothingParam Request (single-parameter format)
 struct [[gnu::packed]] NsmTFFSetRackPwrSmoothParamReq
 {
-    uint8_t  presetId;  // Which preset to modify (1-3, 0 is read-only)
-    uint8_t  paramId;   // Which parameter to modify (0-42)
+    uint8_t presetId;  // Which preset to modify (1-3, 0 is read-only)
+    uint8_t paramId;   // Which parameter to modify (tuning 0-19; TestHook 40-44 per
+                       // RackPwrSmoothParams)
     uint16_t resvd;
     uint32_t paramValue;  // SFXP22_10 encoded value or OverrideParam format
 };
@@ -129,5 +140,35 @@ struct [[gnu::packed]] NsmTFFGetAdcCalibResultsRes
     AdcCalibrationPoint points[ADC_CALIBRATION_NUM_POINTS];  // 104 bytes (26 * 4)
 };
 // Total response size: 4 + 104 = 108 bytes
+
+// AdcCalibSetLoopbackDacCode (0xA7) Request
+struct [[gnu::packed]] NsmTFFAdcCalibSetLoopbackDacCodeReq
+{
+    uint16_t dac_code;  // Raw code to external loopback DAC (I2C), 0-65535
+    uint16_t resvd;     // Set to 0
+};
+
+// GetPowerSmoothRawReadback (0xA8) — selector for which last raw code to return
+enum class PwrSmoothRawReadbackId : uint8_t
+{
+    SocAdcRaw   = 0,  // Last SoC ADC sample (same source as calibration readback)
+    EdppDacRaw  = 1,  // Last 12-bit code written to EDPP offset DAC (firmware shadow)
+    IsinkDacRaw = 2,  // Last 12-bit code written to ISINK offset DAC (firmware shadow)
+};
+
+// GetPowerSmoothRawReadback (0xA8) Request
+struct [[gnu::packed]] NsmTFFGetPowerSmoothRawReadbackReq
+{
+    uint8_t  readback_id;  // PwrSmoothRawReadbackId; 0–2 defined, rest reserved
+    uint8_t  resvd_u8;     // Set to 0
+    uint16_t resvd_u16;    // Set to 0
+};
+
+// GetPowerSmoothRawReadback (0xA8) Response
+struct [[gnu::packed]] NsmTFFGetPowerSmoothRawReadbackRes
+{
+    uint16_t raw_code;  // SoC ADC raw or DAC raw (12-bit DAC codes use low bits only)
+    uint16_t resvd;     // Set to 0
+};
 
 }  // namespace nv::mctp

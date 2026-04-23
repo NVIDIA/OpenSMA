@@ -38,5 +38,8 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
                                   std::span<uint8_t> read_buffer);
 bool               is_master_enabled(nv::i2c::Port port);
 bool               is_slave_enabled(nv::i2c::Port port);
+void               slave_config_fill_from_registers(LPI2C_Type*           base,
+                                                    uint32_t              clk_hz,
+                                                    lpi2c_slave_config_t& cfg);
 
 }  // namespace sys::i2c

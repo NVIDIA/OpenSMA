@@ -61,6 +61,13 @@
 	subs	a3, a3, a1  // len
 	bl	memset
 
+    // memset bss_2 section (task stacks in SRAMX)
+	movs 	a2, #0
+	ldr	a1, .Lbssstart2
+	ldr	a3, .Lbssend2
+	subs	a3, a3, a1
+	bl	memset
+
     // call hardware_init_hook if found
 	ldr	r3, .Lhwinit
 	cmp	r3, #0
@@ -103,6 +110,10 @@
 	.word	__bss_start__
 .Lbssend:
 	.word	__bss_end__
+.Lbssstart2:
+	.word	__bss_start_2__
+.Lbssend2:
+	.word	__bss_end_2__
 .Latexit:
 	.word	atexit
 .Lfini:

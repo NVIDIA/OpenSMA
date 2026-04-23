@@ -200,7 +200,7 @@ Status LeakDetect::reset_sensor(uint8_t sensorId)
     sensor.at(sensorId).state = State::Nominal;
 
     // update gpio alert
-    update_gpio_alert(sensorId, State::Nominal);
+    update_gpio_alert(sensorId, State::Nominal, true);
 
     /** @note more to-be-implemented as requirement is NOT clear yet */
 
@@ -233,17 +233,20 @@ Status LeakDetect::update_sensor_state(uint8_t sensorId, Reading adcReading)
         _sensor.state = State::Open;
     }
 
-    if (_sensor.state != lastState) {
-        update_gpio_alert(sensorId, _sensor.state);
-    }
+    const bool stateChanged = (_sensor.state != lastState);
+    // Keep transition fact separate from NSM event policy even though they currently match.
+    const bool triggerNsmEvent = stateChanged;
+    // Always update vrgpio state; only trigger the NSM event conditionally
+    // to keep the sync path simple and avoid corner cases.
+    update_gpio_alert(sensorId, _sensor.state, triggerNsmEvent);
 
     return Status::Ok;
 }
 
-void LeakDetect::update_gpio_alert(uint8_t sensorId, State state)
+void LeakDetect::update_gpio_alert(uint8_t sensorId, State state, bool trigger_nsm_event)
 {
     // safe to cast State to VrGpioState as we have static_assert in common.h
-    update_virtual_gpio(sensorId, static_cast<VrGpioState>(state));
+    update_virtual_gpio(sensorId, static_cast<VrGpioState>(state), trigger_nsm_event);
     update_physical_gpio();
 }
 
@@ -269,7 +272,15 @@ void LeakDetect::generate_alert()
     // This function can be extended for additional alert mechanisms
 }
 
-void LeakDetect::update_virtual_gpio(uint8_t sensorId, VrGpioState state)
+std::array<uint8_t, 2> LeakDetect::get_alert_pin_vals(VrGpioState state)
+{
+    return {static_cast<uint8_t>((static_cast<uint8_t>(state) >> 0) & 0x01),
+            static_cast<uint8_t>((static_cast<uint8_t>(state) >> 1) & 0x01)};
+}
+
+void LeakDetect::update_virtual_gpio(uint8_t     sensorId,
+                                     VrGpioState state,
+                                     bool        trigger_nsm_event)
 {
     // update internal virtual gpio state
     vrGpioState = state;
@@ -279,12 +290,13 @@ void LeakDetect::update_virtual_gpio(uint8_t sensorId, VrGpioState state)
 
     // LeakDetectSensor uses 2 pins for 2-bit state encoding
     // Pin[0] = bit 0, Pin[1] = bit 1
-    const std::array<uint8_t, 2> ioxPinVals = {
-        static_cast<uint8_t>((static_cast<uint8_t>(state) >> 0) & 0x01),
-        static_cast<uint8_t>((static_cast<uint8_t>(state) >> 1) & 0x01)};
+    const std::array<uint8_t, 2> ioxPinVals = get_alert_pin_vals(state);
 
-    nv::iox::Task::send_vrgpio_request(
-        _sensor.ioxAddr, nv::iox::Operation::Write, _sensor.ioxPin, ioxPinVals);
+    nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
+                                       nv::iox::Operation::Write,
+                                       _sensor.ioxPin,
+                                       ioxPinVals,
+                                       trigger_nsm_event);
 }
 
 void LeakDetect::update_hardware_gpio(HwGpioState level)
@@ -302,10 +314,6 @@ void LeakDetect::send_nsm_event(NsmEventType event_type, uint8_t sensor_id)
 Status LeakDetect::get_sensor_info(std::span<LeakDetectSensor> info)
 {
     auto status = Status::Ok;
-
-    if (info.size() != sensor.size()) {
-        return Status::InvalidSensorInfoSize;
-    }
 
     for (size_t i = 0; i < sensor.size(); ++i) {
         const auto& adcId = sensor.at(i).adcId;
@@ -384,31 +392,44 @@ Status LeakDetect::set_thresholds(uint8_t sensorIdx, const ThresholdLeakDet& con
         return Status::InvalidSensorId;
     }
 
-    /**
-     * simple check if the thresholds are valid
-     */
-    if (!((config.minLeak < config.maxLeak) && (config.maxLeak < config.maxNormal)
-          && (config.maxNormal < to_adc_value(MaxVol)))) {
+    const auto adcMax = to_adc_value(MaxVol);
+    const auto H      = Hysteresis;
+    const auto minL   = to_adc_value(config.minLeak);
+    const auto maxL   = to_adc_value(config.maxLeak);
+    const auto maxN   = to_adc_value(config.maxNormal);
+
+    if (!(minL < maxL && maxL < maxN && maxN < adcMax)) {
         return Status::InvalidThreshold;
     }
 
-    if (config.maxNormal >= to_adc_value(MaxVol)) {
+    /**
+     * Hysteresis boundary checks (all in ADC domain):
+     *
+     *  Short  [0 .......... minL+H]
+     *                                [maxL-H .......... maxN+H]  Nominal
+     *  Leak   [minL-H ...... maxL+H]
+     *                                [maxN-H ........... adcMax] Open
+     */
+    if (minL < H) {
+        return Status::InvalidThreshold;
+    }
+    if (maxN + H > adcMax) {
+        return Status::InvalidThreshold;
+    }
+    if (minL + H + 1 > maxL - H) {
+        return Status::InvalidThreshold;
+    }
+    if (maxL + H + 1 > maxN - H) {
         return Status::InvalidThreshold;
     }
 
     auto& _sensor = sensor.at(sensorIdx);
 
-    /**
-     * stop adc first as we need to update threshold to adc command
-     */
     volt_mon::Adc::stop_sampling(_sensor.adcId);
 
-    /**
-     * update threshold to sensor struct
-     */
-    _sensor.minLeak   = (static_cast<uint32_t>(config.minLeak) * AdcFullScale) / AdcVolVref;
-    _sensor.maxLeak   = (static_cast<uint32_t>(config.maxLeak) * AdcFullScale) / AdcVolVref;
-    _sensor.maxNormal = (static_cast<uint32_t>(config.maxNormal) * AdcFullScale) / AdcVolVref;
+    _sensor.minLeak   = minL;
+    _sensor.maxLeak   = maxL;
+    _sensor.maxNormal = maxN;
 
     /**
      * update threshold to adc command
@@ -438,27 +459,42 @@ void LeakDetect::get_sensor_state_threshold(uint8_t sensorId, uint16_t& thLow, u
 {
     /** sensor id is guaranteed to be valid */
 
-    const auto& _sensor = sensor.at(sensorId);
+    const auto&     _sensor = sensor.at(sensorId);
+    const Threshold H       = Hysteresis;
+    const Threshold adcMin  = to_adc_value(MinVol);
+    const Threshold adcMax  = to_adc_value(MaxVol);
+
     switch (_sensor.state) {
         case State::Short:
-            thLow  = to_adc_value(MinVol);
-            thHigh = _sensor.minLeak;
+            thLow  = adcMin;
+            thHigh = (_sensor.minLeak + H <= _sensor.maxLeak)
+                       ? static_cast<Threshold>(_sensor.minLeak + H)
+                       : _sensor.maxLeak;
             break;
         case State::Leak:
-            thLow  = _sensor.minLeak;
-            thHigh = _sensor.maxLeak;
+            thLow  = (_sensor.minLeak >= H) ? static_cast<Threshold>(_sensor.minLeak - H)
+                                            : adcMin;
+            thHigh = (_sensor.maxLeak + H <= _sensor.maxNormal)
+                       ? static_cast<Threshold>(_sensor.maxLeak + H)
+                       : _sensor.maxNormal;
             break;
         case State::Nominal:
-            thLow  = _sensor.maxLeak;
-            thHigh = _sensor.maxNormal;
+            thLow  = (_sensor.maxLeak >= H && _sensor.maxLeak - H >= _sensor.minLeak)
+                       ? static_cast<Threshold>(_sensor.maxLeak - H)
+                       : _sensor.minLeak;
+            thHigh = (adcMax - _sensor.maxNormal >= H)
+                       ? static_cast<Threshold>(_sensor.maxNormal + H)
+                       : adcMax;
             break;
         case State::Open:
-            thLow  = _sensor.maxNormal;
-            thHigh = to_adc_value(MaxVol);
+            thLow  = (_sensor.maxNormal >= H && _sensor.maxNormal - H >= _sensor.maxLeak)
+                       ? static_cast<Threshold>(_sensor.maxNormal - H)
+                       : _sensor.maxLeak;
+            thHigh = adcMax;
             break;
         default:
-            thLow  = to_adc_value(MinVol);
-            thHigh = to_adc_value(MaxVol);
+            thLow  = adcMin;
+            thHigh = adcMax;
             break;
     }
 }

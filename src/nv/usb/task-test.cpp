@@ -106,7 +106,7 @@ TEST_F(Usb, MctpUsbRx)
     // compare mctp pkt is the same
     ensure::is_eq(mctp_pkt.priv.packet_interface, static_cast<uint8_t>(mctp::Client::UsUsb));
     ensure::is_eq((uint32_t)mctp_pkt.priv.packet_length,
-                  sizeof(usb_pkt) - sizeof(usb::Task::Header));
+                  sizeof(usb_pkt) - sizeof(usb::Task::MctpHeader));
 
     auto is_same = memcmp(&usb_pkt.mctp_hdr, &mctp_pkt.hdr, sizeof(mctp::Header));
     ensure::is_eq(is_same, 0);

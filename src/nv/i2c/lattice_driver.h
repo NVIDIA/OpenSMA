@@ -45,7 +45,8 @@ constexpr bool CPLD_ProgramN_Pin_Enabled = false;
 
 namespace nv::i2c {
 
-constexpr size_t LATTICE_CPLD_PAGE_SIZE = 16;
+constexpr size_t LATTICE_CPLD_PAGE_SIZE        = 16;
+constexpr size_t LATTICE_CPLD_FEATURE_ROW_SIZE = 10;
 
 // Lattice CPLD Commands (CMD2) - Reference: Lattice CPLD Programming Specification
 namespace LatticeCmd {
@@ -54,8 +55,8 @@ constexpr uint8_t READ_DEVICE_ID = 0xE0;  // LSC_READ_DEVICEID
 constexpr uint8_t READ_USERCODE  = 0xC0;  // LSC_READ_USERCODE
 
 // Configuration Interface Control
-constexpr uint8_t ENABLE_CONFIG_INTERFACE = 0x74;   // Enable Configuration Interface
-                                                    // (Transparent Mode)
+constexpr uint8_t ENABLE_TRANSPARENT_CONFIG_INTERFACE = 0x74;  // Enable Configuration Interface
+constexpr uint8_t ENABLE_OFFLINE_CONFIG_INTERFACE     = 0xC6;  // Enable Configuration Interface
 constexpr uint8_t DISABLE_CONFIG_INTERFACE = 0x26;  // Disable Configuration Interface
 constexpr uint8_t BYPASS                   = 0xFF;  // Bypass command
 
@@ -72,6 +73,14 @@ constexpr uint8_t SET_ADDRESS = 0xB4;  // LSC_BITSTREAM_BURST (set address for r
 constexpr uint8_t PROGRAM_PAGE = 0x70;  // LSC_PROG_INCR_NV (program configuration flash page)
 constexpr uint8_t PROGRAM_DONE = 0x5E;  // LSC_PROGRAM_DONE (complete programming)
 constexpr uint8_t PROGRAM_UFM_PAGE = 0xC9;  // LSC_PROG_TAG (program UFM page)
+
+// Feature Row Operations
+constexpr uint8_t PROGRAM_FEATURE_ROW = 0xE4;  // LSC_PROG_FEATURE (program feature row)
+constexpr uint8_t PROGRAM_FEABITS     = 0xF8;  // LSC_PROG_FEABITS (program feature bits)
+constexpr uint8_t PROGRAM_OTP         = 0xF9;  // LSC_PROG_OTP (program OTP fuses)
+constexpr uint8_t READ_OTP            = 0xFA;  // LSC_READ_OTP (read OTP fuses)
+constexpr uint8_t READ_FEATURE_ROW    = 0xE7;  // LSC_READ_FEATURE (read feature row)
+constexpr uint8_t READ_FEABITS        = 0xFB;  // LSC_READ_FEABITS (read feature bits)
 
 // Read Operations
 constexpr uint8_t READ_CONFIG_PAGE = 0x73;  // LSC_READ_INCR_NV (read configuration flash page)
@@ -99,6 +108,11 @@ constexpr uint8_t ERASE_FLASH_OP1 = 0x0C;
 constexpr uint8_t ERASE_FLASH_OP2 = 0x00;
 constexpr uint8_t ERASE_FLASH_OP3 = 0x00;
 
+// Erase Feature Row + Feabits operands
+constexpr uint8_t ERASE_FEATURE_ROW_OP1 = 0x02;
+constexpr uint8_t ERASE_FEATURE_ROW_OP2 = 0x00;
+constexpr uint8_t ERASE_FEATURE_ROW_OP3 = 0x00;
+
 // Common operands for commands
 constexpr uint8_t OP_ZERO = 0x00;
 
@@ -111,6 +125,9 @@ constexpr uint8_t PAGE_OP3 = 0x01;
 constexpr uint8_t READ_UFM_OP1 = 0x00;
 constexpr uint8_t READ_UFM_OP2 = 0x00;
 constexpr uint8_t READ_UFM_OP3 = 0x01;
+
+// OTP program operands
+constexpr uint8_t OTP_OP1 = 0x22;
 
 // UFM address prefix
 constexpr uint8_t UFM_ADDR_PREFIX1 = 0x40;
@@ -129,6 +146,7 @@ constexpr uint8_t FAIL_FLAG = 0x20;  // Bit 5: Fail flag for configuration opera
 // UFM Status Flags (from 0x3C READ_STATUS for UFM operations)
 constexpr uint8_t UFM_BUSY_FLAG = 0x10;  // Bit 4 (bit 12 in 32-bit register): UFM busy flag
 constexpr uint8_t UFM_FAIL_FLAG = 0x20;  // Bit 5 (bit 13 in 32-bit register): UFM fail flag
+
 }  // namespace LatticeStatus
 
 // Timing and Retry Configuration
@@ -174,8 +192,9 @@ public:
                 uint8_t address_dbg,
                 uint8_t address_dbg_install) noexcept;
     I2cStatus read_id();
-    I2cStatus enter_transparent_mode();
-    I2cStatus exit_transparent_mode();
+    bool      is_cpld_booted();
+    I2cStatus isc_enable();
+    I2cStatus isc_disable();
     I2cStatus erase();
     I2cStatus refresh();
     I2cStatus send_chunk(std::span<uint8_t> img_chunk, size_t chunk_len);
@@ -199,11 +218,18 @@ public:
     static LatticeCpld& inst();
     I2cStatus           set_address(uint32_t addr, bool is_UFM);
 
+    // CPLD Feature Row Operations
+    I2cStatus program_feature_row();
+    I2cStatus read_feature_row(std::span<uint8_t> buf);
+    I2cStatus otp_feature_row();
+    I2cStatus read_otp_feature_row(uint8_t& result);
+
     // CPLD Register Table Access
     I2cStatus write_debug_bit(uint8_t value);
     I2cStatus write_register_table(uint8_t reg_addr, uint8_t value);
     I2cStatus read_register_table(uint8_t reg_addr, uint8_t& value);
     I2cStatus dump_cpld_registers(std::span<uint8_t> buf);
+    void      trigger_vgpio_event();
 
 private:
     Port    _port_prgm;

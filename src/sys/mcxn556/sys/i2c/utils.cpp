@@ -16,6 +16,8 @@
  * limitations under the License.
  */
 
+#include <cstring>
+
 #include "sys/i2c/utils.h"
 #include "nv/common/utils.h"
 #include "nv/i2c/mutex.h"
@@ -165,6 +167,74 @@ bool is_slave_enabled(nv::i2c::Port port)
         return false;
     }
     return (base->SCR & LPI2C_SCR_SEN_MASK) != 0;
+}
+
+void slave_config_fill_from_registers(LPI2C_Type*           base,
+                                      uint32_t              clk_hz,
+                                      lpi2c_slave_config_t& cfg)
+{
+    std::memset(&cfg, 0, sizeof(cfg));
+
+    const uint32_t samr = base->SAMR;
+    /* SAMR stores 7-bit addr shifted: ADDR0 = addr<<1 (see LPI2C_SAMR_ADDR0), ADDR1 = addr<<17.
+     */
+    cfg.address0 = static_cast<uint8_t>(
+        ((samr & LPI2C_SAMR_ADDR0_MASK) >> LPI2C_SAMR_ADDR0_SHIFT) & 0x7FU);
+    cfg.address1 = static_cast<uint8_t>(
+        ((samr & LPI2C_SAMR_ADDR1_MASK) >> LPI2C_SAMR_ADDR1_SHIFT) & 0x7FU);
+
+    const uint32_t scfgr1 = base->SCFGR1;
+    const uint32_t acfg   = (scfgr1 & LPI2C_SCFGR1_ADDRCFG_MASK) >> LPI2C_SCFGR1_ADDRCFG_SHIFT;
+    switch (acfg) {
+        case 2U: cfg.addressMatchMode = kLPI2C_MatchAddress0OrAddress1; break;
+        case 6U: cfg.addressMatchMode = kLPI2C_MatchAddress0ThroughAddress1; break;
+        case 0U:
+        default: cfg.addressMatchMode = kLPI2C_MatchAddress0; break;
+    }
+    cfg.ignoreAck                 = (scfgr1 & LPI2C_SCFGR1_IGNACK_MASK) != 0U;
+    cfg.enableReceivedAddressRead = (scfgr1 & LPI2C_SCFGR1_RXCFG_MASK) != 0U;
+    cfg.enableGeneralCall         = (scfgr1 & LPI2C_SCFGR1_GCEN_MASK) != 0U;
+    cfg.sclStall.enableAck        = (scfgr1 & LPI2C_SCFGR1_ACKSTALL_MASK) != 0U;
+    cfg.sclStall.enableTx         = (scfgr1 & LPI2C_SCFGR1_TXDSTALL_MASK) != 0U;
+    cfg.sclStall.enableRx         = (scfgr1 & LPI2C_SCFGR1_RXSTALL_MASK) != 0U;
+    cfg.sclStall.enableAddress    = (scfgr1 & LPI2C_SCFGR1_ADRSTALL_MASK) != 0U;
+
+    const uint32_t scfgr2 = base->SCFGR2;
+    if (clk_hz != 0U) {
+        const uint64_t clk64     = static_cast<uint64_t>(clk_hz);
+        const uint64_t period_ns = (1000000000ULL + clk64 / 2ULL) / clk64;
+
+        const uint32_t filt_sda = (scfgr2 & LPI2C_SCFGR2_FILTSDA_MASK)
+                               >> LPI2C_SCFGR2_FILTSDA_SHIFT;
+        const uint32_t filt_scl = (scfgr2 & LPI2C_SCFGR2_FILTSCL_MASK)
+                               >> LPI2C_SCFGR2_FILTSCL_SHIFT;
+        const uint32_t datavd = (scfgr2 & LPI2C_SCFGR2_DATAVD_MASK)
+                             >> LPI2C_SCFGR2_DATAVD_SHIFT;
+        const uint32_t clkhold = (scfgr2 & LPI2C_SCFGR2_CLKHOLD_MASK)
+                              >> LPI2C_SCFGR2_CLKHOLD_SHIFT;
+
+        cfg.sdaGlitchFilterWidth_ns = (filt_sda == 0U)
+                                        ? 0U
+                                        : static_cast<uint32_t>(
+                                              (static_cast<uint64_t>(filt_sda) + 3ULL)
+                                              * period_ns);
+        cfg.sclGlitchFilterWidth_ns = (filt_scl == 0U)
+                                        ? 0U
+                                        : static_cast<uint32_t>(
+                                              (static_cast<uint64_t>(filt_scl) + 3ULL)
+                                              * period_ns);
+        cfg.dataValidDelay_ns       = static_cast<uint32_t>(static_cast<uint64_t>(datavd)
+                                                      * period_ns);
+        cfg.clockHoldTime_ns = static_cast<uint32_t>((static_cast<uint64_t>(clkhold) + 3ULL)
+                                                     * period_ns);
+    }
+
+    const uint32_t scr    = base->SCR;
+    cfg.filterEnable      = (scr & LPI2C_SCR_FILTEN_MASK) != 0U;
+    const uint32_t filtdz = (scr & LPI2C_SCR_FILTDZ_MASK) >> LPI2C_SCR_FILTDZ_SHIFT;
+    /* SCR FILTDZ written as !filterDozeEnable in LPI2C_SlaveInit. */
+    cfg.filterDozeEnable = (filtdz == 0U);
+    cfg.enableSlave      = (scr & LPI2C_SCR_SEN_MASK) != 0U;
 }
 
 }  // namespace sys::i2c

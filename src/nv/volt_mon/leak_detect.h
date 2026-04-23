@@ -47,6 +47,9 @@ namespace leak_detect {
 
 using namespace nv::ipc::voltage_monitor_config;
 
+constexpr uint16_t  HysteresisMv = 20;  // 20mV dead band per side (40mV total)
+constexpr Threshold Hysteresis   = to_adc_value(HysteresisMv);
+
 constexpr uint8_t PdsLeakDetMaxSlots       = 4;
 constexpr uint8_t PdsLeakDetEntriesPerSlot = 2;
 
@@ -142,6 +145,13 @@ public:
      */
     void leak_detect_adc_isr(AdcInstance instance, const sys::adc::ADC::AdcConvResult& result);
 
+    /**
+     * @brief Convert leak state to 2-bit alert pin values.
+     * @param state Leak virtual GPIO state
+     * @return pin values [bit0, bit1]
+     */
+    std::array<uint8_t, 2> get_alert_pin_vals(VrGpioState state);
+
 private:
     /**
      * @brief Initialize the leak detection system
@@ -212,7 +222,7 @@ private:
      * @param sensorId Sensor ID
      * @param state New state
      */
-    void update_gpio_alert(uint8_t sensorId, State state);
+    void update_gpio_alert(uint8_t sensorId, State state, bool trigger_nsm_event);
 
     /**
      * @brief Update physical GPIO outputs based on aggregate sensor state.
@@ -230,7 +240,7 @@ private:
      * @brief Update virtual GPIO state (2-bit state)
      * @param state New 2-bit state: 00=Nominal, 01=Leak, 10=Open Fault, 11=Short Fault
      */
-    void update_virtual_gpio(uint8_t sensorId, VrGpioState state);
+    void update_virtual_gpio(uint8_t sensorId, VrGpioState state, bool trigger_nsm_event);
 
     /**
      * @brief Update hardware GPIO level

@@ -33,6 +33,7 @@ public:
     void               bind(nv::i2c::Port port, void* task);
     void               init();
     void               start(bool enable_target);
+    void               peripheral_recovery(bool enable_target);
     bool               write(std::span<uint8_t> data);
     uint8_t            address();
     bool               get_status(uint8_t address);

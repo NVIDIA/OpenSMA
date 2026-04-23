@@ -50,10 +50,13 @@ public:
         SlaveFunction function;
     };
 
-    void               bind(nv::i2c::Port port, void* task);
-    void               init();
-    void               start(bool enable_target);
-    bool               write(std::span<uint8_t> data);
+    void bind(nv::i2c::Port port, void* task);
+    void init();
+    void start(bool enable_target);
+    bool write(std::span<uint8_t> data);
+
+    void peripheral_recovery(bool enable_target);
+
     uint8_t            address();
     static void        set_address(nv::i2c::Port port, uint8_t address);
     bool               get_status(uint8_t address);
@@ -83,6 +86,7 @@ private:
     Lpi2cHandle      _lpi2c_handle;
     ControllerContex _controller_context;
     TargetContex     _target_context;
+    uint32_t         _peripheral_clk_hz;
 
     static LPI2C_Type* get_base(nv::i2c::Port port);
     static void        irq_handler(uint32_t instance, void* handle);

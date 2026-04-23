@@ -12,15 +12,17 @@
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * See the License for the license governing permissions and limitations
+ * under the License.
  */
 
 #pragma once
 
 #include <array>
 #include <cstdint>
+
 #include "nv/mctp/nsm_type_ff.h"
+#include "nv/soc_pwr_smoothing/runtime_cfg.h"
 
 namespace nv::soc_pwr_smoothing {
 
@@ -29,11 +31,11 @@ constexpr uint8_t NUM_PRESETS         = 4;
 constexpr uint8_t DEFAULT_PRESET      = 0;  // Read-only default preset
 constexpr uint8_t MIN_WRITABLE_PRESET = 1;  // First writable preset
 constexpr uint8_t MAX_WRITABLE_PRESET = 3;  // Last writable preset
+constexpr uint8_t INVALID_PRESET_ID   = 0xFF;
 
-// Array size = MaxParamCount (43)
-// Note: Array indices 20-39 are reserved gap (unused, will be zero)
+// Array size = RackPwrSmoothParams::MaxParamCount (45); indices 20-39 are reserved (zero).
 constexpr uint8_t PARAM_COUNT = static_cast<uint8_t>(
-    nv::mctp::RackPwrSmoothParams::MaxParamCount);  // 43 total (includes gap)
+    nv::mctp::RackPwrSmoothParams::MaxParamCount);
 
 // Validation helper - checks if param_id is valid (not in reserved gap)
 constexpr bool is_valid_param_id(uint8_t param_id)
@@ -43,50 +45,78 @@ constexpr bool is_valid_param_id(uint8_t param_id)
             && param_id < static_cast<uint8_t>(nv::mctp::RackPwrSmoothParams::MaxParamCount));
 }
 
-// Override parameter structure (used for parameters 40-42)
-// Wire format: {uint8 is_override, uint8 reserved, uint16 value_scaled_by_100}
-// Example: value=7550 represents 75.50%
+// Override parameter wire format (TestHook 40-44): {uint8 is_override, uint8 reserved, uint16
+// value}. Params 40-42: value = percent x 100 (0-10000). Params 43-44: value = 12-bit DAC code;
+// reserved must be 0.
 struct OverrideParam
 {
-    uint8_t  is_override;  // 0 = disabled, 1 = enabled
-    uint8_t  reserved;     // Reserved for future use
-    uint16_t value;        // Actual value scaled by 100 (e.g., 7550 = 75.50%)
+    uint8_t  is_override;
+    uint8_t  reserved;
+    uint16_t value;
 
-    // Pack into uint32_t for transmission
-    uint32_t to_uint32() const
-    {
-        return (static_cast<uint32_t>(is_override) << 24)
-             | (static_cast<uint32_t>(reserved) << 16) | static_cast<uint32_t>(value);
-    }
-
-    // Unpack from uint32_t received via MCTP
-    static OverrideParam from_uint32(uint32_t raw)
-    {
-        return OverrideParam{.is_override = static_cast<uint8_t>((raw >> 24) & 0xFF),
-                             .reserved    = static_cast<uint8_t>((raw >> 16) & 0xFF),
-                             .value       = static_cast<uint16_t>(raw & 0xFFFF)};
-    }
+    uint32_t             to_uint32() const;
+    static OverrideParam from_uint32(uint32_t raw);
 };
 
-// Raw parameter storage (as received via MCTP)
-// Parameters 0-19: SFXP22_10 encoded (cast to/from uint32_t for transmission)
-// Parameters 20-39: RESERVED (gap, initialized to zero, not accessible)
-// Parameters 40-42: OverrideParam encoded as uint32_t (use
-// OverrideParam::to_uint32/from_uint32)
-struct ParameterPreset
+// Min/max limits for tuning parameters (SFXP22_10 or float wire encoding).
+struct ParameterConstraints
 {
-    std::array<uint32_t, PARAM_COUNT> params;           // All 23 parameters as uint32_t
-    bool                              is_valid{false};  // Has this preset been initialized?
+    nv::mctp::RackPwrSmoothParams id;
+    float                         min_value;
+    float                         max_value;
 };
 
-// Global preset manager
-// Manages all 4 presets and tracks active/pending preset switches
-struct PresetManager
+// Validate a single rack power smoothing parameter (wire value).
+bool validate_parameter(nv::mctp::RackPwrSmoothParams param_id, uint32_t raw_value);
+
+class PowerManager;
+
+// Manages all presets (RuntimeCfg per preset) and pending/active preset state.
+class PresetManager
 {
-    std::array<ParameterPreset, NUM_PRESETS> presets;  // All preset storage
-    uint8_t active_preset_id{DEFAULT_PRESET};          // Currently active preset
-    uint8_t pending_preset_id{0xFF};                   // 0xFF = no pending change
-    bool    apply_pending{false};  // Flag to apply pending preset at ISR start
+public:
+    PresetManager() = default;
+
+    // Initialize preset 0 with default RuntimeCfg; mark valid.
+    void InitializeDefaultPreset();
+
+    // Copy preset 0 to preset id; mark valid. No-op for preset 0 or invalid id.
+    void InitializePresetFromDefault(uint8_t preset_id);
+
+    // Clear pending preset (e.g. at startup).
+    void ClearPending();
+
+    // True if a preset switch is pending (to be applied at next ISR).
+    bool ApplyPending() const { return apply_pending_; }
+
+    // Apply pending preset to pm (config + resets), then clear pending.
+    void ApplyPresetChange(PowerManager& pm);
+
+    // Return preset cfg with runtime-controlled fields overlaid from current.
+    RuntimeCfg GetCfgForApply(uint8_t preset_id, const RuntimeCfg& current) const;
+
+    // Validate all params in the preset (for safety before switch).
+    bool ValidatePreset(uint8_t preset_id) const;
+
+    // Set one parameter; returns false if invalid. Initializes preset from default if needed.
+    bool SetParameter(uint8_t preset_id, uint8_t param_id, uint32_t value);
+
+    // Fill out_params from preset (wire format). Fills 0 if preset invalid.
+    void GetPresetParameters(uint8_t                            preset_id,
+                             std::array<uint32_t, PARAM_COUNT>& out_params) const;
+
+    // Queue preset switch (applied at next ISR). Returns false if invalid or validation fails.
+    bool SwitchToPreset(uint8_t preset_id);
+
+    uint8_t GetActivePresetId() const { return active_preset_id_; }
+    uint8_t GetSupportedPresetBitmask() const;
+
+private:
+    std::array<RuntimeCfg, NUM_PRESETS> presets_{};
+    std::array<bool, NUM_PRESETS>       is_valid_{};
+    uint8_t                             active_preset_id_{DEFAULT_PRESET};
+    volatile uint8_t                    pending_preset_id_{INVALID_PRESET_ID};
+    volatile bool                       apply_pending_{false};
 };
 
 }  // namespace nv::soc_pwr_smoothing

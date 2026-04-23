@@ -20,6 +20,10 @@ workflow:
     PLATFORM: "mcxn556-both"
     BOARD: "mcxn547helloworld"
     MODE: "rel"
+  - PROJECT: "p3957_cxx"
+    PLATFORM: "mcxn556-core0"
+    BOARD: "p3957_cxx"
+    MODE: "rel"
 
 
 build:
@@ -49,7 +53,7 @@ build:
   script:
     - cd ${CI_PROJECT_DIR}
     - echo "Building ${PROJECT} firmware..."
-    - ./mcu_build.sh PROJECT=${PROJECT} BOARD=${BOARD} PLATFORM=${PLATFORM} MODE=${MODE} SIGN_KEYSET=local RUN_LOCAL=1 BUILD_ONLY=1
+    - ./mcu_build.sh PROJECT=${PROJECT} BOARD=${BOARD} PLATFORM=${PLATFORM} MODE=${MODE} RUN_LOCAL=1 BUILD_ONLY=1
     - echo "${PROJECT} firmware build completed successfully"
 
   artifacts:

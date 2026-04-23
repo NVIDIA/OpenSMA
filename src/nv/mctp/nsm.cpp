@@ -50,20 +50,22 @@ using namespace sys::flash::config;
 extern "C" void
 ada_populate_stamp(uint8_t minor, uint16_t patch, uint16_t build, uint32_t* stamp);
 
-Ccode mctp::Nsm::can_revoke_otp()
+bool mctp::Nsm::can_revoke_otp(Rcode& reason_code)
 {
     flash::Data state{};
 
     // Check PdsUpdateState
     if (flash::Flash::get_data(flash::Key::PdsUpdateState, state) != flash::Status::Ok
         || state != static_cast<flash::Data>(bootloader::Driver::State::Idle)) {
-        return Ccode::ErrorPldmProcessing;
+        reason_code = Rcode::ErrorPldmProcessing;
+        return false;
     }
 
     // Check PdsBootableSlot0 and PdsBootableSlot1
     for (const auto& key : {flash::Key::PdsBootableSlot0, flash::Key::PdsBootableSlot1}) {
         if (flash::Flash::get_data(key, state) != flash::Status::Ok || state == 0) {
-            return Ccode::ErrorGeneral;
+            reason_code = Rcode::Null;
+            return false;
         }
     }
 
@@ -71,9 +73,11 @@ Ccode mctp::Nsm::can_revoke_otp()
     nv::flash::ProgressPercent progress{};
     if (flash::Flash::background_copy_query(progress)
         == flash::Status::BackgroundCopyInprogress) {
-        return Ccode::ErrorGeneral;
+        reason_code = Rcode::Null;
+        return false;
     }
-    return Ccode::Success;
+
+    return true;
 }
 
 bool mctp::Nsm::can_initiate_image_copy(Ccode& completion_code, Rcode& reason_code)
@@ -302,7 +306,7 @@ uint8_t mctp::Nsm::get_inactive_fw_state()
     if (!is_inactive_authenticated) {
         inactive_default_status = common::FailedAuthentication;
     }
-    else if (nv::pldm::Task::is_background_copy_automatic()) {
+    else if (nv::pldm::Task::is_background_copy_automatic(false)) {
         inactive_default_status = common::PendingImageCopy;
     }
     else {
@@ -2350,11 +2354,11 @@ void mctp::Nsm::update_auth_key(const Packet&           rx,
     // For input
     uint32_t input_key_permission = 0;
 
-    auto can_revoke = can_revoke_otp();
+    Rcode reason_code{};
 
     // bypassing the cases for PldmProcessActive and inactive slot and bg copy inprogress
-    if (can_revoke != Ccode::Success) {
-        fill_error_packet(can_revoke, rx, tx);
+    if (!can_revoke_otp(reason_code)) {
+        fill_error_packet_v2(Ccode::ErrorGeneral, reason_code, rx, tx);
         return;
     }
 
@@ -2442,7 +2446,7 @@ void mctp::Nsm::update_auth_key(const Packet&           rx,
     if (input_key_permission > efuse_key_permission) {
         auto revoke_ccode = revoke_key_permission(input_key_permission);
         if (revoke_ccode != Ccode::Success) {
-            fill_error_packet(revoke_ccode, rx, tx);
+            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
             return;
         }
 
@@ -2481,7 +2485,7 @@ void mctp::Nsm::update_ap_auth_key(const Packet&           rx,
     auto can_revoke = can_revoke_ap_otp();
 
     if (can_revoke != Ccode::Success) {
-        fill_error_packet(can_revoke, rx, tx);
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
         return;
     }
 
@@ -2531,7 +2535,7 @@ void mctp::Nsm::update_ap_auth_key(const Packet&           rx,
     if (input_key_permission > efuse_key_permission) {
         auto revoke_ccode = revoke_ap_key_permission(input_key_permission);
         if (revoke_ccode != Ccode::Success) {
-            fill_error_packet(revoke_ccode, rx, tx);
+            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
             return;
         }
 
@@ -2588,7 +2592,7 @@ void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
             }
             // check nonce bytes
             if (!is_nonce_match(update_auth_key_req.nonce)) {
-                fill_error_packet(Ccode::ErrorNonceMismatch, rx, tx);
+                fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorNonceMismatch, rx, tx);
                 return;
             }
             // check comp info(comp class, comp id, comp class idx)
@@ -2609,7 +2613,7 @@ void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
     }
     else {
-        fill_error_packet(Ccode::ErrorIrreversibleConfDisable, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorIrreversibleConfDisable, rx, tx);
     }
 }
 
@@ -2823,11 +2827,11 @@ void mctp::Nsm::update_min_sec_ver_num(const Packet&          rx,
     uint32_t      min_svn_data  = 0;
     uint32_t      fmc_svn       = 0;
 
-    auto can_revoke = can_revoke_otp();
+    Rcode reason_code{};
 
     // bypassing the cases for PldmProcessActive and inactive slot and bg copy inprogress
-    if (can_revoke != Ccode::Success) {
-        fill_error_packet(can_revoke, rx, tx);
+    if (!can_revoke_otp(reason_code)) {
+        fill_error_packet_v2(Ccode::ErrorGeneral, reason_code, rx, tx);
         return;
     }
 
@@ -2899,7 +2903,7 @@ void mctp::Nsm::update_min_sec_ver_num(const Packet&          rx,
     // failed
     if (input_min_svn > min_svn_data) {
         if (revoke_rollback_protection((uint32_t)input_min_svn) != Ccode::Success) {
-            fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
             return;
         }
         logger::info(logger::Event::MctpNsmRevokeRollbackProtection,
@@ -2935,7 +2939,7 @@ void mctp::Nsm::update_ap_min_sec_ver_num(const Packet&          rx,
     auto can_revoke = can_revoke_ap_otp();
 
     if (can_revoke != Ccode::Success) {
-        fill_error_packet(can_revoke, rx, tx);
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
         return;
     }
 
@@ -2973,7 +2977,7 @@ void mctp::Nsm::update_ap_min_sec_ver_num(const Packet&          rx,
     // failed
     if (input_min_svn > min_svn_data) {
         if (revoke_ap_rollback_protection((uint32_t)input_min_svn) != Ccode::Success) {
-            fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
             return;
         }
         const uint32_t
@@ -3024,7 +3028,7 @@ void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
             }
             // check nonce bytes
             if (!is_nonce_match(update_min_svn_req.nonce)) {
-                fill_error_packet(Ccode::ErrorNonceMismatch, rx, tx);
+                fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorNonceMismatch, rx, tx);
                 return;
             }
             // check comp info(comp class, comp id, comp class idx)
@@ -3050,7 +3054,7 @@ void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
         }
     }
     else {
-        fill_error_packet(Ccode::ErrorIrreversibleConfDisable, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorIrreversibleConfDisable, rx, tx);
     }
 }
 
@@ -3238,6 +3242,7 @@ void mctp::Nsm::on_image_copy_control(const Packet& rx, Packet& tx)
     }
 }
 
+// Build error response with completion code only (NsmPktResp).
 void mctp::Nsm::fill_error_packet(Ccode code, const Packet& rx, Packet& tx) const
 {
     fill_packet_header(rx, tx);
@@ -3248,6 +3253,7 @@ void mctp::Nsm::fill_error_packet(Ccode code, const Packet& rx, Packet& tx) cons
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
 }
 
+// Build error response with completion code + reason code (NsmPktRespV2).
 void mctp::Nsm::fill_error_packet_v2(Ccode         completion_code,
                                      Rcode         reason_code,
                                      const Packet& rx,
@@ -3443,7 +3449,8 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
     // Check if GPIO spoofing error injection is active
     const bool gpio_spoofing_active = is_gpio_spoofing_activate();
 
-    // Read GPIOs directly starting from offset
+    // Virtual and physical GPIOs use the same spoofing path (get_gpi_spoofing_value) when EI
+    // on. Read GPIOs directly starting from offset
     for (uint16_t i = 0; i < length; i++) {
         const uint16_t gpio_index = offset + i;
 
@@ -3455,7 +3462,8 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
         // Read GPIO value
         uint8_t pin_value = 0;
         if ((gpio_spoofing_active && get_gpi_spoofing_value(gpio_index, pin_value))
-            || (nv::gpio::Driver::read(port, pin, pin_value) == nv::gpio::Status::Ok)) {
+            || (nv::gpio::Driver::read_virtual_physical_gpio(port, pin, pin_value)
+                == nv::gpio::Status::Ok)) {
             // Calculate position in response array
             const uint16_t byte_index = i / 8;
             const uint16_t bit_pos    = i % 8;
@@ -3557,7 +3565,8 @@ void mctp::Nsm::on_dcd_set_gpio(const Packet& rx, Packet& tx)
 
         // Read back the GPIO value to confirm change
         uint8_t pin_value = 0;
-        if (nv::gpio::Driver::read(port, pin, pin_value) == nv::gpio::Status::Ok) {
+        if (nv::gpio::Driver::read_virtual_physical_gpio(port, pin, pin_value)
+            == nv::gpio::Status::Ok) {
             // Set corresponding bit if GPIO is high
             if (pin_value) {
                 gpio_resp.gpio.at(byte_index) |= (1U << bit_pos);
@@ -3645,15 +3654,16 @@ bool mctp::Nsm::get_gpi_spoofing_value(uint16_t gpio_index, uint8_t& pin_value)
     const auto  port       = std::get<0>(gpio_entry);
     const auto  pin        = std::get<1>(gpio_entry);
 
-    // Check if GPIO is an input using Driver::getDirection
-    nv::gpio::Direction dir = gpio::Direction::Input;
-    if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok) {
-        return false;
-    }
+    // Virtual GPIO has no hardware direction; treat as input for spoofing eligibility.
+    if (port != nv::iox::vrPort) {
+        nv::gpio::Direction dir = gpio::Direction::Input;
+        if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok) {
+            return false;
+        }
 
-    // Only spoof GPIOs with Input direction
-    if (dir != nv::gpio::Direction::Input) {
-        return false;
+        if (dir != nv::gpio::Direction::Input) {
+            return false;
+        }
     }
 
     // Search through GPIO spoofing entries

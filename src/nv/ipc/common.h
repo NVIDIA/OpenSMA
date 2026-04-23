@@ -29,6 +29,7 @@ enum class CmdCode : uint16_t
 {
     InterCoreSendWriteDone,
     Core1Ready,
+    InterCoreAcmTxDone,
     End,
 };
 

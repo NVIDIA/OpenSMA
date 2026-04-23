@@ -115,15 +115,16 @@ static TokenTypeInfo getInstalledTokenTypes()
     TokenTypeInfo result{};
 
     // Read token from flash
-    std::array<uint8_t, debugtoken::ReasonableSize> token_buffer       = {};
-    constexpr uint32_t                              FlashReadChunkSize = nv::flash::BufferSize;
-    constexpr uint32_t NumChunks    = debugtoken::ReasonableSize / FlashReadChunkSize;
-    nv::flash::Status  flash_status = nv::flash::Status::Ok;
+    std::array<uint8_t, debugtoken::ReasonableSize> token_buffer = {};
+    const auto         token_address      = debugtoken::get_token_flash_address();
+    constexpr uint32_t FlashReadChunkSize = nv::flash::BufferSize;
+    constexpr uint32_t NumChunks          = debugtoken::ReasonableSize / FlashReadChunkSize;
+    nv::flash::Status  flash_status       = nv::flash::Status::Ok;
 
     for (uint32_t i = 0; i < NumChunks; i++) {
         const uint32_t offset     = i * FlashReadChunkSize;
         const uint32_t chunk_size = FlashReadChunkSize;
-        flash_status              = nv::flash::Flash::read(debugtoken::SpiOffset + offset,
+        flash_status              = nv::flash::Flash::read(token_address + offset,
                                                            {token_buffer.data() + offset, chunk_size});
 
         if (flash_status != nv::flash::Status::Ok) {

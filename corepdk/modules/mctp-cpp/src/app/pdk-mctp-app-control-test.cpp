@@ -225,11 +225,21 @@ UBS_TEST(Control, RemoveRoutingEntryTest)
     RoutingEntryTestHelper control;
     control._num_enumerate_eid                       = 1;
     control.routing_map().at(0x00).is_need_enumerate = true;
+    control.routing_map().at(0x00).is_enumerated     = true;
     control.remove_routing_entry(0x00);
     ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(0x00).is_need_enumerate),
                   false);
     ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(0x00).is_enumerated), false);
     ensure::is_eq(static_cast<uint8_t>(control._num_enumerate_eid), 0);
+
+    control._num_enumerate_eid                       = 1;
+    control.routing_map().at(0x00).is_need_enumerate = true;
+    control.routing_map().at(0x00).is_enumerated     = false;
+    control.remove_routing_entry(0x00);
+    ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(0x00).is_need_enumerate),
+                  false);
+    ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(0x00).is_enumerated), false);
+    ensure::is_eq(static_cast<uint8_t>(control._num_enumerate_eid), 1);
 };
 
 UBS_TEST(Control, AddRoutingEntryTest)

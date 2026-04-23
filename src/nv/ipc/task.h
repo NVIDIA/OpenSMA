@@ -55,6 +55,7 @@ public:
         Pldm   = 2,
         Spdm   = 2,
         Logger = 2,
+        Diag   = 2,
         Mctp   = 3,
         I2c    = 4,
         Lstp   = 4,

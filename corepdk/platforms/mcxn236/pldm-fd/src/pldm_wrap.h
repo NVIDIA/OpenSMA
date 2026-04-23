@@ -268,7 +268,7 @@ void pldm_get_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bui
 void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build);
 
 void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc);
-void get_ap_authentication_result(uint8_t result, uint8_t& verify_cc);
+void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc);
 
 }  // namespace pldm
 }  // namespace nv

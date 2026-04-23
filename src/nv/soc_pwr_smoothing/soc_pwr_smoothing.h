@@ -56,14 +56,6 @@ struct TelemetryHistorySnapshot
     std::array<uint8_t, 100> isink_offset;          // Integer percent values (0-100)
 };
 
-// Parameter constraints for validation
-struct ParameterConstraints
-{
-    nv::mctp::RackPwrSmoothParams id;
-    float                         min_value;
-    float                         max_value;
-};
-
 // ============================================================================
 // PowerSmoothing Class - Main module interface
 // ============================================================================
@@ -170,6 +162,10 @@ public:
     // Returns the last raw ADC code (updated by ISR, used for calibration)
     static uint16_t get_last_adc_raw();
 
+    // Last 12-bit code written to EDPP / ISINK offset DACs (updated each control iteration)
+    static uint16_t get_last_edpp_dac_raw();
+    static uint16_t get_last_isink_dac_raw();
+
 private:
     // ========================================================================
     // Internal State (previously global variables)
@@ -185,32 +181,6 @@ private:
     static inline uint32_t callback_exec_time          = 0;
     static inline uint32_t callback_time_exceeded      = 0;
     static inline uint32_t callback_exec_time_exceeded = 0;
-
-    // ========================================================================
-    // Parameter Validation (private helper functions)
-    // ========================================================================
-
-    // Validate a single parameter
-    static bool validate_parameter(nv::mctp::RackPwrSmoothParams param_id, uint32_t raw_value);
-
-    // Validate all parameters in a preset
-    static bool validate_preset(const ParameterPreset& preset);
-
-    // ========================================================================
-    // Preset Management (private helper functions)
-    // ========================================================================
-
-    // Initialize a writable preset by copying from default Preset 0
-    static void initialize_preset_from_default(uint8_t preset_id);
-
-    // Build RuntimeCfg from preset parameters
-    static RuntimeCfg build_runtime_cfg_from_preset(uint8_t preset_id);
-
-    // Initialize Preset 0 (read-only defaults) from current RuntimeCfg defaults
-    static void initialize_default_preset();
-
-    // Apply pending preset change (called at ISR start)
-    static void apply_preset_change();
 };
 
 // ============================================================================
@@ -227,5 +197,11 @@ void execute_adc_calibration();
 /// Populates response struct from flash-backed calibration data.
 /// @param[out] response Response struct to populate
 void get_adc_calibration_results(nv::mctp::NsmTFFGetAdcCalibResultsRes& response);
+
+/// @brief Write raw DAC code to ADC calibration loopback DAC (I2C).
+/// Does not delay for analog settling; host should wait before @ref
+/// PowerSmoothing::get_last_adc_raw.
+/// @return true on successful I2C write
+bool adc_calib_set_loopback_dac_code(uint16_t dac_code);
 
 }  // namespace nv::soc_pwr_smoothing

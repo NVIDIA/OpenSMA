@@ -371,7 +371,7 @@ LstpRouter::read_gpio_config_helper(uint16_t                                    
     }
     for (uint16_t i = 0; i < n_pins; i++) {
         auto& pin_config_resp  = from<LstpGpioConfig>(&resp_buffer.data()[resp_offset]);
-        pin_config_resp        = PinConfigs.at(start_pin + i);
+        pin_config_resp        = PinConfigs.at(start_pin + i).config;
         resp_offset           += sizeof(LstpGpioConfig);
     }
     return LstpStatus::Success;
@@ -506,20 +506,8 @@ void LstpRouter::send_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_bu
     nv::usb::Task::to_usbLstp(item);
 }
 
-void LstpRouter::send_gpio_irq_event(uint16_t gpio_index, uint8_t value)
+void LstpRouter::send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t value)
 {
-    // Find GPIO channel ID (assuming single GPIO channel)
-    constexpr uint8_t InvalidGpioChannelId = 0xFF;
-    uint8_t           gpio_channel_id      = InvalidGpioChannelId;
-    for (uint8_t i = 0; i < LstpNumChannels; i++) {
-        if (std::get<0>(LstpChannels.at(i)).type == LstpChannelType::Gpio) {
-            gpio_channel_id = i;
-            break;
-        }
-    }
-    if (gpio_channel_id == InvalidGpioChannelId) {
-        return;
-    }
     if (sizeof(LstpHdr) + sizeof(LstpGpioIrqEventRequest) > LstpMaxPayloadSize) {
         return;
     }
@@ -529,7 +517,7 @@ void LstpRouter::send_gpio_irq_event(uint16_t gpio_index, uint8_t value)
 
     auto&      irq_hdr      = from<LstpHdr>(irq_buffer.data());
     const auto resp_len     = sizeof(LstpGpioIrqEventRequest);
-    irq_hdr.channel_id      = gpio_channel_id;
+    irq_hdr.channel_id      = ch_id;
     irq_hdr.cmd_status_code = static_cast<uint8_t>(LstpGpioCommand::IrqEvent);
     irq_hdr.len_lsb         = resp_len & LSB_MASK;
     irq_hdr.len_msb         = resp_len >> BYTE1_SHIFT;

@@ -46,6 +46,10 @@
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-dcl37-c,cert-dcl51-cpp)
 extern nv::mctp::SelfTest::I2cLoopbackTestResultStruct loopback_result;
 
+extern bool             projectIsApStatusTimer(nv::ipc::Timer& timer);
+extern nv::ipc::QueueId projectGetApStatusQueueId(nv::ipc::Timer& timer);
+extern void             project_stop_polling_timers();
+
 using namespace nv::i2c;
 
 namespace {
@@ -264,6 +268,8 @@ Task::Status Task::send_recovery_request(RecoveryCmd cmd, mctp::Client client)
 {
     using namespace nv::ipc;
 
+    const bool is_in_isr = Supervisor::is_in_isr();
+
     // Determine which I2C Task queue to send to based on client
     ipc::QueueId queue_id{};
     switch (client) {
@@ -297,7 +303,8 @@ Task::Status Task::send_recovery_request(RecoveryCmd cmd, mctp::Client client)
 
     // Send the request
     auto item         = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
-    auto queue_status = Queue::make(queue_id).send(item);
+    auto queue_status = is_in_isr ? Queue::make(queue_id).send_isr(item)
+                                  : Queue::make(queue_id).send(item);
 
     if (queue_status != Queue::Status::Ok) {
         return Task::Status::FailToPutTxPacket;
@@ -453,7 +460,7 @@ void Task::stop_polling_timers()
                          [](nv::ipc::Timer& timer) {})
         .stop();
     nv::ipc::Timer::make(nv::ipc::TimerId::SmbusCacheRefresh,
-                         std::chrono::microseconds(DefaultPollingTimeout),
+                         std::chrono::seconds(DefaultPollingTimeout),
                          [](nv::ipc::Timer& timer) {})
         .stop();
     nv::ipc::Timer::make(nv::ipc::TimerId::Ap1Status,
@@ -472,6 +479,7 @@ void Task::stop_polling_timers()
                          std::chrono::seconds(DefaultPollingTimeout),
                          [](nv::ipc::Timer& timer) {})
         .stop();
+    project_stop_polling_timers();
 }
 
 void Task::handle_i2c_loopback_test()
@@ -512,9 +520,10 @@ void Task::handle_wdt_event()
 
 void Task::set_tmp_sensor()
 {
-    const uint8_t Limit  = 115;
-    uint8_t       value  = 0;
-    I2cStatus     status = I2cStatus::Ok;
+    const uint8_t Limit = 115;
+    uint8_t   value  = 0;  // NOLINT(misc-const-correctness) modified inside loop on MCU builds
+    I2cStatus status = I2cStatus::Ok;  // NOLINT(misc-const-correctness) modified inside loop on
+                                       // MCU builds
     // coverity[DEADCODE] the table is not 0 on other projects
     for (auto& [port, offset, item] : nv::ipc::ModuleTempSensorList) {
         // Remote temp
@@ -595,8 +604,7 @@ void Task::handle_rx(std::span<uint8_t> buffer)
     auto             result = process_rx_packet(buffer, packet, command_code);
     if (result) {
         // reset status timer since AP proved connectivity with successful receive
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
-            || _timer.id() == ipc::TimerId::Ap3Status) {
+        if (projectIsApStatusTimer(_timer)) {
             _timer.reset();
         }
         forward(packet, command_code);
@@ -621,8 +629,7 @@ void Task::handle_tx(std::span<uint8_t> buffer, uint16_t additional_info)
         auto result = transmit(packet);
         if (result) {
             // reset status timer since AP proved connectivity with successful transmit
-            if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
-                || _timer.id() == ipc::TimerId::Ap3Status) {
+            if (projectIsApStatusTimer(_timer)) {
                 _timer.reset();
             }
         }
@@ -685,9 +692,9 @@ void Task::handle_update_routing_table()
         // routing table events come from upstream enumueration, update status if checking for
         // AP status; update status if I2C is not running the timer or if AP is up and not
         // enumerated
-        if ((_timer.id() != ipc::TimerId::Ap1Status && _timer.id() != ipc::TimerId::Ap2Status
-             && _timer.id() != ipc::TimerId::Ap3Status)
-            || _ap_status == APStatus::ApUpNotEnumerated || _ap_status == APStatus::Querying) {
+        const bool is_ap_status_timer = projectIsApStatusTimer(_timer);
+        if (!is_ap_status_timer || _ap_status == APStatus::ApUpNotEnumerated
+            || _ap_status == APStatus::Querying) {
             auto  myep    = nv::mctp::Control::get_routing_index(_client);
             auto& myentry = _routing_table.at(myep);
             if (myentry.is_enumerated) {
@@ -986,8 +993,13 @@ void Task::handle_i2c_recovery(std::span<uint8_t> buffer)
             nv::i2c::quick_recovery(_port, _target_addr);
             break;
         case nv::i2c::RecoveryCmd::BusRecovery: nv::i2c::bus_recovery(_port); break;
-        case nv::i2c::RecoveryCmd::None       :
-        default                               : break;
+        case nv::i2c::RecoveryCmd::ControllerReinit:
+            if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+                _driver.peripheral_recovery(is_target_client(_client));
+            }
+            break;
+        case nv::i2c::RecoveryCmd::None:
+        default                        : break;
     }
 }
 
@@ -1242,15 +1254,13 @@ void Task::forward(nv::mctp::Packet& packet, uint8_t command_code)
 
             // log control commands from upstream i2c
             if (_client == mctp::Client::UsI2c && !mctp::Driver::is_allow_bridge(packet)) {
-                logger::info(
-                    logger::Event::MctpMcuActAsBridgePacketNotify,
-                    {
-                        static_cast<uint8_t>(static_cast<uint16_t>(_client) & ByteMask),
-                        static_cast<uint8_t>(static_cast<uint16_t>(_client) >> 8U),
-                        packet.priv.packet_interface,
-                        packet.msg.at(2),  // command_code
-                        packet.msg.at(4)   // eid to set
-                    });
+                auto& ctl_pkt = mctp::Control::PktReq::from(packet);
+                logger::info(logger::Event::MctpMcuActAsBridgePacketNotify,
+                             {static_cast<uint8_t>(static_cast<uint16_t>(_client) & ByteMask),
+                              static_cast<uint8_t>(static_cast<uint16_t>(_client) >> 8U),
+                              packet.priv.packet_interface,
+                              static_cast<uint8_t>(ctl_pkt.command_code),
+                              ctl_pkt.data[1]});
             }
             // packet interface already assigned, send to downstream task
             switch (ds_client) {
@@ -1357,6 +1367,12 @@ bool Task::transmit(const I2cPacket& packet)
 
 void Task::handle_error(Error reason)
 {
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if (reason == Error::CtrlBusBusy || reason == Error::CtrlArbLost) {
+            _driver.peripheral_recovery(is_target_client(_client));
+        }
+    }
+
     const uint8_t ByteMask = 0xFF;
     // NOLINTNEXTLINE(misc-const-correctness)
     nv::logger::EventData data{static_cast<uint8_t>(static_cast<uint16_t>(_client) & ByteMask),
@@ -1505,13 +1521,9 @@ void Task::check_ap_status(nv::ipc::Timer& timer)
     // coverity[UNUSED_VALUE] "tidy" complains no init value
     QueueId       queue_id = QueueId::End;
     const Request request{.type = RequestType::CheckApStatus};
-    switch (timer.id()) {
-        // these QueueIds are not tightly coupled to the TimerId, double check for future
-        // projects
-        case TimerId::Ap1Status: queue_id = QueueId::I2c1; break;
-        case TimerId::Ap2Status: queue_id = QueueId::I2c2; break;
-        case TimerId::Ap3Status: queue_id = QueueId::I2c3; break;
-        default                : return;
+    queue_id = projectGetApStatusQueueId(timer);
+    if (queue_id == QueueId::End) {
+        return;
     }
     auto item         = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
     auto queue_status = Queue::make(queue_id).send(item, 0s);
@@ -1546,8 +1558,7 @@ void Task::handle_ap_status(APStatus set_status)
         // Set status
         status = set_status;
         // reset status timer since we just forced a status change
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
-            || _timer.id() == ipc::TimerId::Ap3Status) {
+        if (projectIsApStatusTimer(_timer)) {
             _timer.reset();
         }
     }
@@ -1561,8 +1572,7 @@ void Task::handle_ap_status(APStatus set_status)
                       static_cast<uint8_t>(status)});
 
         // update mctp driver with status for enumeration
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status
-            || _timer.id() == ipc::TimerId::Ap3Status) {
+        if (projectIsApStatusTimer(_timer)) {
             if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
                 nv::mctp::Driver::endpoint_status_change(
                     myep, (status == APStatus::ApUpNotEnumerated));
@@ -1571,3 +1581,32 @@ void Task::handle_ap_status(APStatus set_status)
         _ap_status = status;
     }
 }
+
+// Weak function definition for projectTryRunAdcTrigger (for testrunner project(esp. in
+// simulation))
+__attribute__((weak)) bool projectIsApStatusTimer(nv::ipc::Timer& timer)
+{
+    switch (timer.id()) {
+        case nv::ipc::TimerId::Ap1Status: return true;
+        case nv::ipc::TimerId::Ap2Status: return true;
+        case nv::ipc::TimerId::Ap3Status: return true;
+        default                         : return false;
+    }
+    return false;
+}
+
+// Weak function definition for projectTryRunAdcTrigger (for testrunner project(esp. in
+// simulation))
+__attribute__((weak)) nv::ipc::QueueId projectGetApStatusQueueId(nv::ipc::Timer& timer)
+{
+    switch (timer.id()) {
+        case nv::ipc::TimerId::Ap1Status: return nv::ipc::QueueId::I2c1;
+        case nv::ipc::TimerId::Ap2Status: return nv::ipc::QueueId::I2c2;
+        case nv::ipc::TimerId::Ap3Status: return nv::ipc::QueueId::I2c3;
+        default                         : return nv::ipc::QueueId::End;
+    }
+}
+
+// Weak function definition for project_stop_polling_timers (for testrunner project(esp. in
+// simulation))
+__attribute__((weak)) void project_stop_polling_timers() {}

@@ -1563,7 +1563,6 @@ protected:
 
     Ccode handle_set_ncsi_mac(const uint8_t* data);
     Ccode handle_get_ncsi_mac(NsmPktResp& ntx);
-
     // Type 6
     void get_rot_state_info(const Packet& rx, Packet& tx);
     void get_ap_rot_state_info(const Packet& rx, Packet& tx, const uint16_t& component_id);
@@ -1604,6 +1603,8 @@ protected:
     void on_nv_internal_getDebugTelemetry(const Packet& rx, Packet& tx);
     void on_nv_internal_triggerAdcCalibration(const Packet& rx, Packet& tx);
     void on_nv_internal_getAdcCalibrationResults(const Packet& rx, Packet& tx);
+    void on_nv_internal_adcCalibSetLoopbackDacCode(const Packet& rx, Packet& tx);
+    void on_nv_internal_getPowerSmoothRawReadback(const Packet& rx, Packet& tx);
     // Misc
     void     fill_nsm_msg_header(const Packet& rx, Packet& tx) const;
     void     fill_error_packet(Ccode code, const Packet& rx, Packet& tx) const;
@@ -1618,7 +1619,7 @@ protected:
     bool     is_fw_comp_id_valid(const FwCompInfo& input_fw_comp_info, uint16_t component_id);
     bool     is_nonce_match(const Nonce& input_nonce);
     bool     is_input_length_valid(const Packet& rx, uint8_t size);
-    Ccode    can_revoke_otp();
+    bool     can_revoke_otp(Rcode& reason_code);
     bool     can_initiate_image_copy(Ccode& completion_code, Rcode& reason_code);
     void     get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
                                    NsmRedundancyPolicy& redundancy_policy_current);

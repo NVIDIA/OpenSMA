@@ -87,9 +87,7 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& msg)
 
     // spi config
     if ((msgHdr->cmdCode & CMD_CODE_MASK) == FlashromCmdCode::SPI_CMD_CONFIG) {
-        // deasserted cs
-        nv::gpio::Driver::write(_cs0_port_id, _cs0_pin_id, 1);
-        nv::gpio::Driver::write(_cs1_port_id, _cs1_pin_id, 1);
+        deassert_all_cs();
 
         auto rxHdr       = FlashromMsgHdr_from(rx_data);
         rxHdr->channelId = 0x01;
@@ -109,6 +107,11 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& msg)
     // embedded cs ctrl cmd
     // assert CS
     if (msgHdr->cmdCode & SPI_CS_ASSERT) {
+        /* To avoid CS state desync with driver:
+         *     1. If command asserts CS pin thats already asserted, toggles that pin
+         *     2. Only allows one CS pin to be asserted at a time
+         */
+        deassert_all_cs();
         if ((msgHdr->cmdCode & SPI_CS_MASK) == SPI_CS0) {
             nv::gpio::Driver::write(_cs0_port_id, _cs0_pin_id, 0);
         }
@@ -166,8 +169,7 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& msg)
 
             auto res = nv::usb::Task::to_usbLstp(item);
             if (res != usb::Status::Ok) {
-                nv::gpio::Driver::write(_cs0_port_id, _cs0_pin_id, 1);
-                nv::gpio::Driver::write(_cs1_port_id, _cs1_pin_id, 1);
+                deassert_all_cs();
                 return;
             }
         }
@@ -201,4 +203,10 @@ void Flashrom::handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& msg)
             nv::gpio::Driver::write(_cs1_port_id, _cs1_pin_id, 1);
         }
     }
+}
+
+void Flashrom::deassert_all_cs()
+{
+    nv::gpio::Driver::write(_cs0_port_id, _cs0_pin_id, 1);
+    nv::gpio::Driver::write(_cs1_port_id, _cs1_pin_id, 1);
 }

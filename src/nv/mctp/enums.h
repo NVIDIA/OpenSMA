@@ -50,6 +50,17 @@ using PacketType = pdk::mctp::app::PacketType;
 
 using VdmCmd = pdk::mctp::platforms::VdmCmd;
 
+// Common Status Codes to be used in NSM message handlers.
+enum class NsmStatus : uint8_t
+{
+    OK                = 0x00,
+    ErrorGeneral      = 0x01,
+    NotSupported      = 0x02,
+    I2cBusError       = 0x03,
+    GpioVerifyFailure = 0x04,
+    InvalidData       = 0x05,
+};
+
 enum class BackgroundCopyCmd : uint8_t
 {
     Disable_Bg            = 0x00,
@@ -407,9 +418,10 @@ enum class NsmDevCfgCmdCode : uint8_t
     SetGpuDegradeMode               = 0x60,
     EnableDisablePowerSupply        = 0x61,
     GetSmaBaseboardSettings         = 0x64,
-    SetDeviceModeSettings           = 0x82,
-    GetDeviceModeSettings           = 0x83,
-    GetSupportedDeviceModes         = 0x84,
+    // Device mode settings (MCU accepts OCP request header v1 and v2; see nsm_type_5.cpp)
+    SetDeviceModeSettingsV2   = 0x82,
+    GetDeviceModeSettingsV2   = 0x83,
+    GetSupportedDeviceModesV2 = 0x84,
 };
 
 // NVIDIA Type FF (Internal) Command Codes
@@ -422,6 +434,10 @@ enum class NsmTypeFFCmdCode : uint8_t
     GetDebugTelemetry             = 0xA4,
     TriggerAdcCalibration         = 0xA5,  // Start ADC calibration test
     GetAdcCalibrationResults      = 0xA6,  // Retrieve calibration results
+    AdcCalibSetLoopbackDacCode    = 0xA7,  // Set loopback DAC code (I2C); host allows settle
+                                           // before read
+    GetPowerSmoothRawReadback = 0xA8,      // Last raw SoC ADC or EDPP/ISINK DAC code (see
+                                           // PwrSmoothRawReadbackId)
 };
 
 enum class DeviceModeIndex : uint32_t
@@ -439,6 +455,8 @@ enum class DeviceModeIndex : uint32_t
     SoCPowerBrakeEnabled             = 0x0A,
     NcsiMac                          = 0x11,
     SoCThermBrakeEnabled             = 0x12,
+    ProgramCpldFeatureRow            = 0x15,
+    OtpCpldFeatureRow                = 0x16,
 };
 
 /** Sensors used in Type 3 - Get Temperature Reading */
@@ -462,6 +480,8 @@ enum Type3TemperatureSensors : uint8_t
     SMA_Internal   = 17,   // SMA Internal temperature sensor
     NvLink_Temp    = 18,   // NvLink temperature sensor
     BusBar_Temp    = 19,   // Busbar temperature sensor
+    QM4_1_Temp     = 128,  // QM4 NVSwitch 1 temperature sensor
+    QM4_2_Temp     = 129,  // QM4 NVSwitch 2 temperature sensor
     GPU1_Die_A     = 138,  // GPU1 Die A temperature sensor
     GPU1_Die_B     = 139,  // GPU1 Die B temperature sensor
     GPU2_Die_A     = 140,  // GPU2 Die A temperature sensor

@@ -182,12 +182,22 @@ public:
     struct Ports
     {
         mpf::port::In<SFXP22_10> percent;
+        // When true, raw_override_dac is written to the DAC instead of
+        // percent_to_dac_raw(percent)
+        mpf::port::In<bool>     raw_override_enabled;
+        mpf::port::In<uint16_t> raw_override_dac;
+        // Last code passed to Dac::set (12-bit effective; shadow, not bus readback)
+        mpf::port::Out<uint16_t> last_dac_raw;
     };
 
     static void evaluate(Ports ports)
     {
-        const uint32_t dac_raw = percent_to_dac_raw(ports.percent);
+        const uint32_t dac_raw = ports.raw_override_enabled
+                                   ? static_cast<uint32_t>(ports.raw_override_dac)
+                                   : percent_to_dac_raw(ports.percent);
         sys::dac::Dac::set(dac_raw, peripheral);
+        constexpr uint32_t dac_mask = (1U << sys::dac::Dac::ResolutionBits) - 1U;
+        ports.last_dac_raw          = static_cast<uint16_t>(dac_raw & dac_mask);
     }
 
 protected:

@@ -142,6 +142,8 @@ public:
         }
     }
 
+    void peripheral_recovery() {}
+
 private:
     // Internal Constants
     // ---------------------------------------------

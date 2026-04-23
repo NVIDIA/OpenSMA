@@ -23,6 +23,7 @@
 #include <cstring>
 
 #include "nv/mctp/constants.h"
+#include "nv/mctp/enums.h"
 #include "nv/mctp/nsm_msg_bitmask.h"
 
 namespace nv::mctp {
@@ -412,21 +413,70 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
     }
 };
 
-/** Get Supported Device Modes v2 (0x84) - Request */
-struct [[gnu::packed]] NsmT5GetSupportedDeviceModesReq
+/** GetSupportedDeviceModesV2 (0x84) - Request */
+struct [[gnu::packed]] NsmT5GetSupportedDeviceModesV2Req
 {
     uint32_t handle;  // 0 for first request, use previous response's handle for subsequent
 };
 
-/** Get Supported Device Modes v2 (0x84) - Response data (after completion code) */
-struct [[gnu::packed]] NsmT5GetSupportedDeviceModesResp
+/** GetSupportedDeviceModesV2 (0x84) - Response data (after completion code) */
+struct [[gnu::packed]] NsmT5GetSupportedDeviceModesV2Resp
 {
     uint32_t handle;      // 0 if last (or only) part, non-zero if more modes available
     uint32_t mode_count;  // Number of supported modes in this response
     uint32_t modes[1];    // Array of DeviceModeIndex values (variable length)
 };
 
+struct [[gnu::packed]] CpldFeatureRowResponse
+{
+    uint8_t match;
+    uint8_t length;
+    uint8_t reserved[2];
+    uint8_t data[10];
+};
+
+struct NsmPktResp;
+
+/**
+ * @brief Get Supported Device Modes for GetSupportedDeviceModesV2 (0x84) command
+ * @param[out] ntx Response packet to populate with Handle, Mode Count, and Mode List
+ * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
+ */
+Ccode handle_get_supported_device_modes(NsmPktResp& ntx);
+
 namespace nsm_type5 {
+
+/**
+ * Platform hook for reading write-protection GPIO states into SMA baseboard sets response.
+ * Weak default in nsm_type_5.cpp returns OK (no write-protection GPIOs).
+ * Strong override (e.g. p7612_hgx) reads WriteProtectionList GPIOs and sets response bits.
+ *
+ * @param response  Bitarray response to populate
+ * @return NsmStatus::OK on success, NsmStatus::ErrorGeneral on GPIO read failure
+ */
+NsmStatus set_sma_baseboard_sets_resp_wp(T5SmaBaseboardSetsResponse& response);
+
+Ccode handle_set_program_cpld_feature_row();
+Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx);
+Ccode handle_set_otp_cpld_feature_row();
+Ccode handle_get_otp_cpld_feature_row(NsmPktResp& ntx);
+
+/**
+ * CPLD-only hook for NSM Set GPU degrade mode (validated device_index and action).
+ * Weak default in nsm_type_5.cpp returns error. Strong override e.g. p7612_hgx core0/main.cpp.
+ *
+ * @return NsmStatus indicating result of CPLD register update.
+ */
+NsmStatus platform_apply_gpu_degrade_mode_cpld(uint8_t device_index, uint8_t action);
+
+/**
+ * CPLD-only hook for NSM Enable/Disable power supply (validated device_index 0-7 and mode).
+ * Weak default in nsm_type_5.cpp returns NotSupported. Strong override e.g. p7612_hgx
+ * core0/main.cpp (SXM_EN register).
+ *
+ * @return NsmStatus indicating result of CPLD register update.
+ */
+NsmStatus platform_apply_power_supply_cpld(uint8_t device_index, uint8_t mode);
 
 /**
  * @brief This is the callback for the NSM T5 EI Payload Activate

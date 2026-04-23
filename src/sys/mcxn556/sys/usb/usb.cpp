@@ -803,6 +803,11 @@ bool Driver::check_vbus()
     return is_vbus_on;
 }
 
+bool Driver::is_device_connected()
+{
+    return g_UsbDevice.attach != 0U && g_UsbDevice.current_configuration != 0U;
+}
+
 #if (defined(USB_DEVICE_CONFIG_EHCI) && (USB_DEVICE_CONFIG_EHCI > 0U))
 void USB1_HS_IRQHandler(void)
 {
@@ -854,14 +859,16 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
 
     switch (event) {
         case kUSB_DeviceEventBusReset: {
-            bool was_enumerated = (g_UsbDevice.attach != 0U)
-                               || (g_UsbDevice.current_configuration != 0U);
-            if (was_enumerated) {
-                // Record in mailbox
-                nv::mainbox::write_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset,
-                                               nv::usb::UsbPortResetMagicNumber);
-                // Trigger software reset
-                nv::bootloader::Driver::self_reset();  // Never returns
+            if constexpr (nv::ipc::EnableUsbPortResetSelfReset) {
+                bool was_enumerated = (g_UsbDevice.attach != 0U)
+                                   || (g_UsbDevice.current_configuration != 0U);
+                if (was_enumerated) {
+                    // Record in mailbox
+                    nv::mainbox::write_mailbox_u32(nv::mainbox::MainBoxMemoryType::UsbPortReset,
+                                                   nv::usb::UsbPortResetMagicNumber);
+                    // Trigger software reset
+                    nv::bootloader::Driver::self_reset();  // Never returns
+                }
             }
             nv::usb::Task::reset_all_event_bits();
             g_UsbDevice.attach                = 0U;

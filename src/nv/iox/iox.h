@@ -21,7 +21,7 @@
 #include <cstdint>
 
 #include "nv/iox/common.h"
-#include "nv/mctp/nsm_type_5.h"
+
 namespace nv::iox {
 /**
  * @brief CP2112 GPIO structure for USB HID communication
@@ -34,13 +34,6 @@ typedef struct cp2112_gpio_struct
     uint8_t gpio_special_function;
     uint8_t gpio_clock_divider;
 } cp2112_gpio_struct_t;
-
-// GPIO spoofing state
-struct SpoofingEntry
-{
-    uint16_t gpioIndex;
-    uint8_t  activated;
-};
 
 /**
  * @brief PCA9555 Emulation Class
@@ -108,12 +101,6 @@ public:
     static void    set_gpio_bit(uint8_t bit, bool set);
     static bool    get_gpio_bit(uint8_t bit);
 
-    // GPIO spoofing configuration - public for Task to call
-    void setSpoofingConfig(
-        bool                                                         spoofingActive,
-        uint8_t                                                      numSpoofEntries,
-        std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries>& spoofEntries);
-
 private:
     // access register
     Status access_reg(Operation op, Register reg, uint8_t& data, uint8_t num);
@@ -132,16 +119,6 @@ private:
 
     // config pin
     Status config_gpio(const PinConfig& config);
-
-    // GPIO spoofing support
-    bool applySpoofingIfActive(uint16_t             gpio_index,
-                               nv::gpio::GpioPort   port,
-                               nv::gpio::GpioPin    pin,
-                               nv::gpio::GpioState& val);
-
-    bool                                                        spoofingActive{false};
-    uint8_t                                                     numSpoofEntries{0};
-    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries> spoofEntries{};
 };
 
 }  // namespace nv::iox

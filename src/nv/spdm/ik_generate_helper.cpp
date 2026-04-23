@@ -17,36 +17,53 @@
  */
 #include "nv/spdm/ik_generate_helper.h"
 namespace nv::spdm::ik {
-DevIkHelper::DevIkHelper(nv::spdm::ik::DevIkRequest& req) : _signature(req.signature)
-{
-    _dev_ik_template.serial_number            = req.serial_number;
-    _dev_ik_template.dda_ordinal_number       = req.dda_ordinal_number;
-    _dev_ik_template.fmc_ordinal_number       = req.fmc_ordinal_number;
-    _dev_ik_template.public_key               = req.public_key;
-    _dev_ik_template.subject_serial_number    = req.subject_serial_number;
-    _dev_ik_template.authority_key_identifier = req.authority_key_identifier;
-    _dev_ik_template.subject_key_identifier   = req.subject_key_identifier;
 
-    // write the length of total certificate due to signature may have variable length.
-    const uint32_t WholeCertLength = sizeof(DevIkTemplate) + _signature.bit_string.length
+template<typename TemplateType>
+void DevIkHelper::fill_template(TemplateType& templ, nv::spdm::ik::DevIkRequest& req)
+{
+    templ.serial_number            = req.serial_number;
+    templ.dda_ordinal_number       = req.dda_ordinal_number;
+    templ.fmc_ordinal_number       = req.fmc_ordinal_number;
+    templ.public_key               = req.public_key;
+    templ.subject_serial_number    = req.subject_serial_number;
+    templ.authority_key_identifier = req.authority_key_identifier;
+    templ.subject_key_identifier   = req.subject_key_identifier;
+
+    _template_size = sizeof(TemplateType);
+
+    const uint32_t WholeCertLength = _template_size + _signature.bit_string.length
                                    + sizeof(_signature.bit_string.length)
                                    + sizeof(_signature.bit_string.token)
-                                   - sizeof(_dev_ik_template.total_certificate);
-    _dev_ik_template.total_certificate.length_msb = (WholeCertLength >> 8u);
-    _dev_ik_template.total_certificate.length_lsb = WholeCertLength % 256;
+                                   - sizeof(templ.total_certificate);
+    templ.total_certificate.length_msb = (WholeCertLength >> 8u);
+    templ.total_certificate.length_lsb = WholeCertLength % 256;
+
+    auto& bytes = *std::bit_cast<std::array<uint8_t, sizeof(TemplateType)>*>(&templ);
+    std::copy(bytes.begin(), bytes.end(), _template_bytes.begin());
+}
+
+DevIkHelper::DevIkHelper(nv::spdm::ik::DevIkRequest& req) : _signature(req.signature)
+{
+    const bool IsFmcV3 = req.fmc_ordinal_number < FmcV4OrdinalThreshold;
+
+    if (IsFmcV3) {
+        DevIkTemplateV3 templ{};
+        fill_template(templ, req);
+    }
+    else {
+        DevIkTemplate templ{};
+        fill_template(templ, req);
+    }
 };
 
 void DevIkHelper::construct_cert(std::span<uint8_t>& input_buffer)
 {
-    auto  it           = input_buffer.begin();
-    auto& dev_ik_array = *std::bit_cast<std::array<uint8_t, sizeof(DevIkTemplate)>*>(
-        &_dev_ik_template);
+    auto it = input_buffer.begin();
 
-    if (std::distance(it, input_buffer.end())
-        < std::distance(dev_ik_array.begin(), dev_ik_array.end())) {
+    if (std::cmp_less(std::distance(it, input_buffer.end()), _template_size)) {
         return;
     }
-    it = std::copy(dev_ik_array.begin(), dev_ik_array.end(), it);
+    it = std::copy(_template_bytes.begin(), _template_bytes.begin() + _template_size, it);
 
     auto& bit_string_view = *std::bit_cast<std::array<uint8_t, sizeof(_signature.bit_string)>*>(
         &_signature.bit_string);

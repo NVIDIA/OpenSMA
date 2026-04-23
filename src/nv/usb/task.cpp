@@ -18,6 +18,10 @@
 
 #include "nv/usb/task.h"
 
+// Only compile full implementation when USB is not disabled
+// When SYS_USB_DISABLED == 1, task.h provides stub implementation
+#if !SYS_USB_DISABLED
+
 #include <algorithm>
 #include <chrono>
 
@@ -29,6 +33,7 @@
 #include "nv/perf_mon/perf_mon.h"
 #include "sys/usb/usb.h"
 #include "nv/spi/task.h"
+#include "nv/usb/mctp_router.h"
 
 #include "nv/watchdog/runtime.h"
 #include "nv/spi/flashrom_task.h"
@@ -269,9 +274,9 @@ void Task::mctp_receive()
             }
 
             // prepare private header
-            pkt.priv.packet_length = usb_pkt.usb_hdr.length > sizeof(Header)
-                                       ? usb_pkt.usb_hdr.length - sizeof(Header)
-                                       : sizeof(Header);
+            pkt.priv.packet_length = usb_pkt.usb_hdr.length > sizeof(MctpHeader)
+                                       ? usb_pkt.usb_hdr.length - sizeof(MctpHeader)
+                                       : sizeof(MctpHeader);
 
             pkt.priv.packet_interface = static_cast<uint8_t>(mctp::Client::UsUsb);
 
@@ -283,76 +288,12 @@ void Task::mctp_receive()
 
             ipc::Queue::Item item(std::bit_cast<uint8_t*>(&pkt), sizeof(pkt));
 
-            bool is_routed = false;
-            for (auto& entry : _routing_table) {
-                if (entry.is_enumerated == true) {
-                    // The packet is directly from upstream to downstream
-                    if (entry.assigned_eid == pkt.hdr.dst_eid) {
-                        // coverity[cert_int31_c_violation] number of client < 256
-                        pkt.priv.packet_interface = static_cast<uint8_t>(entry.client);
+            auto route_result = route_mctp_to_downstream(pkt, _routing_table);
 
-                        // Check if it is from  is SetEID/Routing table updates
-                        if (!mctp::Driver::is_allow_bridge(pkt)) {
-                            // Drop the packet since it is directly from upstream to downstream
-                            // (MCU is only bridge)
-                            logger::info(
-                                logger::Event::MctpMcuActAsBridgePacketDrop,
-                                {
-                                    static_cast<uint8_t>(
-                                        static_cast<uint16_t>(mctp::Client::UsUsb) & UINT8_MAX),
-                                    static_cast<uint8_t>(
-                                        static_cast<uint16_t>(mctp::Client::UsUsb) >> 8U),
-                                    pkt.priv.packet_interface,
-                                    pkt.msg.at(2),  // command_code
-                                    pkt.msg.at(4)   // eid to set
-                                });
-                            is_drop = true;
-                        }
-                        else if (entry.client == mctp::Client::DsI2c0
-                                 || entry.client == mctp::Client::DsI2c1
-                                 || entry.client == mctp::Client::DsI2c2
-                                 || entry.client == mctp::Client::DsI2c3
-                                 || entry.client == mctp::Client::DsI2c4
-                                 || entry.client == mctp::Client::DsI2c5
-                                 || entry.client == mctp::Client::DsI2c6
-                                 || entry.client == mctp::Client::DsI2c7) {
-                            auto status = i2c::Task::tx(pkt);
-                            if (status != i2c::Task::Status::Ok) {
-                                logger::error(logger::Event::UsbCannotSend,
-                                              {static_cast<uint8_t>(entry.client)});
-                                is_drop = true;
-                            }
-                        }
-                        else if (entry.client == mctp::Client::DsI3c0
-                                 || entry.client == mctp::Client::DsI3c1) {
-                            perf_mon::Driver::log_pkt_latency(
-                                perf_mon::Driver::LatencyEvent::UsbSendTxPktToTask);
-                            auto status = i3c::Task::tx(pkt);
-                            if (status != i3c::Task::Status::Ok) {
-                                logger::error(logger::Event::UsbCannotSend,
-                                              {static_cast<uint8_t>(entry.client)});
-                                is_drop = true;
-                            }
-                        }
-                        else if (entry.client == mctp::Client::Spi0
-                                 || entry.client == mctp::Client::Spi1
-                                 || entry.client == mctp::Client::Spi2) {
-                            if constexpr (nv::ipc::Spi_Available) {
-                                auto status = spi::Task::tx(pkt);
-                                if (status != spi::Task::Status::Ok) {
-                                    logger::error(logger::Event::UsbCannotSend,
-                                                  {static_cast<uint8_t>(entry.client)});
-                                    is_drop = true;
-                                }
-                            }
-                        }
-                        is_routed = true;
-                    }
-                }
+            if (route_result == RouteResult::Dropped) {
+                is_drop = true;
             }
-
-            // send to mctp task if not found
-            if (is_routed == false) {
+            else if (route_result == RouteResult::NotRouted) {
                 auto status = mctp::Driver::mctp_send(item, mctp::Client::UsUsb);
                 if (status != mctp::Status::Ok) {
                     logger::error(logger::Event::UsbCannotSendtoMctp);
@@ -537,14 +478,7 @@ void Task::clear_usb_lstp_queue()
 
 void Task::update_routing_table()
 {
-    ipc::Queue::Item item(std::bit_cast<uint8_t*>(&_routing_table), sizeof(_routing_table));
-    auto             router_queue = ipc::Queue::make(ipc::QueueId::RoutingTable);
-    auto             queue_status = router_queue.recv(item, 100ms);
-
-    if (queue_status != Queue::Status::Ok) {
-        logger::error(logger::Event::UsbUpdateRoutingTableFailed,
-                      {static_cast<uint8_t>(queue_status)});
-    }
+    usb::update_routing_table(_routing_table);
 }
 
 usb::Status Task::usb_tx(ipc::Queue::Item& item)
@@ -599,6 +533,14 @@ usb::Status Task::set_lstp_rx_event()
         }
     }
     return usb::Status::Ok;
+}
+
+bool Task::is_lstp_device_connected()
+{
+    if constexpr (nv::ipc::EnableLstp) {
+        return sys::usb::Driver::is_device_connected();
+    }
+    return false;
 }
 
 usb::Status Task::set_lstp_tx_done_event()
@@ -722,3 +664,5 @@ usb::Status Task::to_usbLstp(std::span<uint8_t>& item)
 }
 
 }  // namespace nv::usb
+
+#endif  // !SYS_USB_DISABLED (value check)

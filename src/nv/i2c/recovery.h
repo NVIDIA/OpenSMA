@@ -25,9 +25,10 @@ namespace nv::i2c {
 
 enum class RecoveryCmd : uint8_t
 {
-    None          = 0,
-    QuickRecovery = 1,
-    BusRecovery   = 2
+    None             = 0,
+    QuickRecovery    = 1,
+    BusRecovery      = 2,
+    ControllerReinit = 3
 };
 
 struct [[gnu::packed]] I2cRecoveryRequest

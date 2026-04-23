@@ -26,6 +26,14 @@
 #include "nv/ipc/ipc_task.h"
 #include NV_IPC_CONFIG_H
 
+// ARM Cortex-M memory barrier intrinsics (GCC built-ins)
+#ifndef __DSB
+#define __DSB() __asm volatile("dsb sy" ::: "memory")
+#endif
+#ifndef __ISB
+#define __ISB() __asm volatile("isb sy" ::: "memory")
+#endif
+
 using namespace nv::ipc;
 
 StreamBuffer::StreamBuffer(const StreamBuffer::IdType id, bool is_stream_buffer)
@@ -81,6 +89,11 @@ size_t StreamBuffer::send(StreamBufferHandle_t handle, const ConstItem& item)
 
 void StreamBuffer::send_completed_isr(StreamBufferHandle_t handle)
 {
+    // Memory barrier to ensure we see all data written by other core
+    // before waking up the waiting task
+    __DSB();
+    __ISB();
+
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     (void)xMessageBufferSendCompletedFromISR(handle, &xHigherPriorityTaskWoken);
     portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
@@ -88,6 +101,10 @@ void StreamBuffer::send_completed_isr(StreamBufferHandle_t handle)
 
 size_t StreamBuffer::recv(StreamBufferHandle_t handle, StreamBuffer::Item& item, Usecs timeout)
 {
+    // Memory barrier to ensure we see the latest data written by other core
+    // This is critical for multi-core MessageBuffer where Core1 writes head pointer
+    __DSB();
+
     if (xPortIsInsideInterrupt()) {
         auto higher_priority_woken = pdFALSE;
         auto res                   = xMessageBufferReceiveFromISR(
@@ -108,6 +125,8 @@ size_t StreamBuffer::recv(StreamBufferHandle_t handle, StreamBuffer::Item& item,
 
 std::size_t StreamBuffer::bytes_available_to_read(StreamBufferHandle_t handle)
 {
+    // Memory barrier to ensure we see the latest head pointer from other core
+    __DSB();
     return xStreamBufferBytesAvailable(handle);
 }
 

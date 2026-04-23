@@ -15,23 +15,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-/**
- * @file usb_config_wrapper.h
- * @brief USB configuration calculation (class, interface, endpoint counts)
- *
- * User defines in config.h:
- *   USB_CONFIG_COMPOSITE   - Add HID      (+1C, +1I, +2E)
- *   USB_CONFIG_LSTP        - Add LSTP     (+1C, +1I, +2E)
- *   USB_CONFIG_UART_BRIDGE - Add CDC ACM  (+1C, +2I, +3E)
- *
- * MCTP is always included as base (+1C, +1I, +2E)
- */
-
-#ifndef SYS_USB_USB_WRAPPER_H
-#define SYS_USB_USB_WRAPPER_H
+#ifndef SYS_USB_USB_CONFIG_WRAPPER_H
+#define SYS_USB_USB_CONFIG_WRAPPER_H
 
 #include NV_IPC_CONFIG_H
+
+/*
+ * Core1 Bare-metal USB mode
+ * When NCSI_ENABLE is defined, USB hardware is handled by Core1
+ * Core0 uses usb_proxy task to forward MCTP/HID to Core1 via IPC
+ */
+#if NCSI_ENABLE
+// USB handled by Core1 bare-metal - provide minimal stubs for Core0
+// All USB classes/interfaces are disabled on Core0 when Core1 handles USB
+#define SYS_USB_COMPOSITE_CLASS_COUNT     (0U)
+#define SYS_USB_COMPOSITE_INTERFACE_COUNT (0U)
+#define SYS_USB_COMPOSITE_CONFIGURE_INDEX (0U)
+#ifndef USB_DEVICE_CONFIG_ENDPOINTS
+#define USB_DEVICE_CONFIG_ENDPOINTS (0U)
+#endif
+#define SYS_USB_DISABLED (1U)
+#else
+#define SYS_USB_DISABLED       (0U)
 
 /*
  * MCTP (base, always present)
@@ -43,7 +48,7 @@
 /*
  * HID (when USB_CONFIG_COMPOSITE defined)
  */
-#ifdef USB_CONFIG_COMPOSITE
+#if ((defined(USB_CONFIG_COMPOSITE)) && (USB_CONFIG_COMPOSITE > 0U))
 #define SYS_USB_HID_CLASS     (1U)
 #define SYS_USB_HID_INTERFACE (1U)
 #define SYS_USB_HID_ENDPOINTS (2U)
@@ -56,7 +61,7 @@
 /*
  * LSTP (when USB_CONFIG_LSTP defined)
  */
-#ifdef USB_CONFIG_LSTP
+#if ((defined(USB_CONFIG_LSTP)) && (USB_CONFIG_LSTP > 0U))
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)
 #define SYS_USB_LSTP_CLASS                (1U)
 #define SYS_USB_LSTP_INTERFACE            (1U)
@@ -68,37 +73,41 @@
 #endif
 
 /*
- * VCOM (when USB_CONFIG_UART_BRIDGE defined)
+ * CDC-ECM (when USB_CONFIG_ECM defined)
+ * CDC-ECM requires 2 interfaces (Comm + Data) and 3 endpoints (Notify + Bulk IN/OUT)
  */
-#ifdef USB_CONFIG_UART_BRIDGE
-#define SYS_USB_VCOM_CLASS     (1U)
-#define SYS_USB_VCOM_INTERFACE (2U)
-#define SYS_USB_VCOM_ENDPOINTS (3U)
+#if ((defined(USB_CONFIG_ECM)) && (USB_CONFIG_ECM > 0U))
+#define SYS_USB_ECM_CLASS     (1U)
+#define SYS_USB_ECM_INTERFACE (2U)
+#define SYS_USB_ECM_ENDPOINTS (3U)
 #else
-#define SYS_USB_VCOM_CLASS     (0U)
-#define SYS_USB_VCOM_INTERFACE (0U)
-#define SYS_USB_VCOM_ENDPOINTS (0U)
+#define SYS_USB_ECM_CLASS     (0U)
+#define SYS_USB_ECM_INTERFACE (0U)
+#define SYS_USB_ECM_ENDPOINTS (0U)
 #endif
 
 /*
- * Totals = MCTP + HID + SPI + VCOM
+ * Totals = MCTP + HID + LSTP + ECM
  */
 #define SYS_USB_COMPOSITE_CLASS_COUNT                                                          \
-    (SYS_USB_MCTP_CLASS + SYS_USB_HID_CLASS + SYS_USB_LSTP_CLASS + SYS_USB_VCOM_CLASS)
+    (SYS_USB_MCTP_CLASS + SYS_USB_HID_CLASS + SYS_USB_LSTP_CLASS + SYS_USB_ECM_CLASS)
 #define SYS_USB_COMPOSITE_INTERFACE_COUNT                                                      \
     (SYS_USB_MCTP_INTERFACE + SYS_USB_HID_INTERFACE + SYS_USB_LSTP_INTERFACE                   \
-     + SYS_USB_VCOM_INTERFACE)
+     + SYS_USB_ECM_INTERFACE)
+/* USB_DEVICE_CONFIG_ENDPOINTS must be > highest EP number used by EHCI driver.
+ * MCTP alone uses EP1 IN + EP2 OUT, so the floor is 3 (EP0, EP1, EP2). */
+#ifndef USB_DEVICE_CONFIG_ENDPOINTS
 #define SYS_USB_ENDPOINTS_SUM                                                                  \
     (SYS_USB_MCTP_ENDPOINTS + SYS_USB_HID_ENDPOINTS + SYS_USB_LSTP_ENDPOINTS                   \
-     + SYS_USB_VCOM_ENDPOINTS)
-#define SYS_USB_COMPOSITE_CONFIGURE_INDEX (1U)
-
-/* USB_DEVICE_CONFIG_ENDPOINTS was hardcoded to 4 before uart-bridge.
- * Keep minimum 4 for non-bridge configs to stay compatible with main. */
-#if SYS_USB_ENDPOINTS_SUM < 4
-#define USB_DEVICE_CONFIG_ENDPOINTS (4U)
+     + SYS_USB_ECM_ENDPOINTS)
+#if SYS_USB_ENDPOINTS_SUM < 3
+#define USB_DEVICE_CONFIG_ENDPOINTS (3U)
 #else
 #define USB_DEVICE_CONFIG_ENDPOINTS SYS_USB_ENDPOINTS_SUM
 #endif
+#endif
+#define SYS_USB_COMPOSITE_CONFIGURE_INDEX (1U)
 
-#endif  // SYS_USB_USB_WRAPPER_H
+#endif  // !NCSI_ENABLE
+
+#endif  // SYS_USB_USB_CONFIG_WRAPPER_H

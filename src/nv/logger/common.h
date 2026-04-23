@@ -219,6 +219,7 @@ struct Event
     static constexpr EventStructItem SpdmTemplateComparisonFailed = {0x090B, Level::Error};
     static constexpr EventStructItem SpdmCryptoApRollbackProtectionActive = {0x090C,
                                                                              Level::Error};
+    static constexpr EventStructItem SpdmCmpaEnfCnsa = {0x090D, Level::Info};
 
     // Flash
     static constexpr EventStructItem FlashReqError = {0x0a00, Level::Unknown};
@@ -286,6 +287,8 @@ struct Event
     // Voltage Monitor / Leak Detection
     static constexpr EventStructItem LeakDetectIsrNoValidReading  = {0x1000, Level::Info};
     static constexpr EventStructItem LeakDetectIsrNoValidSensorId = {0x1001, Level::Info};
+    static constexpr EventStructItem AdcOneShotConvTimeout        = {0x1002, Level::Error};
+    static constexpr EventStructItem McuTempFifoTimeout           = {0x1003, Level::Error};
 
     // Soc Pwr Smoothing
     static constexpr EventStructItem SocPwrSmoothingSocPercent       = {0x1100, Level::Info};
@@ -329,6 +332,7 @@ struct Event
     static constexpr EventStructItem I2CSlaveAckDuringInit   = {0x1302, Level::Error};
     static constexpr EventStructItem I2CSlaveDoubleNack      = {0x1303, Level::Error};
     static constexpr EventStructItem I2CSlaveInvalidState    = {0x1304, Level::Error};
+    static constexpr EventStructItem I2CSlaveRecovery        = {0x1305, Level::Info};
 
     // SSIF
     static constexpr EventStructItem SsifTxDataOverriden        = {0x1400, Level::Info};

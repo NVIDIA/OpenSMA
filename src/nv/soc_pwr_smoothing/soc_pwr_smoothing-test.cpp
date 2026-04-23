@@ -119,7 +119,8 @@ TEST(project_prairie_test, PowerBrakePolicyResetAfterDisable)
 
 TEST(project_prairie_test, ResidencyEwmaSaturates)
 {
-    auto ewma = OffsetPolicy::ResidencySma();
+    const OffsetPolicy::ResidencySma::RuntimeCfg sma_cfg{};
+    OffsetPolicy::ResidencySma                 ewma{sma_cfg};
     ensure::is_eq(ewma.evaluate(false), to_sfxp22_10(0));
 
     // EWMA should increase toward 100% with continuous true inputs

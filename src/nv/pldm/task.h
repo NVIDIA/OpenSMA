@@ -91,7 +91,7 @@ public:
     void        get_interface_info(PldmContextRecord&   pldm_context,
                                    PldmfwInterfaceInfo& interface_info,
                                    uint16_t&            size);
-    static bool is_background_copy_automatic();
+    static bool is_background_copy_automatic(bool log_init_setup);
 
     [[noreturn]] void main();
 

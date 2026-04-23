@@ -574,7 +574,8 @@ void Task::cfpa_get(const Request& request, Response& response)
 
 void Task::cmpa_get(const Request& request, Response& response)
 {
-    auto sts        = _driver.read_cmpa(response.buffer, request.offset);
+    auto sts = _driver.read_cmpa(std::span<uint8_t>(response.buffer.data(), request.length),
+                                 request.offset);
     response.status = sts;
 }
 

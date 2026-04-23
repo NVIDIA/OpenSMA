@@ -89,13 +89,6 @@ Ccode handle_get_soc_power_brake_enabled(NsmPktResp& ntx);
  */
 Ccode handle_get_soc_therm_brake_enabled(NsmPktResp& ntx);
 
-/**
- * @brief Get Supported Device Modes for GetSupportedDeviceModes (0x84) command
- * @param[out] ntx Response packet to populate with Handle, Mode Count, and Mode List
- * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
- */
-Ccode handle_get_supported_device_modes(NsmPktResp& ntx);
-
 // ============================================================================
 // Type-5: Set Device Mode Settings handlers (apply settings from request)
 // ============================================================================
@@ -141,17 +134,18 @@ Ccode handle_set_soc_therm_brake_enabled(bool enabled);
 // ============================================================================
 
 /**
- * @brief Get Rack Power Smoothing Parameters (tuning params 0-19)
+ * @brief Get Rack Power Smoothing Parameters (tuning params 0 .. MaxTuningParams-1)
  * @param[out] ntx Response packet to populate with parameters
  * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
  */
 Ccode handle_get_rack_power_smoothing_param(NsmPktResp& ntx);
 
 /**
- * @brief Set Rack Power Smoothing Parameter (tuning params 0-19)
+ * @brief Set Rack Power Smoothing Parameter (tuning params 0 .. MaxTuningParams-1)
  * @param[in] preset_id Preset to modify (1-3, 0 is read-only)
- * @param[in] param_id Parameter ID (0-19)
- * @param[in] param_value Parameter value (SFXP22_10 encoded)
+ * @param[in] param_id Parameter ID (see RackPwrSmoothParams)
+ * @param[in] param_value SFXP22_10 for params 0-19; IEEE-754 bits as uint32_t for float params
+ * 20-21
  * @return Ccode::Success if handled successfully, Ccode::ErrorUnsupportedCmd if feature not
  * available, Ccode::ErrorInvalidData for invalid params
  */
@@ -160,16 +154,16 @@ Ccode handle_set_rack_power_smoothing_param(uint8_t  preset_id,
                                             uint32_t param_value);
 
 /**
- * @brief Get Rack Power Smoothing TestHook Parameters (params 40-42, requires debug token)
+ * @brief Get Rack Power Smoothing TestHook Parameters (params 40-44, requires debug token)
  * @param[out] ntx Response packet to populate with parameters
  * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
  */
 Ccode handle_get_rack_power_smoothing_testhook(NsmPktResp& ntx);
 
 /**
- * @brief Set Rack Power Smoothing TestHook Parameter (params 40-42, requires debug token)
+ * @brief Set Rack Power Smoothing TestHook Parameter (params 40-44, requires debug token)
  * @param[in] preset_id Preset to modify (1-3, 0 is read-only)
- * @param[in] param_id Parameter ID (40-42)
+ * @param[in] param_id Parameter ID (40-44; 43-44 raw DAC override if enabled wins vs 41-42)
  * @param[in] param_value Parameter value
  * @return Ccode::Success if handled successfully, Ccode::ErrorUnsupportedCmd if feature not
  * available, Ccode::ErrorInvalidData for invalid params
@@ -207,5 +201,22 @@ Ccode handle_trigger_adc_calibration();
  * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
  */
 Ccode handle_get_adc_calibration_results(NsmPktResp& ntx);
+
+/**
+ * @brief Set loopback DAC code for ADC calibration path (I2C).
+ * @param dac_code Raw 16-bit DAC code
+ * @return Ccode::Success, Ccode::ErrorI2CError on bus failure, Ccode::ErrorUnsupportedCmd if
+ * unavailable
+ */
+Ccode handle_adc_calib_set_loopback_dac_code(uint16_t dac_code);
+
+/**
+ * @brief Return last raw code for SoC ADC or EDPP/ISINK DAC (see PwrSmoothRawReadbackId).
+ * @param readback_id Selector (0=SoC ADC, 1=EDPP DAC shadow, 2=ISINK DAC shadow)
+ * @param[out] ntx Response packet (4-byte payload)
+ * @return Ccode::Success, ErrorInvalidData if readback_id unsupported, ErrorUnsupportedCmd if
+ * unavailable
+ */
+Ccode handle_get_power_smooth_raw_readback(uint8_t readback_id, NsmPktResp& ntx);
 
 }  // namespace nv::mctp::nsm_pwr_smoothing_handlers

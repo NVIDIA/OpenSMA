@@ -43,6 +43,7 @@
 #include "nv/pldm/task.h"
 #include "sys/ipc/task.h"
 #include "nv/spdm/task.h"
+#include "nv/diag/task.h"
 #include NV_IPC_CONFIG_H
 
 #include "nv/i2c/task.h"
@@ -260,6 +261,7 @@ int main()
     nv::ipc::task::Driver::init_c2c_communication();
 
     mctp::Task::make();
+    diag::Task::make();
     spdm::Task::make();
     pldm::Task::make();
     flash::Task::make();
@@ -284,10 +286,12 @@ int main()
     bootloader::Driver::boot_init();
     ctimer::Driver::init();
     gpio::Driver::init();
+    lstp::LstpTask::LstpGpioInit();
     for (auto& [port, pin, det, sel] : nv::ipc::GpioInterruptSetup) {
         gpio::Driver::init_interrupt(port, pin, det, sel);
     }
     make_lstp_task();
+
     // Set SSIF alert pin to high (inactive)
     gpio::Driver::init_pin(nv::ipc::CPU0_SSIF_PORT,
                            nv::ipc::CPU0_SSIF_PIN,

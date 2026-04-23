@@ -38,6 +38,8 @@ void Driver::start([[maybe_unused]] bool enable_target)
     return;
 }
 
+void Driver::peripheral_recovery([[maybe_unused]] bool enable_target) {}
+
 bool Driver::write([[maybe_unused]] std::span<uint8_t> data)
 {
     return true;

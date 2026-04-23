@@ -64,11 +64,30 @@ Driver::Driver(ipc::Task& task, common::Uuid& uuid)
 , _spdm_queue(ipc::Queue::make(ipc::QueueId::MctpSpdmRequest))
 , _cmd_queue(ipc::Queue::make(ipc::QueueId::MctpCmd))
 , _router_queue(ipc::Queue::make(ipc::QueueId::RoutingTable))
-, _enum_done_timer(
-      ipc::Timer::make(ipc::TimerId::MctpEnumerate, 1s, on_enumeration_done_timer, false))
+, _enum_done_timer(ipc::Timer::make(
+      ipc::TimerId::MctpEnumerate, EnumeratePeriod, on_enumeration_done_timer, false))
+, _endpoint_status_change_timers([]() {
+    std::array<ipc::Timer, EndpointCount> timers{};
+    if constexpr (nv::ipc::EnableEndpointStatusChangeDebounce) {
+        for (uint8_t i = 0; i < EndpointCount; ++i) {
+            timers.at(i) = ipc::Timer::make(
+                static_cast<ipc::TimerId>(
+                    static_cast<int>(ipc::TimerId::EndpointStatusChangeStart) + i),
+                EndpointStatusChangePeriod,
+                on_endpoint_status_change_timer,
+                false);
+        }
+    }
+    return timers;
+}())
 , _task(task)
 {
     _control.router().ec.uuid = uuid;
+
+    // Initialize endpoint status array
+    for (auto& info : _endpoint_status) {
+        info = EndpointStatus{UINT8_MAX, UINT8_MAX};
+    }
 }
 
 void Driver::init()
@@ -166,7 +185,10 @@ void Driver::init()
                     on_type6_event(NsmFwEvent::RotStateInformationChangeEvent);
                     break;
                 case static_cast<uint16_t>(CmdCode::EndPointStatusChange):
-                    on_endpint_status_change(Cmd.data1, Cmd.data2);
+                    on_endpoint_status_change_handler(Cmd.data1, Cmd.data2);
+                    break;
+                case static_cast<uint16_t>(CmdCode::EndPointTimerDone):
+                    on_endpoint_timer_done(Cmd.data1);
                     break;
                 case static_cast<uint16_t>(CmdCode::NsmT5FatalFaultEI):
                     nsm_type5::on_nsm_t5_fatal_fault_ei(Cmd.data1);
@@ -204,8 +226,11 @@ void Driver::on_receive_event(uint8_t nsmType, uint8_t eventId, MctpCmdData3 eve
     // The deserialization logic is handled inside PrepareEventMessage
     if (nsm_event::PrepareEventMessage(nsmType, eventId, eventInfo, _nsm, client, event_msg)) {
         // TODO: Enhance the error handling of forward() that may lose the event to USB_Tx queue
-        nv::info("Forward event message to client: %d\n", static_cast<uint8_t>(client));
-        nv::logger::info(nv::logger::Event::NsmEventRequest, {static_cast<uint8_t>(client)});
+        nv::info("Forward event message to client: %d, eventId: %d\n",
+                 static_cast<uint8_t>(client),
+                 eventId);
+        nv::logger::info(nv::logger::Event::NsmEventRequest,
+                         {static_cast<uint8_t>(client), eventId});
         forward(client, event_msg);
     }
 }
@@ -662,19 +687,70 @@ void Driver::on_enumeration_done_timer([[maybe_unused]] ipc::Timer& id)
     mctp_send_cmd(CmdCode::EnumerateDone);
 }
 
-void Driver::on_endpint_status_change(uint8_t end_point, uint8_t status)
+void Driver::on_endpoint_status_change_timer(ipc::Timer& id)
 {
-    logger::info(logger::Event::MctpEndpointState, {end_point, status});
+    auto endpoint_index = static_cast<uint8_t>(id.id())
+                        - static_cast<uint8_t>(ipc::TimerId::EndpointStatusChangeStart);
+    mctp_send_cmd(CmdCode::EndPointTimerDone, endpoint_index);
+}
+
+void Driver::on_endpoint_timer_done(uint8_t endpoint_index)
+{
+    if (endpoint_index >= EndpointCount) {
+        return;
+    }
+    // update current status
+    on_endpoint_status_change(endpoint_index, _endpoint_status.at(endpoint_index).next_status);
+}
+
+void Driver::on_endpoint_status_change_handler(uint8_t endpoint_index, uint8_t status)
+{
+    if (endpoint_index >= EndpointCount) {
+        return;
+    }
+    if constexpr (nv::ipc::EnableEndpointStatusChangeDebounce) {
+        auto& info       = _endpoint_status.at(endpoint_index);
+        info.next_status = status;
+        if (info.curr_status != info.next_status) {
+            // Always process deinit immediately when next status is 0
+            if (info.next_status == 0) {
+                on_endpoint_status_change(endpoint_index, 0);
+                _endpoint_status_change_timers.at(endpoint_index).stop();
+                return;
+            }
+            // Start timer when next status is 1 to ensure the status is stable for a period of
+            // time
+            else if (info.next_status == 1) {
+                _endpoint_status_change_timers.at(endpoint_index).reset();
+                return;
+            }
+        }
+        else {
+            _endpoint_status_change_timers.at(endpoint_index).stop();
+            return;
+        }
+    }
+    else {
+        on_endpoint_status_change(endpoint_index, status);
+    }
+}
+
+void Driver::on_endpoint_status_change(uint8_t endpoint_index, uint8_t status)
+{
+    // update status
+    _endpoint_status.at(endpoint_index).curr_status = status;
+
+    logger::info(logger::Event::MctpEndpointState, {endpoint_index, status});
 
     if (status == 0) {
         // remove from table
-        auto is_valid = _control.remove_routing_entry(end_point);
+        auto is_valid = _control.remove_routing_entry(endpoint_index);
         if (!is_valid) {
             return;
         }
 
         if (!ipc::DownStreamInfos.empty()) {
-            auto client = ipc::DownStreamInfos.at(end_point).client;
+            auto client = ipc::DownStreamInfos.at(endpoint_index).client;
             if (client == Client::DsI3c0 || client == Client::DsI3c1) {
                 i3c::Task::init_bus(client, false);
             }
@@ -686,14 +762,14 @@ void Driver::on_endpint_status_change(uint8_t end_point, uint8_t status)
         on_enumerate_done();
     }
     else if (status == 1) {
-        auto is_valid = _control.add_routing_entry(end_point);
+        auto is_valid = _control.add_routing_entry(endpoint_index);
         if (!is_valid) {
             return;
         }
 
         // init interface
         if (!ipc::DownStreamInfos.empty()) {
-            auto client = ipc::DownStreamInfos.at(end_point).client;
+            auto client = ipc::DownStreamInfos.at(endpoint_index).client;
             if (client == Client::DsI3c0 || client == Client::DsI3c1) {
                 i3c::Task::init_bus(client, true);
             }
@@ -944,7 +1020,7 @@ nv::mctp::Status Driver::mctp_send_from_spdm(nv::ipc::Queue::Item& item)
     return mctp_send(item, ipc::QueueId::MctpSpdmRequest, Client::Spdm);
 }
 
-mctp::Status Driver::endpoint_status_change(uint8_t end_point, uint8_t status)
+mctp::Status Driver::endpoint_status_change(uint8_t endpoint_index, uint8_t status)
 {
-    return mctp_send_cmd(CmdCode::EndPointStatusChange, end_point, status);
+    return mctp_send_cmd(CmdCode::EndPointStatusChange, endpoint_index, status);
 }

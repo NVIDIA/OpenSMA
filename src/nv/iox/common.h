@@ -75,6 +75,18 @@ constexpr static nv::gpio::GpioPort vrPort = nv::gpio::InvalidGpioPort;
 constexpr static uint8_t regNum = 8;
 constexpr static uint8_t pinNum = 16;
 
+enum class FilterEnable : uint8_t
+{
+    Disable = 0,
+    Enable,
+};
+
+enum class DefaultValue : uint8_t
+{
+    Low  = 0,
+    High = 1,
+};
+
 struct PinConfig
 {
     nv::gpio::GpioPort port;
@@ -86,6 +98,9 @@ struct PinConfig
     nv::gpio::GpioPullDir      pullDir;
     nv::gpio::GpioPullStrength pullStrength;
     nv::gpio::GpioOpenDrain    openDrain;
+
+    FilterEnable filter     = FilterEnable::Disable;
+    DefaultValue defaultVal = DefaultValue::High;
 };
 
 using I2CAddress = uint8_t;

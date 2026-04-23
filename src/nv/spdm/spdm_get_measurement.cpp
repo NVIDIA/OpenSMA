@@ -377,7 +377,7 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             auto& svn = *std::bit_cast<uint64_t*>(buffer);
             svn       = spdm_get_fw_security_version(true);
         } break;
-        case MeasMcuInctiveFirmwareSecurityVersion: {
+        case MeasMcuInactiveFirmwareSecurityVersion: {
             auto& svn = *std::bit_cast<uint64_t*>(buffer);
             svn       = spdm_get_fw_security_version(false);
         } break;
@@ -388,24 +388,6 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             input_uuid = measurement_cache.measurement_uuid;
             break;
         }
-        case MeasMcuActiveFirmwareHeaderHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            spdm_get_fw_header_hash(true, hash_data);
-        } break;
-        case MeasMcuInactiveFirmwareHeaderHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            spdm_get_fw_header_hash(false, hash_data);
-        } break;
-        case MeasMcuActiveFirmwareVersion: {
-            auto& fw_version = *std::bit_cast<MeasurementFirmwareVersionT*>(buffer);
-            spdm_get_fw_version(true, fw_version);
-        } break;
-        case MeasMcuInactiveFirmwareVersion: {
-            auto& fw_version = *std::bit_cast<MeasurementFirmwareVersionT*>(buffer);
-            spdm_get_fw_version(false, fw_version);
-        } break;
         case MeasMcuBootStatus: {
             // not define yet, use hard code now.
             constexpr uint8_t SuccessBootStatusCode = 0xffu;
@@ -483,14 +465,15 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             nv::spdm::ap_measurement::get_ap_type(ap_type);
             break;
         }
-        case MeasRomPatchCmac: {
-            auto& measurement_rom_patch_cmac = *std::bit_cast<std::array<uint8_t, 16>*>(buffer);
-            measurement_rom_patch_cmac.fill(0);
-            // TODO: remove this after testing
-            // measurement_rom_patch_cmac       = nv::spdm::Task::get_measurement_cache()
-            //                                  .measurement_rom_patch_cmac;
+        case MeasReservedIndex38:
+        case MeasReservedIndex39: {
+            // type 0x86: (meas_type & 0x80) == 0x80 → preserved value
+            auto&             reserved_7 = *std::bit_cast<std::array<uint8_t, 7>*>(buffer);
+            constexpr uint8_t RawBitDefaultValue = 0xff;
+            reserved_7.fill(RawBitDefaultValue);
             break;
         }
+        case MeasReservedIndex3:
         case MeasReservedIndex20:
         case MeasReservedIndex22:
         case MeasReservedIndex23:
@@ -503,9 +486,10 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex40:
         case MeasReservedIndex42:
         case MeasReservedIndex45: {
+            // type 0x82/0x83: (meas_type & 0x80) == 0x80 → preserved value
             using Reserved1b                     = std::array<uint8_t, 1>;
-            constexpr uint8_t RawBitDefaultValue = 0xff;
             Reserved1b&       input_reserved     = *std::bit_cast<Reserved1b*>(buffer);
+            constexpr uint8_t RawBitDefaultValue = 0xff;
             input_reserved.fill(RawBitDefaultValue);
             break;
         }
@@ -517,6 +501,8 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex10:
         case MeasReservedIndex11:
         case MeasReservedIndex12:
+        case MeasReservedIndex27:
+        case MeasReservedIndex28:
         case MeasReservedIndex29:
         case MeasReservedIndex30:
         case MeasReservedIndex32:
@@ -525,13 +511,11 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex47:
         case MeasReservedIndex48:
         case MeasReservedIndex49: {
-            using Reserved48b = std::array<uint8_t,
-                                           nv::spdm::crypto::HashSizeT::Sha384HashSize>;
-
-            constexpr uint8_t DigestDefaultValue = 0x00;
-            Reserved48b&      input_reserved     = *std::bit_cast<Reserved48b*>(buffer);
-
-            input_reserved.fill(DigestDefaultValue);
+            // type 0x1/0x3: (meas_type & 0x80) == 0 → zero
+            using Reserved48b           = std::array<uint8_t,
+                                                     nv::spdm::crypto::HashSizeT::Sha384HashSize>;
+            Reserved48b& input_reserved = *std::bit_cast<Reserved48b*>(buffer);
+            input_reserved.fill(0);
             break;
         }
         default: break;

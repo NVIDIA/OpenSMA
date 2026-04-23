@@ -83,6 +83,14 @@ namespace nsm_type2 {
 
 bool validatePcieLinkResetValue(uint8_t device_index);
 
+/**
+ * @brief Platform hook for Assert PCIe Fundamental Reset via CPLD.
+ * Weak default returns NotSupported. Strong override in p7612_hgx core0/main.cpp.
+ *
+ * @return NsmStatus indicating result of CPLD register update.
+ */
+NsmStatus platform_assert_pcie_fundamental_reset(uint8_t device_index, uint8_t action);
+
 }  // namespace nsm_type2
 
 }  // namespace nv::mctp

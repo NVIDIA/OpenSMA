@@ -160,7 +160,7 @@ private:
      * @param state New 2-bit state: 00=Nominal, 01=NotUsed, 10=NotUsed, 11=Abnormal
      * @param sensorId Sensor ID
      */
-    void update_virtual_gpio(uint8_t sensorId, VrGpioState state);
+    void update_virtual_gpio(uint8_t sensorId, VrGpioState state, bool trigger_nsm_event);
 };
 
 }  // namespace busbar_temp

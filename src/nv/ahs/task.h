@@ -142,6 +142,20 @@ public:
      */
     static void adc_interrupt_callback(uint16_t value, uint8_t ahsInstance, uint8_t driveIndex);
 
+    /**
+     * @brief Request I2C slave peripheral recovery for an AHS instance
+     *
+     * Sets bit @c (16 + ahs_instance_index) on the event from @c TaskConfig::hotSwapEventId
+     * (same object as hot-swap timers): bits 0-15 are per-drive timer flags from
+     * E1sHotSwap; bits 16-31 request I2C peripheral recovery for AHS instance @c i
+     * at bit @c 16+i. Requires fewer than 16 NHP instances and at most 16 total
+     * drives so timer bits do not overlap the recovery field. Safe from interrupt
+     * or task context.
+     *
+     * @param ahs_instance_index Index into the NHP / AHS instance array (must be less than 16)
+     */
+    static void request_i2c_peripheral_recovery(uint8_t ahs_instance_index);
+
 private:
     // Helper Functions
     // ---------------------------------------------
@@ -166,6 +180,16 @@ private:
      */
     static bool isAhsInstanceDriveValid(uint8_t ahsInstance, uint8_t driveIndex);
 
+    /**
+     * @brief Runs queued I2C peripheral recovery work (task context only)
+     */
+    void processPendingI2cPeripheralRecovery();
+
+    /**
+     * @brief Whether @p ahsInstance is in range and constructed (no logging)
+     */
+    static bool isAhsInstanceConstructed(uint8_t ahsInstance);
+
     // Member Constants
     // ---------------------------------------------
 
@@ -178,7 +202,12 @@ private:
     /** @brief Array of AHS instances for all NHP instances */
     std::array<std::optional<AHS>, nhp::NumNhpInstances> ahs_instances;
 
-    /** @brief Reference to the hot swap timer event */
+    /**
+     * @brief Hot swap timer event (lower 16 bits) and I2C recovery requests (upper 16 bits)
+     *
+     * Uses @c TaskConfig::hotSwapEventId. Bits 0..15: per-drive hot swap timer (see
+     * E1sHotSwap). Bits 16..31: bit @c 16+i requests peripheral recovery for AHS instance @c i.
+     */
     nv::ipc::Event& hotSwapTimerEvent;
 
     /** @brief Delay time for the AHS task */

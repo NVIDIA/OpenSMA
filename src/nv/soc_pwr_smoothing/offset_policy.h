@@ -101,53 +101,65 @@ public:
         SFXP22_10         _last_output;
     };
 
-    // Determines the percentage of time that the residency threshold was
-    // crossed in the last `window_size` samples.
-    // Uses bit-packing to store 1 bit per sample (32 samples per uint32_t).
+    // EWMA of residency (threshold crossed or not). `ewma_tau` is the time constant in
+    // seconds; alpha = 2 / (1 + N) with N = tau / loop_sample_period (100 µs).
     class ResidencySma
     {
     public:
-        ResidencySma() = default;
+        struct RuntimeCfg
+        {
+            float ewma_tau{1.0f};  // seconds
+        };
 
-        static constexpr uint32_t precision          = 31;  // 31 bits for the fractional part
-        static constexpr float    ewma_tau           = 1;
-        static constexpr float    loop_sample_period = 100E-6;
-        static constexpr float    N                  = ewma_tau / loop_sample_period;
-        static constexpr SFXP1_31
-            ewma_alpha = (SFXP1_31)(2 / (1 + N) * (SFXP1_31)(1 << precision));  // 0.32U try to
-                                                                                // align with
-                                                                                // simple moving
-                                                                                // average
-        static constexpr SFXP1_31 one_minus_ewma_alpha = ((SFXP1_31)(1 << precision)
-                                                          - ewma_alpha);
+        explicit ResidencySma(const RuntimeCfg& cfg) : _cfg(cfg) { recompute_ewma_alpha(true); }
 
-        // Returns the percentage of time that the residency threshold was
-        // below the threshold in the last `window_size` samples.
+        static constexpr uint32_t precision            = 31;  // fractional bits in Q1.31
+        static constexpr float    loop_sample_period_s = 100E-6f;
+
+        // Returns smoothed residency as a percentage (SFXP22_10, 0–100%).
         SFXP22_10 evaluate(bool is_past_threshold)
         {
-            // Scale boolean to Q15 format: false → 0, true → (1 << 31) = 2147483648
-            const SFXP1_31 input_scaled = is_past_threshold ? (1 << precision) : 0;
+            const SFXP1_31 input_scaled = is_past_threshold ? (1U << precision) : 0U;
 
-            // EWMA: Both multiplications produce Q62, shift right 31 to get Q31
-            SFXP1_31 new_ewma = (SFXP1_31)(((uint64_t)ewma_alpha * (uint64_t)input_scaled)
-                                           >> (uint64_t)precision);
-            SFXP1_31 old_ewma = (SFXP1_31)(((uint64_t)one_minus_ewma_alpha * (uint64_t)_ewma)
-                                           >> (uint64_t)precision);
-            _ewma             = new_ewma + old_ewma;
-            _residency        = sfxp1_31_to_sfxp22_10(_ewma) * 100;
+            const SFXP1_31 new_ewma = (SFXP1_31)(((uint64_t)_ewma_alpha
+                                                  * (uint64_t)input_scaled)
+                                                 >> (uint64_t)precision);
+            const SFXP1_31 old_ewma = (SFXP1_31)(((uint64_t)_one_minus_ewma_alpha
+                                                  * (uint64_t)_ewma)
+                                                 >> (uint64_t)precision);
+            _ewma                   = new_ewma + old_ewma;
+            _residency              = sfxp1_31_to_sfxp22_10(_ewma) * 100;
 
-            // Convert Q31 (0.0-1.0) to Q22_10 (0-100%)
             return _residency;
         }
 
         SFXP22_10 get_residency() const { return _residency; }
 
-        void reset() { _ewma = 0; }
+        void reset()
+        {
+            _ewma = 0;
+            recompute_ewma_alpha(false);
+        }
 
     private:
-        // Running EWMA value in Q31 format
-        SFXP1_31  _ewma;
-        SFXP22_10 _residency;
+        void recompute_ewma_alpha(bool force)
+        {
+            if (!force && _cfg.ewma_tau == _tau_applied) {
+                return;
+            }
+            const float N         = _cfg.ewma_tau / loop_sample_period_s;
+            const float alpha_f   = 2.0f / (1.0f + N);
+            _ewma_alpha           = (SFXP1_31)(alpha_f * static_cast<float>(1U << precision));
+            _one_minus_ewma_alpha = (SFXP1_31)((1U << precision) - _ewma_alpha);
+            _tau_applied          = _cfg.ewma_tau;
+        }
+
+        const RuntimeCfg& _cfg;
+        float             _tau_applied{0.0f};
+        SFXP1_31          _ewma_alpha{};
+        SFXP1_31          _one_minus_ewma_alpha{};
+        SFXP1_31          _ewma{};
+        SFXP22_10         _residency{};
     };
 
     struct Ports
@@ -163,6 +175,7 @@ public:
         PidController::RuntimeCfg residency_pid;
         PidController::RuntimeCfg critical_pid;
         SFXP22_10                 residency_threshold;
+        ResidencySma::RuntimeCfg  residency_sma{};
     };
 
     enum class Type
@@ -248,7 +261,7 @@ private:
     const RuntimeCfg& _cfg;
     PidController     _residency_pid{_cfg.residency_pid};
     PidController     _critical_pid{_cfg.critical_pid};
-    ResidencySma      _residency_sma;
+    ResidencySma      _residency_sma{_cfg.residency_sma};
 };
 
 }  // namespace nv::soc_pwr_smoothing

@@ -28,6 +28,7 @@
 #include "nv/mctp/nsm_type_ff.h"
 #include "nv/flash/flash.h"
 #include "sys/lpcac/lpcac.h"
+#include "sys/dac/dac.h"
 #include "sys/i2c/utils.h"
 
 #include <array>
@@ -51,50 +52,6 @@ namespace {
 // NOLINTBEGIN(*-avoid-non-const-global-variables)
 constexpr bool SocPowerSmoothingDebugEnabled = false;
 // NOLINTEND(*-avoid-non-const-global-variables)
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-constexpr uint16_t MAX_OVERRIDE_VALUE = 10000;  // Max override param value (100.00%)
-constexpr uint16_t PERCENT_SCALE      = 100;    // Percentage scaling factor
-constexpr uint8_t  INVALID_PRESET_ID  = 0xFF;   // Marker for invalid/unset preset ID
-
-// Validation constraints for parameters 0-19
-// TODO: Review and tune these min/max limits based on system requirements
-// and stability analysis. Current values are conservative defaults.
-static constexpr std::array<ParameterConstraints, 20> param_constraints = {
-    {
-     // EDPP Critical PID (Primary) - SoC targets are percentages (0-100%)
-        {nv::mctp::RackPwrSmoothParams::EdppSoCTargetPrimary, 0.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppSocCriticalLow, 0.0f, 100.0f},
-     // PID gains - reasonable ranges to prevent instability
-        {nv::mctp::RackPwrSmoothParams::EdppPrimaryKp, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppPrimaryKi, -100.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppPrimaryKd, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppLowSocResidencyThreshold, 0.0f, 100.0f},
-
-     // EDPP Residency PID (Secondary)
-        {nv::mctp::RackPwrSmoothParams::EdppResidencyTargetSecondary, 0.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppSecondaryKp, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppSecondaryKi, -100.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::EdppSecondaryKd, -1000.0f, 1000.0f},
-
-     // ISINK Critical PID (Primary)
-        {nv::mctp::RackPwrSmoothParams::IsinkSoCTargetPrimary, 0.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkSoCCriticalHigh, 0.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKp, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKi, -100.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKd, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkHighSoCResidencyThreshold, 0.0f, 100.0f},
-
-     // ISINK Residency PID (Secondary)
-        {nv::mctp::RackPwrSmoothParams::IskinkResidencyTargetSecondary, 0.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKp, -1000.0f, 1000.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKi, -100.0f, 100.0f},
-     {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKd, -1000.0f, 1000.0f},
-     }
-};
 
 // ============================================================================
 // ADC Calibration Test Mode - I2C DAC Control
@@ -259,328 +216,14 @@ void get_adc_calibration_results(nv::mctp::NsmTFFGetAdcCalibResultsRes& response
     std::copy(points.begin(), points.end(), std::begin(response.points));
 }
 
+bool adc_calib_set_loopback_dac_code(uint16_t dac_code)
+{
+    return write_ad5693_dac(dac_code);
+}
+
 // ============================================================================
 // PowerSmoothing Class Implementation
 // ============================================================================
-
-// Validate a single parameter
-bool PowerSmoothing::validate_parameter(nv::mctp::RackPwrSmoothParams param_id,
-                                        uint32_t                      raw_value)
-{
-    using namespace nv::mctp;
-
-    // Override parameters (20-22): validate scaled value 0-10000 (0-100.00%)
-    if (param_id >= RackPwrSmoothParams::OverrideSoCInput) {
-        auto override = OverrideParam::from_uint32(raw_value);
-        if (override.value > MAX_OVERRIDE_VALUE) {
-            return false;
-        }
-        return true;
-    }
-
-    // Regular parameters (0-19): SFXP22_10 encoded, convert to float for validation
-    const auto  fixed_val = static_cast<SFXP22_10>(raw_value);
-    const float float_val = sfxp22_10_to_float(fixed_val);
-
-    // Find constraint for this parameter
-    for (const auto& c : param_constraints) {
-        if (c.id == param_id) {
-            if (float_val < c.min_value || float_val > c.max_value) {
-                return false;
-            }
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// Validate all parameters in a preset
-// Called before switching to a preset to ensure entire configuration is valid
-// This provides an additional safety check even though individual params are validated on write
-bool PowerSmoothing::validate_preset(const ParameterPreset& preset)
-{
-    // Only validate non-gap parameters
-    for (uint8_t param_id = 0; param_id < PARAM_COUNT; param_id++) {
-        // Skip reserved gap (20-39)
-        if (!is_valid_param_id(param_id)) {
-            continue;
-        }
-        auto param_enum = static_cast<nv::mctp::RackPwrSmoothParams>(param_id);
-        if (!PowerSmoothing::validate_parameter(param_enum, preset.params.at(param_id))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// ============================================================================
-// Preset Initialization and Management
-// ============================================================================
-
-// Initialize a writable preset by copying from default Preset 0
-// Called automatically on first parameter write to an uninitialized preset
-void PowerSmoothing::initialize_preset_from_default(uint8_t preset_id)
-{
-    if (preset_id == DEFAULT_PRESET) {
-        return;
-    }
-
-    if (preset_id >= NUM_PRESETS) {
-        return;
-    }
-
-    // Copy all parameters from Preset 0
-    preset_manager.presets.at(preset_id).params = preset_manager.presets.at(DEFAULT_PRESET)
-                                                      .params;
-    preset_manager.presets.at(preset_id).is_valid = true;
-}
-
-// Build RuntimeCfg from preset parameters
-// Converts the 23 stored parameters into the RuntimeCfg structure used by the algorithm
-// Note: Starts with default RuntimeCfg, then overlays only the preset parameters
-RuntimeCfg PowerSmoothing::build_runtime_cfg_from_preset(uint8_t preset_id)
-{
-    using namespace nv::mctp;
-
-    if (preset_id >= NUM_PRESETS) {
-        return RuntimeCfg{};  // Return default config
-    }
-
-    const auto& params = preset_manager.presets.at(preset_id).params;
-
-    // Start with default RuntimeCfg (gets defaults from runtime_cfg.h)
-    // This includes integral_min/max, power_brake_policy defaults, etc.
-    RuntimeCfg cfg;
-
-    // Helper to extract SFXP22_10 from stored uint32_t
-    auto get_sfxp22_10 = [&](RackPwrSmoothParams id) -> SFXP22_10 {
-        return static_cast<SFXP22_10>(params.at(static_cast<uint8_t>(id)));
-    };
-
-    // ========================================================================
-    // EDPP Offset Policy Configuration (params 0-9)
-    // Override only the configurable PID parameters, keep integral limits as defaults
-    // ========================================================================
-
-    // EDPP Critical PID (Primary) - controls critical SoC regions
-    cfg.edpp_offset_policy.critical_pid.target = get_sfxp22_10(
-        RackPwrSmoothParams::EdppSoCTargetPrimary);
-    cfg.edpp_offset_policy.critical_pid.kp = get_sfxp22_10(RackPwrSmoothParams::EdppPrimaryKp);
-    cfg.edpp_offset_policy.critical_pid.ki = get_sfxp22_10(RackPwrSmoothParams::EdppPrimaryKi);
-    cfg.edpp_offset_policy.critical_pid.kd = get_sfxp22_10(RackPwrSmoothParams::EdppPrimaryKd);
-    // integral_min/max: kept as defaults from RuntimeCfg initialization
-
-    // EDPP Residency threshold - determines when residency PID activates
-    cfg.edpp_offset_policy.residency_threshold = get_sfxp22_10(
-        RackPwrSmoothParams::EdppLowSocResidencyThreshold);
-
-    // EDPP Residency PID (Secondary) - controls residency in threshold region
-    cfg.edpp_offset_policy.residency_pid.target = get_sfxp22_10(
-        RackPwrSmoothParams::EdppResidencyTargetSecondary);
-    cfg.edpp_offset_policy.residency_pid.kp = get_sfxp22_10(
-        RackPwrSmoothParams::EdppSecondaryKp);
-    cfg.edpp_offset_policy.residency_pid.ki = get_sfxp22_10(
-        RackPwrSmoothParams::EdppSecondaryKi);
-    cfg.edpp_offset_policy.residency_pid.kd = get_sfxp22_10(
-        RackPwrSmoothParams::EdppSecondaryKd);
-    // integral_min/max: kept as defaults from RuntimeCfg initialization
-
-    // ========================================================================
-    // ISINK Offset Policy Configuration (params 10-19)
-    // Override only the configurable PID parameters, keep integral limits as defaults
-    // ========================================================================
-
-    // ISINK Critical PID (Primary) - controls critical SoC regions
-    cfg.isink_offset_policy.critical_pid.target = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkSoCTargetPrimary);
-    cfg.isink_offset_policy.critical_pid.kp = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkPrimaryKp);
-    cfg.isink_offset_policy.critical_pid.ki = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkPrimaryKi);
-    cfg.isink_offset_policy.critical_pid.kd = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkPrimaryKd);
-    // integral_min/max: kept as defaults from RuntimeCfg initialization
-
-    // ISINK Residency threshold - determines when residency PID activates
-    cfg.isink_offset_policy.residency_threshold = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkHighSoCResidencyThreshold);
-
-    // ISINK Residency PID (Secondary) - controls residency in threshold region
-    cfg.isink_offset_policy.residency_pid.target = get_sfxp22_10(
-        RackPwrSmoothParams::IskinkResidencyTargetSecondary);
-    cfg.isink_offset_policy.residency_pid.kp = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkSecondaryKp);
-    cfg.isink_offset_policy.residency_pid.ki = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkSecondaryKi);
-    cfg.isink_offset_policy.residency_pid.kd = get_sfxp22_10(
-        RackPwrSmoothParams::IsinkSecondaryKd);
-    // integral_min/max: kept as defaults from RuntimeCfg initialization
-
-    // ========================================================================
-    // Override Parameters (Test Hooks) (params 20-22)
-    // ========================================================================
-
-    // SoC Input Override (param 20)
-    auto soc_override = OverrideParam::from_uint32(
-        params.at(static_cast<uint8_t>(RackPwrSmoothParams::OverrideSoCInput)));
-    cfg.override_soc_input.enabled = (soc_override.is_override != 0);
-    // Value is scaled by 100, convert to SFXP22_10: value/100 * 1024 = value * 10.24
-    cfg.override_soc_input.value = (static_cast<int32_t>(soc_override.value) * 1024)
-                                 / PERCENT_SCALE;
-
-    // EDPP Output Override (param 21)
-    auto edpp_override = OverrideParam::from_uint32(
-        params.at(static_cast<uint8_t>(RackPwrSmoothParams::OverrideEdppOffsetOutput)));
-    cfg.override_edpp_offset.enabled = (edpp_override.is_override != 0);
-    cfg.override_edpp_offset.value   = (static_cast<int32_t>(edpp_override.value) * 1024)
-                                   / PERCENT_SCALE;
-
-    // ISINK Output Override (param 22)
-    auto isink_override = OverrideParam::from_uint32(
-        params.at(static_cast<uint8_t>(RackPwrSmoothParams::OverrideIsinkOffsetOutput)));
-    cfg.override_isink_offset.enabled = (isink_override.is_override != 0);
-    cfg.override_isink_offset.value   = (static_cast<int32_t>(isink_override.value) * 1024)
-                                    / PERCENT_SCALE;
-
-    // ========================================================================
-    // Preserve runtime operational controls (separate from preset tuning)
-    // These are controlled by dedicated commands and should persist across preset switches
-    // ========================================================================
-
-    // Preserve power brake enable state (set via SetPowerBrakePolicyState)
-    cfg.power_brake_policy.enabled = power_manager.config.power_brake_policy.enabled;
-
-    // Preserve thermal brake enable state (set via SetThermBrakePolicyState)
-    cfg.therm_brake_policy.enabled = power_manager.config.therm_brake_policy.enabled;
-
-    // Preserve offset policy enable states (set via SetOffsetPolicyState or SetMaxACRampRate)
-    cfg.edpp_offset_policy.enabled  = power_manager.config.edpp_offset_policy.enabled;
-    cfg.isink_offset_policy.enabled = power_manager.config.isink_offset_policy.enabled;
-
-    // Preserve max AC ramp rate (set via SetMaxACRampRate)
-    cfg.max_ac_ramp_rate = power_manager.config.max_ac_ramp_rate;
-
-    return cfg;
-}
-
-// Initialize Preset 0 (read-only defaults) from current RuntimeCfg defaults
-// Called once at module startup to establish the baseline configuration
-void PowerSmoothing::initialize_default_preset()
-{
-    using namespace nv::mctp;
-
-    // Create a default RuntimeCfg to extract defaults from
-    const RuntimeCfg defaults;
-
-    auto& preset0 = preset_manager.presets.at(DEFAULT_PRESET);
-
-    // ========================================================================
-    // EDPP Parameters (0-9)
-    // ========================================================================
-
-    // EDPP Critical PID (Primary)
-    preset0
-        .params[static_cast<uint8_t>(RackPwrSmoothParams::EdppSoCTargetPrimary)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.critical_pid.target);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppPrimaryKp)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.critical_pid.kp);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppPrimaryKi)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.critical_pid.ki);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppPrimaryKd)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.critical_pid.kd);
-
-    // EDPP Residency threshold
-    preset0.params
-        [static_cast<uint8_t>(RackPwrSmoothParams::EdppLowSocResidencyThreshold)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.residency_threshold);
-
-    // EDPP Residency PID (Secondary)
-    preset0.params
-        [static_cast<uint8_t>(RackPwrSmoothParams::EdppResidencyTargetSecondary)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.residency_pid.target);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppSecondaryKp)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.residency_pid.kp);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppSecondaryKi)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.residency_pid.ki);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::EdppSecondaryKd)] = static_cast<
-        uint32_t>(defaults.edpp_offset_policy.residency_pid.kd);
-
-    // ========================================================================
-    // ISINK Parameters (10-19)
-    // ========================================================================
-
-    // ISINK Critical PID (Primary)
-    preset0
-        .params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkSoCTargetPrimary)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.critical_pid.target);
-    preset0
-        .params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkSoCCriticalHigh)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.critical_pid.target);  // Note: using same target
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkPrimaryKp)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.critical_pid.kp);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkPrimaryKi)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.critical_pid.ki);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkPrimaryKd)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.critical_pid.kd);
-
-    // ISINK Residency threshold
-    preset0.params[static_cast<uint8_t>(
-        RackPwrSmoothParams::
-            IsinkHighSoCResidencyThreshold)] = static_cast<uint32_t>(defaults
-                                                                         .isink_offset_policy
-                                                                         .residency_threshold);
-
-    // ISINK Residency PID (Secondary)
-    preset0.params[static_cast<uint8_t>(
-        RackPwrSmoothParams::
-            IskinkResidencyTargetSecondary)] = static_cast<uint32_t>(defaults
-                                                                         .isink_offset_policy
-                                                                         .residency_pid.target);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkSecondaryKp)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.residency_pid.kp);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkSecondaryKi)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.residency_pid.ki);
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::IsinkSecondaryKd)] = static_cast<
-        uint32_t>(defaults.isink_offset_policy.residency_pid.kd);
-
-    // ========================================================================
-    // Override Parameters (40-42) - Disabled by default
-    // ========================================================================
-
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::OverrideSoCInput)]          = 0;
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::OverrideEdppOffsetOutput)]  = 0;
-    preset0.params[static_cast<uint8_t>(RackPwrSmoothParams::OverrideIsinkOffsetOutput)] = 0;
-
-    // Note: Gap parameters [20-39] remain zero-initialized (reserved for future use)
-
-    // Mark Preset 0 as valid and read-only
-    preset0.is_valid = true;
-}
-
-// Apply pending preset change (called at ISR start)
-// Converts preset parameters to RuntimeCfg and updates power_manager
-void PowerSmoothing::apply_preset_change()
-{
-    const uint8_t new_preset = preset_manager.pending_preset_id;
-
-    // Build RuntimeCfg from the new preset
-    const RuntimeCfg new_cfg = PowerSmoothing::build_runtime_cfg_from_preset(new_preset);
-
-    // Update power manager configuration
-    power_manager.config = new_cfg;
-
-    // Reset all PID controllers and moving averages since parameters changed
-    // This clears integral terms and error history to prevent transients
-    power_manager.isink_offset_policy.reset();
-    power_manager.edpp_offset_policy.reset();
-    power_manager.power_brake_policy.reset();
-
-    // Update active preset tracking
-    preset_manager.active_preset_id  = new_preset;
-    preset_manager.apply_pending     = false;
-    preset_manager.pending_preset_id = INVALID_PRESET_ID;
-}
 
 TelemetrySnapshot PowerSmoothing::get_telemetry_snapshot()
 {
@@ -629,6 +272,16 @@ uint16_t PowerSmoothing::get_last_adc_raw()
     return power_manager.public_connectors.last_adc_raw;
 }
 
+uint16_t PowerSmoothing::get_last_edpp_dac_raw()
+{
+    return power_manager.public_connectors.last_edpp_dac_raw;
+}
+
+uint16_t PowerSmoothing::get_last_isink_dac_raw()
+{
+    return power_manager.public_connectors.last_isink_dac_raw;
+}
+
 // The controller runs every 100us. It is not feasible to increase the RTOS tick
 // rate to support running this in a task as the context switch overhead would
 // be too high. Instead, the controller is run in the ADC interrupt handler. The
@@ -657,8 +310,8 @@ NV_SRAMX_CODE void PowerSmoothing::adc_isr()
 
     // Apply pending preset change BEFORE running the algorithm
     // This ensures new parameters take effect immediately
-    if (preset_manager.apply_pending) {
-        apply_preset_change();
+    if (preset_manager.ApplyPending()) {
+        preset_manager.ApplyPresetChange(power_manager);
     }
 
     // Process power smoothing calculation
@@ -854,113 +507,37 @@ void PowerSmoothing::LoadPersistedSettings()
 
 bool PowerSmoothing::SetParameter(uint8_t preset_id, uint8_t param_id, uint32_t value)
 {
-    using namespace nv::mctp;
-
-    // Validate preset ID (must be writable: 1-3, not read-only 0)
-    if (preset_id < MIN_WRITABLE_PRESET || preset_id > MAX_WRITABLE_PRESET) {
-        return false;
-    }
-
-    // Validate parameter ID (check for valid range, excluding reserved gap)
-    if (!is_valid_param_id(param_id)) {
-        return false;
-    }
-
-    // Validate parameter value
-    auto param_enum = static_cast<RackPwrSmoothParams>(param_id);
-    if (!PowerSmoothing::validate_parameter(param_enum, value)) {
-        return false;
-    }
-
-    // Initialize preset from defaults if not yet initialized
-    if (!preset_manager.presets.at(preset_id).is_valid) {
-        PowerSmoothing::initialize_preset_from_default(preset_id);
-    }
-
-    // Update the parameter - param_id is array index directly
-    preset_manager.presets.at(preset_id).params.at(param_id) = value;
-
-    // If modifying the currently active preset, re-apply it immediately
-    // This ensures changes take effect without requiring an explicit SwitchToPreset call
-    if (preset_id == preset_manager.active_preset_id) {
-        // Note: SwitchToPreset will validate the entire preset before applying
-        PowerSmoothing::SwitchToPreset(preset_id);
-    }
-
-    return true;
+    return preset_manager.SetParameter(preset_id, param_id, value);
 }
 
 void PowerSmoothing::GetPresetParameters(uint8_t                            preset_id,
                                          std::array<uint32_t, PARAM_COUNT>& new_params)
 {
-    // Return empty array for invalid preset
-    if (preset_id >= NUM_PRESETS) {
-        new_params.fill(0);
-        return;
-    }
-
-    // Return empty array for uninitialized preset
-    if (!preset_manager.presets.at(preset_id).is_valid) {
-        new_params.fill(0);
-        return;
-    }
-
-    new_params = preset_manager.presets.at(preset_id).params;
+    preset_manager.GetPresetParameters(preset_id, new_params);
 }
 
 bool PowerSmoothing::SwitchToPreset(uint8_t preset_id)
 {
-    // Validate preset ID
-    if (preset_id >= NUM_PRESETS) {
-        return false;
-    }
-
-    // Check if preset is initialized
-    if (!preset_manager.presets.at(preset_id).is_valid) {
-        return false;
-    }
-
-    // Validate entire preset before switching (safety check)
-    if (!PowerSmoothing::validate_preset(preset_manager.presets.at(preset_id))) {
-        return false;
-    }
-
-    // Mark for application at next ISR iteration
-    preset_manager.pending_preset_id = preset_id;
-    preset_manager.apply_pending     = true;
-
-    return true;
+    return preset_manager.SwitchToPreset(preset_id);
 }
 
 uint8_t PowerSmoothing::GetActivePresetId()
 {
-    return preset_manager.active_preset_id;
+    return preset_manager.GetActivePresetId();
 }
 
 uint8_t PowerSmoothing::GetSupportedPresetBitmask()
 {
-    uint8_t bitmask = 0;
-    for (uint8_t i = 0; i < NUM_PRESETS; i++) {
-        if (preset_manager.presets.at(i).is_valid) {
-            bitmask |= (1u << i);
-        }
-    }
-    return bitmask;
+    return preset_manager.GetSupportedPresetBitmask();
 }
 
 void PowerSmoothing::initialize()
 {
-    // Initialize Preset 0 (read-only defaults) at startup
-    PowerSmoothing::initialize_default_preset();
-
-    // Initialize preset_manager state (required for BSS zero-initialization)
-    // pending_preset_id must be INVALID_PRESET_ID (0xFF) to indicate no pending change
-    preset_manager.pending_preset_id = INVALID_PRESET_ID;
+    preset_manager.InitializeDefaultPreset();
+    preset_manager.ClearPending();
 
     // Apply default preset to power_manager.config immediately
-    // This ensures valid configuration even if PDS read fails in LoadPersistedSettings()
-    // Critical for BSS: RuntimeCfg has non-zero defaults that won't be set by zero-init
-    power_manager.config = build_runtime_cfg_from_preset(DEFAULT_PRESET);
+    power_manager.config = preset_manager.GetCfgForApply(DEFAULT_PRESET, power_manager.config);
 
     // Note: ADC sampling and persisted settings are loaded in periodic_update()
     // after scheduler is running and flash task is active
@@ -977,8 +554,8 @@ void PowerSmoothing::periodic_update()
     static bool        power_brake_asserted      = false;
     static bool        callback_exec_time_logged = false;
     static bool        callback_time_logged      = false;
-    constexpr uint32_t exe_threshold             = 9;
-    constexpr uint32_t time_threshold            = 9;
+    constexpr uint32_t exe_threshold             = 20;
+    constexpr uint32_t time_threshold            = 20;
 
     // One-time initialization on first call (after scheduler and flash task are running)
     if (!initialized) {

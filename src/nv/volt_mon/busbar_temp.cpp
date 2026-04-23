@@ -119,10 +119,13 @@ Status BusbarTemp::update_sensor_state(uint8_t sensorIdx, Reading adcReading)
         _sensor.state = State::LowTemp;  // ADC too high = temp too low (can't happen with NTC)
     }
 
-    if (_sensor.state != lastState) {
-        update_virtual_gpio(sensorIdx, static_cast<VrGpioState>(_sensor.state));
-        on_busbar_temp_state_changed();
-    }
+    const bool stateChanged = (_sensor.state != lastState);
+    // Keep transition fact separate from NSM event policy even though they currently match.
+    const bool triggerNsmEvent = stateChanged;
+    // Always update vrgpio state; only trigger the NSM event conditionally
+    // to keep the sync path simple and avoid corner cases.
+    update_virtual_gpio(sensorIdx, static_cast<VrGpioState>(_sensor.state), triggerNsmEvent);
+    on_busbar_temp_state_changed();
 
     return Status::Ok;
 }
@@ -137,7 +140,9 @@ VrGpioState BusbarTemp::aggregate_state() const
     return VrGpioState::Nominal;
 }
 
-void BusbarTemp::update_virtual_gpio(uint8_t sensorIdx, VrGpioState state)
+void BusbarTemp::update_virtual_gpio(uint8_t     sensorIdx,
+                                     VrGpioState state,
+                                     bool        trigger_nsm_event)
 {
     // update internal virtual gpio state
     vrGpioState = state;
@@ -149,18 +154,17 @@ void BusbarTemp::update_virtual_gpio(uint8_t sensorIdx, VrGpioState state)
     const std::array<uint8_t, 1> ioxPinVals = {(state == VrGpioState::Nominal) ? uint8_t{0}
                                                                                : uint8_t{1}};
 
-    nv::iox::Task::send_vrgpio_request(
-        _sensor.ioxAddr, nv::iox::Operation::Write, _sensor.ioxPin, ioxPinVals);
+    nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
+                                       nv::iox::Operation::Write,
+                                       _sensor.ioxPin,
+                                       ioxPinVals,
+                                       trigger_nsm_event);
 }
 
 // Public interface implementations
 Status BusbarTemp::get_sensor_info(std::span<BusBarTempSensor> info)
 {
     auto status = Status::Ok;
-
-    if (info.size() != sensor.size()) {
-        return Status::InvalidSensorInfoSize;
-    }
 
     for (size_t i = 0; i < sensor.size(); ++i) {
         const auto& adcId = sensor.at(i).adcId;
@@ -220,7 +224,8 @@ Status BusbarTemp::get_thresholds(uint8_t sensorIdx, ThresholdBusbar& config)
 
 Status BusbarTemp::set_thresholds(uint8_t sensorIdx, const ThresholdBusbar& config)
 {
-    // coverity[unsigned_compare] - LeakDetectSensorNum is not 0 once compiled
+    // public API — caller (e.g. NSM handler) handles error response
+    // coverity[unsigned_compare] - BusBarTempSensorNum is not 0 once compiled
     if (sensorIdx >= BusBarTempSensorNum) {
         return Status::InvalidSensorId;
     }

@@ -50,26 +50,26 @@ NV_PRIVILEGED_FUNCTION nv::spdm::crypto::CryptoStatus
                                                     nboot_bool_t&    is_signature_verified,
                                                     auth_params_t&   parms)
 {
-    return perform_image_auth_ecdsa_impl(nbootCtx, imageAddress, is_signature_verified, parms);
+    return perform_image_auth_impl(nbootCtx, imageAddress, is_signature_verified, parms);
 }
 
 #if defined(__cplusplus)
 }
 #endif
 
-nv::spdm::crypto::CryptoStatus perform_image_auth_ecdsa(nboot_context_t& nbootCtx,
-                                                        uint8_t*         imageAddress,
-                                                        nboot_bool_t&    is_signature_verified,
-                                                        auth_params_t&   parms)
+nv::spdm::crypto::CryptoStatus perform_image_auth(nboot_context_t& nbootCtx,
+                                                  uint8_t*         imageAddress,
+                                                  nboot_bool_t&    is_signature_verified,
+                                                  auth_params_t&   parms)
 {
-    return perform_image_auth_ecdsa_svc(nbootCtx, imageAddress, is_signature_verified, parms);
+    return perform_image_auth_svc(nbootCtx, imageAddress, is_signature_verified, parms);
 }
 
 NV_SYS_CALL nv::spdm::crypto::CryptoStatus
-            perform_image_auth_ecdsa_svc(nboot_context_t& nbootCtx,
-                                         uint8_t*         imageAddress,
-                                         nboot_bool_t&    is_signature_verified,
-                                         auth_params_t&   parms)
+            perform_image_auth_svc(nboot_context_t& nbootCtx,
+                                   uint8_t*         imageAddress,
+                                   nboot_bool_t&    is_signature_verified,
+                                   auth_params_t&   parms)
 {
 #if ((configENABLE_MPU == 1) && (configUSE_MPU_WRAPPERS_V1 == 0))
     __asm volatile(  // NOLINT
@@ -94,16 +94,16 @@ NV_SYS_CALL nv::spdm::crypto::CryptoStatus
         : "i"(NV_SYSTEM_CALL_Crypto_Image_Auth_Ecdsa)
         : "memory");
 #else
-    return perform_image_auth_ecdsa_impl(nbootCtx, imageAddress, is_signature_verified, parms);
+    return perform_image_auth_impl(nbootCtx, imageAddress, is_signature_verified, parms);
 #endif
     // coverity[cert_msc52_cpp_violation] - Expect no return
 }
 
 NV_PRIVILEGED_FUNCTION nv::spdm::crypto::CryptoStatus
-                       perform_image_auth_ecdsa_impl(nboot_context_t& nbootCtx,
-                                                     uint8_t*         imageAddress,
-                                                     nboot_bool_t&    is_signature_verified,
-                                                     auth_params_t&   parms)
+                       perform_image_auth_impl(nboot_context_t& nbootCtx,
+                                               uint8_t*         imageAddress,
+                                               nboot_bool_t&    is_signature_verified,
+                                               auth_params_t&   parms)
 {
     using namespace nv::spdm::crypto;
     if (NBOOT_ContextInit(&nbootCtx) != kStatus_NBOOT_Success) {
@@ -185,7 +185,7 @@ authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwTyp
     if ((*image_key_version_on_firmware) < image_key_revoke) {
         return CryptoStatus::FailImageSigningKeyRevoke;
     }
-    // start prepare NBOOT_ImgAuthenticateEcdsa parameter.
+    // start prepare NBOOT_ImgAuthenticate parameter.
     constexpr static uint32_t SocLiefcycleCfgMask    = 0xFF;
     constexpr static uint32_t SocLiefcycleUpperMask  = 0xFFFF0000;
     constexpr static uint32_t SocLiefcycleLowerMask  = 0x0000FFFF;
@@ -229,10 +229,33 @@ authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwTyp
                                        << SocLiefcycleUpperShift)
                                       & SocLiefcycleUpperMask)
                                    | (parms.soc_RoTNVM.soc_lifecycle & SocLiefcycleLowerMask);
+// change the NBOOT_ImgAuthenticate parameter for mcxn556 when enforce PQC
+#ifndef CPU_MCXN547VDF
+    constexpr uint32_t PqcRotkhOffsetInCmpa = 0x190;  //!< CMPA PQC ROTKH
+    constexpr uint32_t EnfCnsaPqcThreshold  = 2u;     //!< values 2,3 mean PQC enforced
+
+    uint32_t enf_cnsa = 0;
+    if (nv::flash::Flash::read_enf_cnsa(enf_cnsa) != nv::flash::Status::Ok) {
+        return CryptoStatus::FailEfuseAccess;
+    }
+    const bool enforce_pqc = (enf_cnsa >= EnfCnsaPqcThreshold);
+    if (enforce_pqc) {
+        parms.soc_RoTNVM.soc_rootKeyTypeAndLength = kNBOOT_RootKey_Ecdsa_P384_MlDsa_87;
+
+        std::array<uint8_t, Sha384HashSize> pqc_rotkh{};
+        if (nv::flash::Status::Ok
+            != nv::flash::Flash::read_cmpa(std::span<uint8_t>(pqc_rotkh),
+                                           PqcRotkhOffsetInCmpa)) {
+            return CryptoStatus::FailCmpaAccess;
+        }
+        to_array_view(parms.soc_RoTNVM.soc_rkh_1).fill(0x0);
+        to_array_view(parms.soc_RoTNVM.soc_rkh_1) = pqc_rotkh;
+    }
+#endif
     nboot_context_t nbootCtx     = {0u};
     auto            imageAddress = std::bit_cast<uint8_t*>(
         nv::fw_parser::mcu::get_fw_image_address(InputParseingFwType));
-    return perform_image_auth_ecdsa(nbootCtx, imageAddress, is_signature_verified, parms);
+    return perform_image_auth(nbootCtx, imageAddress, is_signature_verified, parms);
 }
 
 }  // namespace sys::crypto

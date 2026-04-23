@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "pldm_wrap.h"
+#include "nv/pldm/common.h"
 
 #include <chrono>
 #include <cstring>
@@ -185,7 +186,8 @@ void pldm_write(NvU16                                          comp_id,
         }
         err = NV_PLDM_RET_SUCCUSS;
     }
-    else {
+    else if (comp_id == COMP_CPLD && component_id_in_fw_info_list(comp_id, FwInfoList)) {
+        // TODO: support other component id
         if (offset == 0) {
             nv::ap_operation::pldm_update_ap_fw_prepare();
         }
@@ -202,6 +204,13 @@ void pldm_write(NvU16                                          comp_id,
             return;
         }
         err = NV_PLDM_RET_SUCCUSS;
+    }
+    else if (comp_id == COMP_HPDO && component_id_in_fw_info_list(comp_id, FwInfoList)) {
+        // TODO: support HPDO write
+        nv::info("pldm_write: HPDO write not supported yet\n");
+    }
+    else {
+        nv::info("pldm_write: invalid component id 0x%x\n", comp_id);
     }
 }
 
@@ -688,8 +697,13 @@ void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc)
 #endif
 }
 
-void get_ap_authentication_result(uint8_t result, uint8_t& verify_cc)
+void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc)
 {
+    if (comp_id == COMP_HPDO && component_id_in_fw_info_list(comp_id, FwInfoList)) {
+        nv::info("pldm: bypass auth for comp id 0x%x\n", comp_id);
+        verify_cc = NV_PLDM_VERIFY_CC_SUCCESS;
+        return;
+    }
     nv::logger::info(nv::logger::Event::PldmAuthInactiveCryptoStatus, {result});
     nv::ap_operation::pldm_update_ap_fw_callback(
         static_cast<spdm::crypto::CryptoStatus>(result));

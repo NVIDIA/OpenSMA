@@ -161,6 +161,19 @@ struct [[gnu::packed]] T4WriteProtectionRequest
     }
 };
 
+/**
+ * Platform hook for enabling/disabling write protection on a given function.
+ * Weak default in nsm_type_4.cpp returns NotSupported.
+ * Strong override (e.g. p7612_hgx) looks up WriteProtectionList, writes GPIO, and verifies
+ * via readback.
+ *
+ * @param function  Write protection function ID from the request
+ * @param mode      T4WriteProtectionMode (Clear=0, Set=1)
+ * @return NsmStatus::OK on success, NsmStatus::NotSupported if function not found,
+ *         NsmStatus::ErrorGeneral on GPIO readback mismatch
+ */
+NsmStatus platform_write_protection_gpio(uint8_t function, uint8_t mode);
+
 // CPLD Register Table Request Data Structure
 struct [[gnu::packed]] CpldRegisterTableReq
 {

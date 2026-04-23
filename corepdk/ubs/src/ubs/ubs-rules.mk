@@ -15,6 +15,22 @@
 # limitations under the License.
 
 
+################################################################################
+# Optional: import symbols from an existing ELF (plugin use-case)
+# Projects can set UBS_BASE_ELF to the original firmware ELF; linker will
+# resolve undefineds using that symbol table without altering memory layout.
+################################################################################
+ifneq ($(UBS_BASE_ELF),)
+UBS_BASE_ELF_FLAG := --just-symbols=$(UBS_BASE_ELF)
+# GCC/G++ need -Wl, to forward to ld; if UBS_LINK is ld already, pass raw.
+ifeq (,$(findstring ld,$(notdir $(UBS_LINK))))
+UBS_LINK_FLAGS += -Wl,$(UBS_BASE_ELF_FLAG)
+else
+UBS_LINK_FLAGS += $(UBS_BASE_ELF_FLAG)
+endif
+endif
+
+
 build: config .WAIT build-banner .WAIT $(UBS_TARGETS_ALL) .WAIT $(if $(filter library,$(UBS_TYPE)), lib_gen,)
 
 build-banner:

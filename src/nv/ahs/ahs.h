@@ -144,6 +144,11 @@ public:
      */
     void hotSwapTimerInterrupt(uint8_t driveIndex);
 
+    /**
+     * @brief Re-initialize the AHS I2C slave peripheral after a bus fault or hang
+     */
+    void peripheral_recovery();
+
 private:
     // Helper Functions
     // ---------------------------------------------
@@ -237,6 +242,9 @@ private:
 
     /** @brief Power good status values for each drive */
     std::array<bool, nhp::NumE1sDrives> pgood_vals;
+
+    /** @brief Power good status is valid and ready to be used */
+    std::array<bool, nhp::NumE1sDrives> pgood_valid_vals;
 
     /** @brief Presence detection values for each drive */
     std::array<bool, nhp::NumE1sDrives> prsntL_vals;

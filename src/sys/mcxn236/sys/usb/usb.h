@@ -63,6 +63,7 @@ public:
     usb_status_t   enable_spi_rx();
     void           recover_spi_endpoint();
     bool           check_vbus();
+    static bool    is_device_connected();
 
     // VCOM (UART bridge) stubs
     static void  vcom_rearm_rx(void* handle, uint8_t* buffer);

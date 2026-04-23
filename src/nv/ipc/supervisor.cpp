@@ -16,9 +16,11 @@
  * limitations under the License.
  */
 #include "nv/ipc/supervisor.h"
+#include "nv/ipc/bm_core1_cfg_data.h"
 
 #include "nv/common/preproc.h"
 #include "nv/common/utils.h"
+#include "nv/ipc/c2c_stream_buffer.h"
 #include NV_IPC_CONFIG_H
 #include "nv/ipc/task.h"
 #include "nv/nv.h"
@@ -38,8 +40,45 @@ using namespace nv::ipc;
 namespace {
 NV_SHARED_BSS Supervisor supervisor;  // NOLINT(*-non-const-global-variables)
 }
-#if defined(CPU_MCXN547VDF_cm33_core0) || defined(CPU_MCXN556SCDF_cm33_core0)
-// Only declare c2c memory in core0 of MCXN547 or MCXN556
+#if defined(CPU_MCXN556SCDF_cm33_core0) && NCSI_ENABLE
+// MCXN556 NCSI: Use NV_SHARED_BSS to place in MPU shared region (shared_bss section)
+// This allows non-privileged IPC tasks to access C2C buffers.
+// NCSI projects pass the actual buffer address (not __shared_memory_start__).
+NV_SHARED_BSS std::array<uint8_t, sys::ipc::calc_static_c2c_buf_size()>
+              Supervisor::_static_c2c_buffer;
+
+NV_SHARED_BSS std::array<StreamBuffer, Supervisor::NumC2CBuffers> Supervisor::_c2c_buffers;
+
+/// Filled by Core0 before starting Core1; passed as startup data so Core1 can read both
+/// addresses
+NV_SHARED_BSS nv::ipc::StartupInfo nv::ipc::g_core1_startup_data;
+
+// Core1 bare-metal driver expects sizeof(StreamBuffer) = 60 bytes
+// If this fails, update Core0StreamBufferSize in sys/mcxn556/sys/ipc_bm/driver.cpp
+static_assert(sizeof(StreamBuffer) == 60,
+              "StreamBuffer size mismatch - update Core1 ipc_bm driver");
+
+// Verify C2CStreamBufferCtrl matches FreeRTOS StaticStreamBuffer_t layout.
+// If FreeRTOS changes its internal StreamBuffer_t layout, these will fail at compile time.
+static_assert(offsetof(C2CStreamBufferCtrl, tail)
+                  == offsetof(StaticStreamBuffer_t, uxDummy1) + 0 * sizeof(size_t),
+              "C2C tail offset must match StaticStreamBuffer_t.uxDummy1[0]");
+static_assert(offsetof(C2CStreamBufferCtrl, head)
+                  == offsetof(StaticStreamBuffer_t, uxDummy1) + 1 * sizeof(size_t),
+              "C2C head offset must match StaticStreamBuffer_t.uxDummy1[1]");
+static_assert(offsetof(C2CStreamBufferCtrl, length)
+                  == offsetof(StaticStreamBuffer_t, uxDummy1) + 2 * sizeof(size_t),
+              "C2C length offset must match StaticStreamBuffer_t.uxDummy1[2]");
+static_assert(offsetof(C2CStreamBufferCtrl, buffer_ptr)
+                  == offsetof(StaticStreamBuffer_t, pvDummy2) + 2 * sizeof(void*),
+              "C2C buffer_ptr offset must match StaticStreamBuffer_t.pvDummy2[2]");
+static_assert(offsetof(C2CStreamBufferCtrl, flags) == offsetof(StaticStreamBuffer_t, ucDummy3),
+              "C2C flags offset must match StaticStreamBuffer_t.ucDummy3");
+
+#elif defined(CPU_MCXN556SCDF_cm33_core0) || defined(CPU_MCXN547VDF_cm33_core0)
+// Non-NCSI MCXN556 and MCXN547: Keep C2C buffers in .c2c_memory_data section
+// (covered by __shared_memory_start__). Projects pass &__shared_memory_start__
+// as the C2C base address, so the buffers must live in that section.
 __attribute__((
     section(".c2c_memory_data"))) std::array<uint8_t, sys::ipc::calc_static_c2c_buf_size()>
                                   Supervisor::_static_c2c_buffer;

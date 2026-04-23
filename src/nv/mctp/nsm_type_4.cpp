@@ -848,12 +848,12 @@ void Nsm::on_dev_diag_bridge_port_recovery(const Packet& rx, Packet& tx)
                           + sizeof(BridgePortRecoveryResp);
 }
 
-// Ensure WriteProtectionSize is not 0 when EnableDisableWriteProtection is supported
-static_assert(
-    !(nv::mctp::WriteProtectionSize == 0
-      && Nsm::is_cmd_set(NsmMsgType::Diagnostics,
-                         NsmDevDiagCmdCode::EnableDisableWriteProtection)),
-    "WriteProtectionSize cannot be 0 when EnableDisableWriteProtection command is enabled");
+__attribute__((weak)) NsmStatus platform_write_protection_gpio(uint8_t function, uint8_t mode)
+{
+    (void)function;
+    (void)mode;
+    return NsmStatus::NotSupported;
+}
 
 void Nsm::on_dev_diag_enable_disable_write_protection(const Packet& rx, Packet& tx)
 {
@@ -883,22 +883,20 @@ void Nsm::on_dev_diag_enable_disable_write_protection(const Packet& rx, Packet& 
         return;
     }
 
-    // Find and toggle the corresponding GPIO
-    bool found = false;
-    for (const auto& config : WriteProtectionList) {
-        if (config.function == request.function) {
-            const uint8_t gpio_value = (request.mode == T4WriteProtectionMode::Set) ? 1U : 0U;
-            nv::gpio::Driver::write(config.port, config.pin, gpio_value);
-            found = true;
-            break;
-        }
-    }
-
-    if (!found) {
-        // Function not found in WriteProtectionList
+    auto wp_status = platform_write_protection_gpio(request.function, request.mode);
+    if (wp_status == NsmStatus::InvalidData) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
+    else if (wp_status != NsmStatus::OK) {
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+        return;
+    }
+    else if (wp_status == NsmStatus::NotSupported) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return;
+    }
+
     auto& ntx             = NsmPktResp::from(tx);
     ntx.data_size         = 0;
     ntx.completion_code   = Ccode::Success;

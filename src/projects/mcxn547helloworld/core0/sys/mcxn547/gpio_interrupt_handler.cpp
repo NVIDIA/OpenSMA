@@ -29,7 +29,7 @@ static void IRQHandler(nv::gpio::GpioPort port, uint32_t flags)
             continue;
         }
         // Check if IRQ pin is related to LSTP Task
-        const nv::lstp::GpioIndex gpio_idx = nv::lstp::LstpGpioIdxLookup[port][pin];
+        const nv::lstp::GpioIndex gpio_idx = nv::lstp::LstpGpioIdxMap[port][pin];
         if (gpio_idx < nv::lstp::LstpGpioNum) {
             nv::lstp::LstpTask::submit_gpio_irq(gpio_idx);
         }

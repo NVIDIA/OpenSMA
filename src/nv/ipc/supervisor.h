@@ -54,6 +54,12 @@ public:
     /// storage for static c2c buffer
     static std::array<uint8_t, sys::ipc::calc_static_c2c_buf_size()> _static_c2c_buffer;
 
+    /// Get address of C2C buffers array (for Core1 startup data)
+    static uint32_t get_c2c_buffers_address()
+    {
+        return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(_c2c_buffers.data()));
+    }
+
     /// Access singleton.
     static Supervisor& inst();
 

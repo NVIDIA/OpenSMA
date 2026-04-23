@@ -29,6 +29,12 @@
             },
             {
                 "erase": {
+                    "address": "0x000EE000",
+                    "size": "0x00002000"
+                }
+            },
+            {
+                "erase": {
                     "address": "0x000F0000",
                     "size": "0x0000E000"
                 }

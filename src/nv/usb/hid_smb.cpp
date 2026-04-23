@@ -27,6 +27,7 @@
 #include "nv/nv.h"
 #include "sys/usb/usb.h"
 #include "nv/usb/task.h"
+#include "nv/usb/i2c_backend.h"
 #include "nv/iox/task.h"
 
 // WAR
@@ -39,62 +40,12 @@ using namespace nv;
 namespace nv::usb {
 
 namespace {
-// declare as anonymous function
-// this is uesd to find virtual mapping to downstream i2c | i3c task id and address
-std::pair<ipchandler::Id, uint8_t> i2c_addr_mapping(const uint8_t virtual_i2c_address)
-{
-    for (const ipc::I2cVirtualAddressMappingTableItem mapping_item :
-         ipc::I2cVirtualAddressMappingTable) {
-        // now only support two mapping for each task (gpu addr and gpu recovery addr)
-        if (mapping_item.virtual_address == virtual_i2c_address) {
-            if (mapping_item.dynamic_address_type
-                == ipc::I2cDynamicAddressType::NotDynamicType) {  // static address
-                return std::make_pair(mapping_item.ipchandler_id,
-                                      mapping_item.physical_address);
-            }
-            if constexpr (std::to_underlying(ipc::I2cDynamicAddressType::End)
-                              - std::to_underlying(ipc::I2cDynamicAddressType::Begin)
-                          != 1) {  // dynamic address
-                auto dynamic_address = ipc::find_i2c_dynamic_virtual_address(
-                    mapping_item.dynamic_address_type);
-
-                return std::make_pair(mapping_item.ipchandler_id,
-                                      dynamic_address.value_or(mapping_item.physical_address));
-            }
-        }
-    }
-
-    // receive not support i2c addr
-    if constexpr (ipc::I2cManualNackMode == true) {  // need manual Nack
-        return std::make_pair(ipchandler::Id::Unuse, virtual_i2c_address);
-    }
-    else {
-        return std::make_pair(ipc::I2cDefaultInhandlerId, virtual_i2c_address);
-    }
-}
-
-bool is_i2c_ocp_device(const uint8_t virtual_i2c_address)
-{
-    for (const ipc::I2cVirtualAddressMappingTableItem mapping_item :
-         ipc::I2cVirtualAddressMappingTable) {
-        if (mapping_item.virtual_address == virtual_i2c_address) {
-            return mapping_item.is_ocp_device;
-        }
-    }
-    return false;
-}
 
 void i2c_manual_nack(ipchandler::Id src_i2c_ipchandler_id, std::span<uint8_t> response_span)
 {
     using namespace nv::ipc;
     usb::Task::to_usb(src_i2c_ipchandler_id, 0, response_span, nv::i2c::I2cStatus::Nak);
     return;
-}
-
-bool isI3cQueue(nv::ipchandler::Id id)
-{
-    // Check if the id corresponds to an I3C queue
-    return (id == nv::ipchandler::Id::I3c0 || id == nv::ipchandler::Id::I3c1);
 }
 
 }  // namespace
@@ -113,14 +64,14 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
         auto& data_read_pkt = hid_10_from(rx_buffer);
 
         const uint8_t SlaveAddr                  = data_read_pkt.slave_addr >> 1u;
-        auto [ipchandler_id, mapping_slave_addr] = i2c_addr_mapping(SlaveAddr);
-        auto is_ocp_device                       = is_i2c_ocp_device(SlaveAddr);
+        auto [ipchandler_id, mapping_slave_addr] = usb::i2c_addr_mapping(SlaveAddr);
+        auto ocp_device                          = usb::is_i2c_ocp_device(SlaveAddr);
 
         read_length = (data_read_pkt.length_h << 8) | data_read_pkt.length_l;
 
         // prevent uninitialized data in buffer
-        i2c::I2cHidBuffer  buffer = {};
-        std::span<uint8_t> buffer_span(buffer.data(), i2c::I2cHidSmbBufferSize);
+        i2c::I2cHidBuffer        buffer = {};
+        const std::span<uint8_t> buffer_span(buffer.data(), i2c::I2cHidSmbBufferSize);
 
         // Nack when write out of bounds on buffer.data()
         if (static_cast<size_t>(read_length) > buffer.size()
@@ -132,40 +83,15 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
         }
 
         // nack if its a OCP device, OCP spec only allow block read/write
-        if (is_ocp_device) {
+        if (ocp_device) {
             _read_context.reset();
             i2c_manual_nack(ipchandler_id, _read_context.buffer);
             _state = State::Read;
             return;
         }
 
-        if (ipchandler_id == ipchandler::Id::Iox) {
-            if constexpr (nv::ipc::EnableIoxEmulation) {
-                iox::Task::send_i2c_request(ipchandler::Id::Usb,
-                                            mapping_slave_addr,
-                                            ipchandler_id,
-                                            0,
-                                            read_length,
-                                            buffer_span);
-            }
-        }
-        else if (isI3cQueue(ipchandler_id)) {
-            i3c::Task::to_i2c(ipchandler::Id::Usb,
-                              mapping_slave_addr,
-                              ipchandler_id,
-                              0,
-                              read_length,
-                              buffer_span);
-        }
-        else {
-            i2c::Task::to_i2c(ipchandler::Id::Usb,
-                              mapping_slave_addr,
-                              ipchandler_id,
-                              0,
-                              read_length,
-                              i2c::I2cFlags::NoFlag,
-                              buffer_span);
-        }
+        usb::send_to_i2c_backend(
+            ipchandler_id, mapping_slave_addr, 0, read_length, buffer_span);
         _state = State::Read;
     }
 
@@ -176,7 +102,7 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
 
         const uint8_t TarAddrLen                 = data_read_write_pkt.tar_addr_len;
         const uint8_t SlaveAddr                  = data_read_write_pkt.slave_addr >> 1u;
-        auto [ipchandler_id, mapping_slave_addr] = i2c_addr_mapping(SlaveAddr);
+        auto [ipchandler_id, mapping_slave_addr] = usb::i2c_addr_mapping(SlaveAddr);
         // prevent uninitialized data in buffer
         i2c::I2cBuffer buffer = {};
 
@@ -196,36 +122,11 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
                   data_read_write_pkt.tar_addr.data() + TarAddrLen,
                   buffer.data());
 
-        std::span<uint8_t> span_item(buffer.data(), i2c::I2cBufferSize);
+        const std::span<uint8_t> span_item(buffer.data(), i2c::I2cBufferSize);
         read_length = data_read_write_pkt.length_l | (data_read_write_pkt.length_h << 8);
 
-        if (ipchandler_id == ipchandler::Id::Iox) {
-            if constexpr (nv::ipc::EnableIoxEmulation) {
-                iox::Task::send_i2c_request(ipchandler::Id::Usb,
-                                            mapping_slave_addr,
-                                            ipchandler_id,
-                                            TarAddrLen,
-                                            read_length,
-                                            span_item);
-            }
-        }
-        else if (isI3cQueue(ipchandler_id)) {
-            i3c::Task::to_i2c(ipchandler::Id::Usb,
-                              mapping_slave_addr,
-                              ipchandler_id,
-                              TarAddrLen,
-                              read_length,
-                              span_item);
-        }
-        else {
-            i2c::Task::to_i2c(ipchandler::Id::Usb,
-                              mapping_slave_addr,
-                              ipchandler_id,
-                              TarAddrLen,
-                              read_length,
-                              i2c::I2cFlags::NoFlag,
-                              span_item);
-        }
+        usb::send_to_i2c_backend(
+            ipchandler_id, mapping_slave_addr, TarAddrLen, read_length, span_item);
         _state = State::Read;
     }
 
@@ -240,7 +141,7 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
         auto& data_write_pkt = hid_14_from(rx_buffer);
 
         const uint8_t SlaveAddr                  = data_write_pkt.slave_addr >> 1u;
-        auto [ipchandler_id, mapping_slave_addr] = i2c_addr_mapping(SlaveAddr);
+        auto [ipchandler_id, mapping_slave_addr] = usb::i2c_addr_mapping(SlaveAddr);
         const uint8_t Length                     = data_write_pkt.length;
         // prevent uninitialized data in buffer
         i2c::I2cBuffer buffer = {};
@@ -255,31 +156,9 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
         std::copy(
             data_write_pkt.data.data(), data_write_pkt.data.data() + Length, buffer.data());
 
-        std::span<uint8_t> span_item(buffer.data(), i2c::I2cBufferSize);
+        const std::span<uint8_t> span_item(buffer.data(), i2c::I2cBufferSize);
 
-        if (ipchandler_id == ipchandler::Id::Iox) {
-            if constexpr (nv::ipc::EnableIoxEmulation) {
-                iox::Task::send_i2c_request(ipchandler::Id::Usb,
-                                            mapping_slave_addr,
-                                            ipchandler_id,
-                                            Length,
-                                            0,
-                                            span_item);
-            }
-        }
-        else if (isI3cQueue(ipchandler_id)) {
-            i3c::Task::to_i2c(
-                ipchandler::Id::Usb, mapping_slave_addr, ipchandler_id, Length, 0, span_item);
-        }
-        else {
-            i2c::Task::to_i2c(ipchandler::Id::Usb,
-                              mapping_slave_addr,
-                              ipchandler_id,
-                              Length,
-                              0,
-                              i2c::I2cFlags::NoFlag,
-                              span_item);
-        }
+        usb::send_to_i2c_backend(ipchandler_id, mapping_slave_addr, Length, 0, span_item);
 
         _state = State::Write;
     }
@@ -341,8 +220,9 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
             return 0;
         }();
 
-        // Only verify queue size in COMPOSITE mode since HID is not used in MCTP mode
-#if defined(USB_CONFIG_COMPOSITE)
+        // Only verify queue size in single-core COMPOSITE mode.
+        // In NCSI mode, UsbHid queue carries 64-byte HID reports (not HidSmb::Request).
+#if defined(USB_CONFIG_COMPOSITE) && !NCSI_ENABLE
         static_assert(
             queue_item_size == sizeof(HidSmb::Request),
             "COMPOSITE mode: UsbHid queue item size must equal sizeof(HidSmb::Request)");

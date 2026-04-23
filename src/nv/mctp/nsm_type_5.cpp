@@ -21,19 +21,21 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
 
 #include "nv/bootloader.h"
-#include "nv/flash/flash.h"
 #include "nv/debugtoken/debugtoken.h"
+#include "nv/flash/flash.h"
 #include "nv/i2c/error_injection.h"
+#include "nv/i2c/lattice_driver.h"
 #include "nv/logger/common.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/driver.h"
-#include "nv/mctp/task.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/nsm.h"
 #include "nv/mctp/nsm_pwr_smoothing_handlers.h"
+#include "nv/mctp/task.h"
 #include "nv/nv.h"
 
 namespace nv::mctp {
@@ -239,7 +241,7 @@ bool validateUSBBridgeEmulationErrorInjectionPayload(
 
 void triggerGpioSpoofingEvents(const GPIOSpoofingPayload& gpioSpoofingPayload)
 {
-    std::array<uint32_t, sys::gpio::PortsNumber> port_flags{};
+    std::array<uint32_t, sys::gpio::PortsNumber + 1> port_flags{};
     const auto gpio_count = gpioSpoofingPayload.gpio_spoofing_header.ei_gpio_number;
 
     for (uint16_t i = 0; i < gpio_count && i < MaxGPIOSpoofingEntries; ++i) {
@@ -258,18 +260,36 @@ void triggerGpioSpoofingEvents(const GPIOSpoofingPayload& gpioSpoofingPayload)
         const auto  port        = std::get<0>(gpio_config);
         const auto  pin         = std::get<1>(gpio_config);
 
-        if (port == gpio::InvalidGpioPort || pin == gpio::InvalidGpioPin
-            || port >= port_flags.size() || pin >= sys::gpio::PinsPerPort) {
+        if (pin == gpio::InvalidGpioPin) {
             continue;
         }
 
-        port_flags.at(port) |= (1u << pin);
+        uint8_t portIndex = 0;
+        if (port == nv::iox::vrPort) {
+            static_assert(nv::ipc::GpioNsmEventMask.size() == sys::gpio::PortsNumber + 1,
+                          "GpioNsmEventSetup size must be equal to nv::gpio::PortsNumber");
+            portIndex = static_cast<uint8_t>(sys::gpio::PortsNumber);
+        }
+        else {
+            portIndex = static_cast<uint8_t>(port);
+        }
+
+        if (portIndex >= port_flags.size() || pin >= sys::gpio::PinsPerPort) {
+            continue;
+        }
+
+        port_flags.at(portIndex) |= (1u << pin);
     }
 
     for (size_t port = 0; port < port_flags.size(); ++port) {
         if (port_flags.at(port) != 0) {
-            Nsm::GpioEventTrigger(
-                static_cast<gpio::GpioPort>(port), port_flags.at(port), SpoofingGpio);
+            if (port == sys::gpio::PortsNumber) {
+                Nsm::GpioEventTrigger(nv::iox::vrPort, port_flags.at(port), VirtualGpio);
+            }
+            else {
+                Nsm::GpioEventTrigger(
+                    static_cast<gpio::GpioPort>(port), port_flags.at(port), SpoofingGpio);
+            }
         }
     }
 }
@@ -292,9 +312,9 @@ bool validateGpioSpoofingErrorInjectionPayload(GPIOSpoofingPayload& gpioSpoofing
         const auto  port        = std::get<0>(gpio_config);
         const auto  pin         = std::get<1>(gpio_config);
 
-        // Check if this is a valid hardware GPIO (not virtual)
-        if (port == gpio::InvalidGpioPort || pin == gpio::InvalidGpioPin) {
-            return false;
+        // Check if this is virtual port (virtual port must be a input pin)
+        if (port == nv::iox::vrPort && pin < sys::gpio::PinsPerPort) {
+            continue;
         }
 
         // Get GPIO direction using GPIO driver API
@@ -328,6 +348,22 @@ bool validateActionGpuDegradeMode(uint8_t action)
     return true;
 }
 
+bool validateDeviceIndexPowerSupply(uint8_t device_index)
+{
+    if (device_index > highDeviceIndexPowerSupply) {
+        return false;
+    }
+    return true;
+}
+
+bool validateModePowerSupply(uint8_t mode)
+{
+    if (mode != NsmDevCfgEnablingMode::Disable && mode != NsmDevCfgEnablingMode::Enable) {
+        return false;
+    }
+    return true;
+}
+
 bool validateSmaBaseboardRequest(uint8_t data_index)
 {
     for (const auto valid_index : smaBaseboardSettingsRequests) {
@@ -338,35 +374,176 @@ bool validateSmaBaseboardRequest(uint8_t data_index)
     return false;
 }
 
-Ccode set_sma_baseboard_sets_resp_wp(nv::mctp::T5SmaBaseboardSetsResponse& response)
+__attribute__((weak)) NsmStatus
+set_sma_baseboard_sets_resp_wp([[maybe_unused]] nv::mctp::T5SmaBaseboardSetsResponse& response)
 {
-    if constexpr (WriteProtectionSize > 0) {
-        uint8_t enabled = 0;
-        for (const auto& config : nv::mctp::WriteProtectionList) {
-            auto status = nv::gpio::Driver::read(config.port, config.pin, enabled);
-            if (status != nv::gpio::Status::Ok) {
-                return Ccode::ErrorGeneral;
-            }
-            // set response gpio when set/enabled
-            if (enabled) {
-                bool found = false;
-                for (const auto& funcRespBitPos : nv::mctp::smaBaseboardSetsBitResp) {
-                    if (std::get<0>(funcRespBitPos) == config.function) {
-                        found = true;
-                        nsm_msg::set_bit(response.bitarray, std::get<1>(funcRespBitPos));
-                    }
-                }
-                if (false == found) {
-                    // missing or wrong data in nv::mctp::smaBaseboardSetsBitResp
-                    return Ccode::ErrorGeneral;
-                }
-            }
+    return NsmStatus::NotSupported;
+}
+
+Ccode handle_set_program_cpld_feature_row()
+{
+    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
+        return Ccode::ErrorUnsupportedCmd;
+    }
+
+    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> expected{};
+    std::memcpy(&expected[0],
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.data(),
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size());
+    std::memcpy(&expected[Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size()],
+                Cpld_Feature_Row::EXPECTED_FEABITS.data(),
+                Cpld_Feature_Row::EXPECTED_FEABITS.size());
+
+    auto&         cpld        = nv::i2c::LatticeCpld::inst();
+    constexpr int max_retries = 3;
+
+    for (int i = 0; i < max_retries; i++) {
+        if (cpld.program_feature_row() != nv::i2c::I2cStatus::Ok) {
+            continue;
         }
+
+        std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> readback{};
+        if (cpld.read_feature_row(readback) != nv::i2c::I2cStatus::Ok) {
+            continue;
+        }
+
+        if (std::memcmp(readback.data(), expected.data(), expected.size()) == 0) {
+            return Ccode::Success;
+        }
+    }
+
+    return Ccode::ErrorGeneral;
+}
+
+Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx)
+{
+    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
+        return Ccode::ErrorUnsupportedCmd;
+    }
+
+    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> expected{};
+    std::memcpy(&expected[0],
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.data(),
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size());
+    std::memcpy(&expected[Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size()],
+                Cpld_Feature_Row::EXPECTED_FEABITS.data(),
+                Cpld_Feature_Row::EXPECTED_FEABITS.size());
+
+    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> readback{};
+
+    auto& cpld = nv::i2c::LatticeCpld::inst();
+    if (cpld.read_feature_row(readback) != nv::i2c::I2cStatus::Ok) {
+        return Ccode::ErrorGeneral;
+    }
+
+    auto& resp  = *std::bit_cast<CpldFeatureRowResponse*>(&ntx.data[0]);
+    resp.match  = (std::memcmp(readback.data(), expected.data(), expected.size()) == 0) ? 1 : 0;
+    resp.length = static_cast<uint8_t>(nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE);
+    resp.reserved[0] = 0x00;
+    resp.reserved[1] = 0x00;
+    std::memcpy(static_cast<uint8_t*>(resp.data), readback.data(), readback.size());
+    ntx.data_size = sizeof(CpldFeatureRowResponse);
+    return Ccode::Success;
+}
+
+Ccode handle_set_otp_cpld_feature_row()
+{
+    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
+        return Ccode::ErrorUnsupportedCmd;
+    }
+    auto& cpld = nv::i2c::LatticeCpld::inst();
+    if (cpld.otp_feature_row() != nv::i2c::I2cStatus::Ok) {
+        return Ccode::ErrorGeneral;
     }
     return Ccode::Success;
 }
 
+Ccode handle_get_otp_cpld_feature_row(NsmPktResp& ntx)
+{
+    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
+        return Ccode::ErrorUnsupportedCmd;
+    }
+
+    uint8_t value = 0;
+    auto&   cpld  = nv::i2c::LatticeCpld::inst();
+    if (cpld.read_otp_feature_row(value) != nv::i2c::I2cStatus::Ok) {
+        return Ccode::ErrorGeneral;
+    }
+
+    ntx.data[0]   = value;
+    ntx.data_size = sizeof(uint8_t);
+    return Ccode::Success;
+}
+
 }  // namespace nsm_type5
+
+namespace nsm_type5 {
+
+__attribute__((weak)) NsmStatus platform_apply_gpu_degrade_mode_cpld(uint8_t device_index,
+                                                                     uint8_t action)
+{
+    (void)device_index;
+    (void)action;
+    return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus platform_apply_power_supply_cpld(uint8_t device_index,
+                                                                 uint8_t mode)
+{
+    (void)device_index;
+    (void)mode;
+    return NsmStatus::NotSupported;
+}
+
+}  // namespace nsm_type5
+
+namespace {
+
+/**
+ * @brief For Set/Get/GetSupported device mode commands: locate payload (same v1/v2 split as
+ *        get_raw_data in nsm_type4_debug_token.cpp) and validate data_size against the packet.
+ * @return Span over the NSM payload on success; std::nullopt if the header or length is
+ * invalid.
+ *
+ * std::optional is used because this helper can fail validation; get_raw_data() only maps the
+ * layout and does not check data_size vs. actual packet length.
+ */
+[[nodiscard]] std::optional<std::span<const uint8_t>>
+device_mode_req_payload_view(const Packet& rx)
+{
+    if (rx.priv.packet_length < sizeof(Header)) {
+        return std::nullopt;
+    }
+    const auto after_mctp = static_cast<uint16_t>(rx.priv.packet_length - sizeof(Header));
+    auto&      nrx        = NsmPktReq::from(rx);
+
+    if (nrx.ocp_version >= 2) {
+        const auto& nrx_v2 = NsmPktReqV2::from(rx);
+        if (after_mctp < Constants::NsmHeaderRequestSizeV2) {
+            return std::nullopt;
+        }
+        const uint16_t payload_size = nrx_v2.data_size;
+        const uint16_t avail        = after_mctp - Constants::NsmHeaderRequestSizeV2;
+        if (payload_size > avail) {
+            return std::nullopt;
+        }
+        return std::span<const uint8_t>{static_cast<const uint8_t*>(nrx_v2.data),
+                                        static_cast<size_t>(payload_size)};
+    }
+
+    if (after_mctp < Constants::NsmHeaderRequestSize) {
+        return std::nullopt;
+    }
+    const uint16_t payload_size = nrx.data_size;
+    const uint16_t avail        = after_mctp - Constants::NsmHeaderRequestSize;
+    if (payload_size > avail) {
+        return std::nullopt;
+    }
+    return std::span<const uint8_t>{static_cast<const uint8_t*>(nrx.data),
+                                    static_cast<size_t>(nrx.data_size)};
+}
+
+}  // namespace
 
 bool Nsm::process_device_configuration(const Packet& rx, Packet& tx)
 {
@@ -471,24 +648,24 @@ bool Nsm::process_device_configuration(const Packet& rx, Packet& tx)
             }
             return unsupported_command();
 
-        case cmd::SetDeviceModeSettings:
+        case cmd::SetDeviceModeSettingsV2:
             if constexpr (is_cmd_set(NsmMsgType::DeviceConfiguration,
-                                     cmd::SetDeviceModeSettings)) {
+                                     cmd::SetDeviceModeSettingsV2)) {
                 on_dev_cfg_set_device_mode_settings(rx, tx);
                 break;
             }
             return unsupported_command();
 
-        case cmd::GetDeviceModeSettings:
+        case cmd::GetDeviceModeSettingsV2:
             if constexpr (is_cmd_set(NsmMsgType::DeviceConfiguration,
-                                     cmd::GetDeviceModeSettings)) {
+                                     cmd::GetDeviceModeSettingsV2)) {
                 on_dev_cfg_get_device_mode_settings(rx, tx);
                 break;
             }
             return unsupported_command();
-        case cmd::GetSupportedDeviceModes:
+        case cmd::GetSupportedDeviceModesV2:
             if constexpr (is_cmd_set(NsmMsgType::DeviceConfiguration,
-                                     cmd::GetSupportedDeviceModes)) {
+                                     cmd::GetSupportedDeviceModesV2)) {
                 on_dev_cfg_get_supported_device_modes(rx, tx);
                 break;
             }
@@ -1106,13 +1283,21 @@ void Nsm::on_dev_cfg_set_gpu_degrade_mode(const Packet& rx, Packet& tx)
         return;
     }
 
+    auto status = nsm_type5::platform_apply_gpu_degrade_mode_cpld(request.device_index,
+                                                                  request.action);
+    if (status == NsmStatus::I2cBusError) {
+        fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+        return;
+    }
+    else if (status == NsmStatus::NotSupported) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return;
+    }
+
     auto& ntx             = NsmPktResp::from(tx);
     ntx.data_size         = 0;
     ntx.completion_code   = Ccode::Success;
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
-
-    // TODO: Implement GPU Degrade Mode here
-    nv::info("%s() OK\n", __func__);
 }
 
 void Nsm::on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx)
@@ -1132,15 +1317,22 @@ void Nsm::on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx)
     }
 
     T5PowerSupplyRequest request{};
-
-    // check request data
     std::memcpy(&request.device_index, &nrx.data[0], sizeof(T5PowerSupplyRequest));
-    if (request.device_index > nsm_type5::highDeviceIndexPowerSupply) {
+
+    if (!nsm_type5::validateDeviceIndexPowerSupply(request.device_index)
+        || !nsm_type5::validateModePowerSupply(request.mode)) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
-    if (request.mode != nv::mctp::Enable && request.mode != nv::mctp::Disable) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+
+    auto status = nsm_type5::platform_apply_power_supply_cpld(request.device_index,
+                                                              request.mode);
+    if (status == NsmStatus::I2cBusError) {
+        fill_error_packet(Ccode::ErrorI2CError, rx, tx);
+        return;
+    }
+    else if (status == NsmStatus::NotSupported) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
         return;
     }
 
@@ -1148,9 +1340,6 @@ void Nsm::on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx)
     ntx.data_size         = 0;
     ntx.completion_code   = Ccode::Success;
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
-
-    // TODO: Implement Enable/Disable Power Supply here
-    nv::info("%s() OK\n", __func__);
 }
 
 void Nsm::on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx)
@@ -1183,14 +1372,15 @@ void Nsm::on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx)
     ntx.completion_code            = Ccode::Success;
 
     switch (request.data_index) {
-        case SmaBaseboardSets::WPSettings:
-            ntx.completion_code = nsm_type5::set_sma_baseboard_sets_resp_wp(response);
+        case SmaBaseboardSets::WPSettings: {
+            auto wp_status = nsm_type5::set_sma_baseboard_sets_resp_wp(response);
+            if (wp_status != NsmStatus::OK) {
+                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                return;
+            }
             break;
+        }
         default: break;
-    }
-    if (ntx.completion_code != Ccode::Success) {
-        fill_error_packet(ntx.completion_code, rx, tx);
-        return;
     }
 
     ntx.data_size         = sizeof(response);
@@ -1204,38 +1394,39 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
 
-    const auto& nrx = NsmPktReqV2::from(rx);
-    if (nrx.ocp_version != 2) {
+    const auto req_span_opt = device_mode_req_payload_view(rx);
+    if (!req_span_opt.has_value()) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
+    const std::span<const uint8_t> req_span = *req_span_opt;
 
     // Require at least the mode index (32‑bit) to be present
-    if (nrx.data_size < sizeof(uint32_t)) {
+    if (req_span.size() < sizeof(uint32_t)) {
         fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
         return;
     }
 
     uint32_t raw_mode_index = 0;
-    std::memcpy(&raw_mode_index, &nrx.data[0], sizeof(raw_mode_index));
+    std::memcpy(&raw_mode_index, req_span.data(), sizeof(raw_mode_index));
     const auto mode_index = static_cast<DeviceModeIndex>(raw_mode_index);
 
-    const auto* payload_bytes = &nrx.data[sizeof(raw_mode_index)];
-    float       ramp_rate     = 0.0f;
+    const auto payload_bytes = req_span.subspan(sizeof(raw_mode_index));
+    float      ramp_rate     = 0.0f;
 
     Ccode result = Ccode::ErrorInvalidData;
     switch (mode_index) {
         case DeviceModeIndex::MaxACPowerRampRate:
-            if (nrx.data_size != sizeof(DeviceModeIndex) + sizeof(float)) {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(float)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
             // Copy float value instead of reinterpreting pointer
-            std::memcpy(&ramp_rate, &payload_bytes[0], sizeof(ramp_rate));
+            std::memcpy(&ramp_rate, payload_bytes.data(), sizeof(ramp_rate));
             result = nsm_pwr_smoothing_handlers::handle_set_max_ac_ramp_rate(ramp_rate);
             break;
         case DeviceModeIndex::SoCPowerSmoothEnabled:
-            if (nrx.data_size != sizeof(DeviceModeIndex) + sizeof(bool)) {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(bool)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
@@ -1243,7 +1434,7 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
                 payload_bytes[0] != 0);
             break;
         case DeviceModeIndex::SoCPowerSmoothCurrentPresetIndex:
-            if (nrx.data_size != sizeof(DeviceModeIndex) + sizeof(uint8_t)) {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(uint8_t)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
@@ -1251,7 +1442,7 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
                 payload_bytes[0]);
             break;
         case DeviceModeIndex::SoCPowerBrakeEnabled:
-            if (nrx.data_size != sizeof(DeviceModeIndex) + sizeof(bool)) {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(bool)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
@@ -1259,15 +1450,27 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
                 payload_bytes[0] != 0);
             break;
         case DeviceModeIndex::SoCThermBrakeEnabled:
-            if (nrx.data_size != sizeof(DeviceModeIndex) + sizeof(bool)) {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(bool)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
             result = nsm_pwr_smoothing_handlers::handle_set_soc_therm_brake_enabled(
                 payload_bytes[0] != 0);
             break;
-        case DeviceModeIndex::NcsiMac: result = handle_set_ncsi_mac(payload_bytes); break;
-        default                      : fill_error_packet(Ccode::ErrorInvalidData, rx, tx); return;
+        case DeviceModeIndex::NcsiMac:
+            if (req_span.size() < sizeof(DeviceModeIndex) + 6) {
+                fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+                return;
+            }
+            result = handle_set_ncsi_mac(payload_bytes.data());
+            break;
+        case DeviceModeIndex::ProgramCpldFeatureRow:
+            result = nsm_type5::handle_set_program_cpld_feature_row();
+            break;
+        case DeviceModeIndex::OtpCpldFeatureRow:
+            result = nsm_type5::handle_set_otp_cpld_feature_row();
+            break;
+        default: fill_error_packet(Ccode::ErrorInvalidData, rx, tx); return;
     }
     if (result != Ccode::Success) {
         fill_error_packet(result, rx, tx);
@@ -1285,19 +1488,21 @@ void Nsm::on_dev_cfg_get_device_mode_settings(const Packet& rx, Packet& tx)
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
 
-    if (!is_input_length_valid(rx, sizeof(uint32_t))) {
+    const auto req_span_opt = device_mode_req_payload_view(rx);
+    if (!req_span_opt.has_value()) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+    const std::span<const uint8_t> req_span = *req_span_opt;
+
+    if (req_span.size() < sizeof(uint32_t)) {
         fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
         return;
     }
 
-    auto& nrx = NsmPktReqV2::from(rx);
-    if (nrx.ocp_version != 2) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-        return;
-    }
-
-    auto& device_mode_index = *std::bit_cast<uint32_t*>(&nrx.data[0]);
-    auto& ntx               = NsmPktResp::from(tx);
+    uint32_t device_mode_index = 0;
+    std::memcpy(&device_mode_index, req_span.data(), sizeof(device_mode_index));
+    auto& ntx = NsmPktResp::from(tx);
 
     Ccode result = Ccode::ErrorInvalidData;
     switch (static_cast<DeviceModeIndex>(device_mode_index)) {
@@ -1318,7 +1523,13 @@ void Nsm::on_dev_cfg_get_device_mode_settings(const Packet& rx, Packet& tx)
             result = nsm_pwr_smoothing_handlers::handle_get_soc_therm_brake_enabled(ntx);
             break;
         case DeviceModeIndex::NcsiMac: result = handle_get_ncsi_mac(ntx); break;
-        default                      : break;
+        case DeviceModeIndex::ProgramCpldFeatureRow:
+            result = nsm_type5::handle_get_program_cpld_feature_row(ntx);
+            break;
+        case DeviceModeIndex::OtpCpldFeatureRow:
+            result = nsm_type5::handle_get_otp_cpld_feature_row(ntx);
+            break;
+        default: break;
     }
 
     // Check if feature is available
@@ -1336,21 +1547,22 @@ void Nsm::on_dev_cfg_get_supported_device_modes(const Packet& rx, Packet& tx)
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
 
-    auto& nrx = NsmPktReqV2::from(rx);
-    if (nrx.ocp_version != 2) {
+    const auto req_span_opt = device_mode_req_payload_view(rx);
+    if (!req_span_opt.has_value()) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
+    const std::span<const uint8_t> req_span = *req_span_opt;
 
     // Validate request size - must contain Handle (uint32_t)
-    if (nrx.data_size < sizeof(uint32_t)) {
+    if (req_span.size() < sizeof(uint32_t)) {
         fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
         return;
     }
 
     // Parse handle from request
     uint32_t request_handle = 0;
-    std::memcpy(&request_handle, &nrx.data[0], sizeof(request_handle));
+    std::memcpy(&request_handle, req_span.data(), sizeof(request_handle));
 
     // For first request, handle must be 0
     // Since all supported modes fit in one response, we only accept handle = 0
@@ -1362,7 +1574,7 @@ void Nsm::on_dev_cfg_get_supported_device_modes(const Packet& rx, Packet& tx)
     auto& ntx = NsmPktResp::from(tx);
 
     // Delegate to handler (weak returns ErrorUnsupportedCmd, strong populates response)
-    const Ccode result = nsm_pwr_smoothing_handlers::handle_get_supported_device_modes(ntx);
+    const Ccode result = handle_get_supported_device_modes(ntx);
     if (result != Ccode::Success) {
         fill_error_packet(result, rx, tx);
         return;
@@ -1458,6 +1670,11 @@ Ccode Nsm::handle_get_ncsi_mac(NsmPktResp& ntx)
 
     ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + current_length + pending_length;
     return Ccode::Success;
+}
+
+__attribute__((weak)) Ccode handle_get_supported_device_modes([[maybe_unused]] NsmPktResp& ntx)
+{
+    return Ccode::ErrorUnsupportedCmd;  // Feature not available
 }
 
 };  // namespace nv::mctp

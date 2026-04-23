@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
@@ -541,6 +542,10 @@ TelemetryValue getThermalTelemetry(const uint8_t sensorId)
             case Type3TemperatureSensors::NvLink_Temp:
             case Type3TemperatureSensors::CPLD_Temp:
                 telemetry_value = read_i2c_temp_sensor(sensorId);
+                break;
+            case Type3TemperatureSensors::QM4_1_Temp:
+            case Type3TemperatureSensors::QM4_2_Temp:
+                telemetry_value = get_cx8_sensor_temperature(sensorId);
                 break;
             case Type3TemperatureSensors::HSCC_Temp:
             case Type3TemperatureSensors::HSCC_Temp_2: {
@@ -1346,12 +1351,12 @@ void Nsm::on_plat_env_setLeakDetectionThresholds(const Packet& rx, Packet& tx)
 
     // Check if leak detection is enabled at runtime
     if (!nv::leak_detect::LeakDetect::inst().is_enabled()) {
-        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorUnsupportedCmd, Rcode::Null, rx, tx);
         return;
     }
 
     if (nrx.ocp_version != 1) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorInvalidOcpVersion, Rcode::Null, rx, tx);
         return;
     }
 
@@ -1362,18 +1367,18 @@ void Nsm::on_plat_env_setLeakDetectionThresholds(const Packet& rx, Packet& tx)
                               + sizeof(SetLeakSensorThresholdsRequest) * num_sensors;
 
     if (!is_input_length_valid(rx, RequestSize) || nrx.data_size != RequestSize) {
-        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorInvalidLength, Rcode::Null, rx, tx);
         return;
     }
 
     if (num_sensors == 0
         || num_sensors > nv::ipc::voltage_monitor_config::LeakDetectSensorNum) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorInvalidData, Rcode::InvalidSensorNumber, rx, tx);
         return;
     }
 
     if (num_thresholds != NsmPlatEnvThresholdSize) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        fill_error_packet_v2(Ccode::ErrorInvalidData, Rcode::InvalidThresholdNumber, rx, tx);
         return;
     }
 
@@ -1381,26 +1386,52 @@ void Nsm::on_plat_env_setLeakDetectionThresholds(const Packet& rx, Packet& tx)
 
     memcpy(&leak_detection_request, &nrx.data[0], RequestSize);
 
+    // Validate all sensor IDs first to avoid partial update.
+    std::array<uint8_t, nv::ipc::voltage_monitor_config::LeakDetectSensorNum> sensor_indices{};
     for (auto i = 0U; i < static_cast<unsigned>(num_sensors); i++) {
-        // Convert sensor index to sensor ID, then back to index for API call
-        // This demonstrates the use of find_sensor_index method
-        uint8_t sensorIdx = 0;
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
         const auto& sensor = leak_detection_request.sensors[i];
+        uint8_t     sensorIdx{};
 
         if (nv::leak_detect::LeakDetect::inst().find_sensor_index(sensor.sensor_id, sensorIdx)
             != nv::volt_mon::Status::Ok) {
-            fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+            fill_error_packet_v2(Ccode::ErrorInvalidData, Rcode::InvalidSensorId, rx, tx);
             return;
         }
+        sensor_indices.at(static_cast<std::size_t>(i)) = sensorIdx;
+    }
+
+    // Apply thresholds only after all sensor IDs are validated.
+    for (auto i = 0U; i < static_cast<unsigned>(num_sensors); i++) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        const auto& sensor    = leak_detection_request.sensors[i];
+        const auto  sensorIdx = sensor_indices.at(static_cast<std::size_t>(i));
+
         leak_detect::ThresholdLeakDet config{};
         config.minLeak   = sensor.thresholds[0];
         config.maxLeak   = sensor.thresholds[1];
         config.maxNormal = sensor.thresholds[2];
 
-        if (nv::leak_detect::LeakDetect::inst().set_thresholds(sensorIdx, config)
-            != nv::volt_mon::Status::Ok) {
-            fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+        Ccode ccode  = Ccode::Success;
+        Rcode rcode  = Rcode::Null;
+        auto  status = nv::leak_detect::LeakDetect::inst().set_thresholds(sensorIdx, config);
+        switch (status) {
+            case nv::volt_mon::Status::Ok: break;
+            case nv::volt_mon::Status::InvalidSensorId:
+                ccode = Ccode::ErrorInvalidData;
+                rcode = Rcode::InvalidSensorId;
+                break;
+            case nv::volt_mon::Status::InvalidThreshold:
+                ccode = Ccode::ErrorInvalidData;
+                rcode = Rcode::InvalidThreshold;
+                break;
+            default:
+                ccode = Ccode::ErrorGeneral;
+                rcode = Rcode::Null;
+                break;
+        }
+        if (ccode != Ccode::Success) {
+            fill_error_packet_v2(ccode, rcode, rx, tx);
             return;
         }
     }
@@ -1410,11 +1441,8 @@ void Nsm::on_plat_env_setLeakDetectionThresholds(const Packet& rx, Packet& tx)
     std::array<nv::volt_mon::LeakDetectSensor,
                nv::ipc::voltage_monitor_config::LeakDetectSensorNum>
         sensor_info{};
-    if (nv::leak_detect::LeakDetect::inst().get_sensor_info(sensor_info)
-        != nv::volt_mon::Status::Ok) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
+
+    nv::leak_detect::LeakDetect::inst().get_sensor_info(sensor_info);
 
     auto& ntx             = NsmPktResp::from(tx);
     ntx.data_size         = 0;

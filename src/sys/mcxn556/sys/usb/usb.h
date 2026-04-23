@@ -19,9 +19,18 @@
 #include <array>
 #include <cstdint>
 
+#include "usb_config_wrapper.h"
 #include "usb_device_config.h"
-#include "usb_device.h"
-#include "usb_device_class.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <usb.h>               // usb_status_t, usb_device_handle
+#include <usb_device.h>        // usb_device_callback_t (required by usb_device_class.h)
+#include <usb_device_class.h>  // class_handle_t
+#ifdef __cplusplus
+}
+#endif
 
 namespace sys::usb {
 
@@ -65,6 +74,7 @@ public:
     usb_status_t   enable_spi_rx();
     void           recover_spi_endpoint();
     bool           check_vbus();
+    static bool    is_device_connected();
 
     static usb_status_t
     usb_devicemctpcallback(class_handle_t handle, uint32_t event, void* param);
@@ -91,6 +101,18 @@ public:
 
     // Check if VCOM is ready
     static bool is_vcom_ready();
+
+    // VCOM RX callback: returns 0 on success
+    using VcomRxCallback = uint8_t (*)(uint8_t* data, uint32_t length);
+
+    // Register VCOM RX callback
+    static void set_vcom_rx_callback(VcomRxCallback callback);
+
+    // VCOM close callback (DTR low)
+    using VcomCloseCallback = void (*)();
+
+    // Register VCOM close callback
+    static void set_vcom_close_callback(VcomCloseCallback callback);
 
 #endif
 

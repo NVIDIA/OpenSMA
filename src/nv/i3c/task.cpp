@@ -1004,7 +1004,7 @@ bool Task::to_i2c(ipchandler::Id    src_id,
                   ipc::Queue::Item& item)
 {
     // Validate lengths against buffer limits
-    if (write_length > nv::i2c::I2cBufferSize || read_length > nv::i2c::I2cBufferSize) {
+    if (write_length > nv::i2c::I2cBufferSize || read_length > nv::i2c::I2cHidSmbBufferSize) {
         return false;
     }
 

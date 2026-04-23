@@ -194,21 +194,39 @@ I2cStatus LatticeCpld::read_id()
     return (device_id != 0) ? I2cStatus::Ok : I2cStatus::Error;
 }
 
-I2cStatus LatticeCpld::enter_transparent_mode()
+bool LatticeCpld::is_cpld_booted()
+{
+    constexpr int     max_retries = 3;
+    constexpr uint8_t reg_addr    = Cpld_User_Reg::FW_MAJOR_VERSION_ADDR;
+
+    for (int i = 0; i < max_retries; i++) {
+        uint8_t value  = 0;
+        auto    status = read_register_table(reg_addr, value);
+        if (status == I2cStatus::Ok) {
+            return true;
+        }
+    }
+    return false;
+}
+
+I2cStatus LatticeCpld::isc_enable()
 {
     if constexpr (enable_cpld_uart_log) {
-        nv::info("enter_transparent_mode\n");
+        nv::info("isc_enable\n");
     }
-    std::array<uint8_t, 3> cmd = {LatticeCmd::ENABLE_CONFIG_INTERFACE,
-                                  LatticeOperand::ENABLE_CONFIG_OP1,
-                                  LatticeOperand::ENABLE_CONFIG_OP2};
+
+    const uint8_t op_code = is_cpld_booted() ? LatticeCmd::ENABLE_TRANSPARENT_CONFIG_INTERFACE
+                                             : LatticeCmd::ENABLE_OFFLINE_CONFIG_INTERFACE;
+
+    std::array<uint8_t, 3> cmd = {
+        op_code, LatticeOperand::ENABLE_CONFIG_OP1, LatticeOperand::ENABLE_CONFIG_OP2};
     return cpld_write_wait(cmd, false);
 }
 
-I2cStatus LatticeCpld::exit_transparent_mode()
+I2cStatus LatticeCpld::isc_disable()
 {
     if constexpr (enable_cpld_uart_log) {
-        nv::info("exit_transparent_mode\n");
+        nv::info("isc_disable\n");
     }
     std::array<uint8_t, 3> cmd = {LatticeCmd::DISABLE_CONFIG_INTERFACE,
                                   LatticeOperand::DISABLE_CONFIG_OP1,
@@ -486,7 +504,7 @@ I2cStatus LatticeCpld::update_complete()
         return status;
     }
 
-    status = exit_transparent_mode();
+    status = isc_disable();
     if (status != I2cStatus::Ok) {
         return status;
     }
@@ -779,7 +797,7 @@ I2cStatus LatticeCpld::write_debug_bit(uint8_t value)
 I2cStatus LatticeCpld::write_register_table(uint8_t reg_addr, uint8_t value)
 {
     // Format: [register_address, data_byte]
-    std::array<uint8_t, 2> write_buf = {reg_addr, value};
+    std::array<uint8_t, 3> write_buf = {reg_addr, LatticeOperand::OP_ZERO, value};
 
     const I2cStatus status = cpld_write(write_buf, true);
     if (status != I2cStatus::Ok) {
@@ -830,4 +848,141 @@ I2cStatus LatticeCpld::dump_cpld_registers(std::span<uint8_t> buf)
     }
 
     return I2cStatus::Ok;
+}
+
+I2cStatus LatticeCpld::program_feature_row()
+{
+    // Enter ISC transparent mode
+    if (auto ret = isc_enable(); ret != I2cStatus::Ok) {
+        return ret;
+    }
+
+    // Erase feature row and feabits: 0x0E 0x02 0x00 0x00
+    std::array<uint8_t, 4> erase_cmd = {LatticeCmd::ERASE_FLASH,
+                                        LatticeOperand::ERASE_FEATURE_ROW_OP1,
+                                        LatticeOperand::ERASE_FEATURE_ROW_OP2,
+                                        LatticeOperand::ERASE_FEATURE_ROW_OP3};
+    if (auto ret = cpld_write_wait(erase_cmd, false); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Program feabits: 0xF8 0x00 0x00 0x00 + feabits data
+    std::array<uint8_t, 4 + Cpld_Feature_Row::EXPECTED_FEABITS.size()> feabits_cmd = {};
+    feabits_cmd[0] = LatticeCmd::PROGRAM_FEABITS;
+    feabits_cmd[1] = LatticeOperand::OP_ZERO;
+    feabits_cmd[2] = LatticeOperand::OP_ZERO;
+    feabits_cmd[3] = LatticeOperand::OP_ZERO;
+    std::memcpy(&feabits_cmd[4],
+                Cpld_Feature_Row::EXPECTED_FEABITS.data(),
+                Cpld_Feature_Row::EXPECTED_FEABITS.size());
+    if (auto ret = cpld_write_wait(feabits_cmd, false); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Program feature row: 0xE4 0x00 0x00 0x00 + feature row data
+    std::array<uint8_t, 4 + Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size()> feature_cmd = {};
+    feature_cmd[0] = LatticeCmd::PROGRAM_FEATURE_ROW;
+    feature_cmd[1] = LatticeOperand::OP_ZERO;
+    feature_cmd[2] = LatticeOperand::OP_ZERO;
+    feature_cmd[3] = LatticeOperand::OP_ZERO;
+    std::memcpy(&feature_cmd[4],
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.data(),
+                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size());
+    if (auto ret = cpld_write_wait(feature_cmd, false); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Exit ISC mode
+    return isc_disable();
+}
+
+I2cStatus LatticeCpld::read_feature_row(std::span<uint8_t> buf)
+{
+    if (buf.size() < LATTICE_CPLD_FEATURE_ROW_SIZE) {
+        return I2cStatus::Error;
+    }
+
+    // Enter ISC mode
+    if (auto ret = isc_enable(); ret != I2cStatus::Ok) {
+        return ret;
+    }
+
+    // Read feature row: 0xE7 0x00 0x00 0x00 -> 8 bytes
+    std::array<uint8_t, 4>   feature_cmd = {LatticeCmd::READ_FEATURE_ROW,
+                                            LatticeOperand::OP_ZERO,
+                                            LatticeOperand::OP_ZERO,
+                                            LatticeOperand::OP_ZERO};
+    const std::span<uint8_t> feature_buf = buf.subspan(0, 8);
+    if (auto ret = cpld_write_read(feature_cmd, feature_buf); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Read feabits: 0xFB 0x00 0x00 0x00 -> 2 bytes
+    std::array<uint8_t, 4>   feabits_cmd = {LatticeCmd::READ_FEABITS,
+                                            LatticeOperand::OP_ZERO,
+                                            LatticeOperand::OP_ZERO,
+                                            LatticeOperand::OP_ZERO};
+    const std::span<uint8_t> feabits_buf = buf.subspan(8, 2);
+    if (auto ret = cpld_write_read(feabits_cmd, feabits_buf); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Exit ISC mode
+    return isc_disable();
+}
+
+I2cStatus LatticeCpld::otp_feature_row()
+{
+    // Enter ISC mode
+    if (auto ret = isc_enable(); ret != I2cStatus::Ok) {
+        return ret;
+    }
+
+    // Program OTP: 0xF9 0x00 0x00 0x00 0x22
+    std::array<uint8_t, 5> otp_cmd = {LatticeCmd::PROGRAM_OTP,
+                                      LatticeOperand::OP_ZERO,
+                                      LatticeOperand::OP_ZERO,
+                                      LatticeOperand::OP_ZERO,
+                                      LatticeOperand::OTP_OP1};
+    if (auto ret = cpld_write_wait(otp_cmd, false); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    // Exit ISC mode
+    return isc_disable();
+}
+
+I2cStatus LatticeCpld::read_otp_feature_row(uint8_t& result)
+{
+    // Enter ISC mode
+    if (auto ret = isc_enable(); ret != I2cStatus::Ok) {
+        return ret;
+    }
+
+    // Read OTP: 0xFA 0x00 0x00 0x00 -> 1 byte
+    std::array<uint8_t, 4> otp_cmd = {LatticeCmd::READ_OTP,
+                                      LatticeOperand::OP_ZERO,
+                                      LatticeOperand::OP_ZERO,
+                                      LatticeOperand::OP_ZERO};
+    std::array<uint8_t, 1> buf     = {};
+    if (auto ret = cpld_write_read(otp_cmd, buf); ret != I2cStatus::Ok) {
+        isc_disable();
+        return ret;
+    }
+
+    result = (buf[0] == LatticeOperand::OTP_OP1) ? 1 : 0;
+
+    // Exit ISC mode
+    return isc_disable();
+}
+
+__attribute__((weak)) void LatticeCpld::trigger_vgpio_event()
+{
+    return;
 }

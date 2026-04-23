@@ -33,21 +33,21 @@
 namespace nv::lstp {
 
 /** @brief (port, pin) -> lstp_idx. LstpGpioNum = not LSTP. */
-constexpr auto BuildLstpGpioIdxLookup()
+constexpr auto BuildLstpGpioIdxMap()
 {
     std::array<std::array<uint16_t, sys::gpio::PinsPerPort>, sys::gpio::PortsNumber> result{};
     for (auto& row : result) {
         row.fill(LstpGpioNum);
     }
     for (size_t i = 0; i < LstpGpioNum; ++i) {
-        const auto [port, pin] = nv::ipc::GpioSetup.at(LstpGpioMap.at(i));
-        if (port < sys::gpio::PortsNumber && pin < sys::gpio::PinsPerPort) {
-            result[port][pin] = static_cast<uint16_t>(i);
+        const auto& pin_info = PinConfigs.at(i);
+        if (pin_info.port < sys::gpio::PortsNumber && pin_info.pin < sys::gpio::PinsPerPort) {
+            result[pin_info.port][pin_info.pin] = static_cast<uint16_t>(i);
         }
     }
     return result;
 }
-constexpr inline auto LstpGpioIdxLookup = BuildLstpGpioIdxLookup();
+constexpr inline auto LstpGpioIdxMap = BuildLstpGpioIdxMap();
 
 /**
  * @brief LSTP GPIO task: event-driven loop for GPIO channel requests.
@@ -93,7 +93,10 @@ public:
      */
     static void submit_gpio_irq(GpioIndex gpio_idx);
 
-    void LstpGpioInit();
+    /** @brief Initializes LSTP GPIO configuration.
+     * Should not be called if pins are handled/init by a different task
+     */
+    static void LstpGpioInit();
 
 private:
     /** @brief Processes request from _req_pkt, fills _resp_payload, and sends
@@ -103,12 +106,15 @@ private:
     /** @brief Drain IRQ buffer, send each event via LstpRouter::send_gpio_irq_event. */
     void process_gpio_irq();
 
-    static constexpr nv::ipc::Event::Bits GpioReqBit = 1U; /* bit of Lstp */
-    static constexpr nv::ipc::Event::Bits GpioIrqBit = 2U; /* bit of Lstp */
+    static constexpr nv::ipc::Event::Bits GpioReqBit = 1U << 0; /* bit of Lstp */
+    static constexpr nv::ipc::Event::Bits GpioIrqBit = 1U << 1; /* bit of Lstp */
 
     nv::ipc::BootedEventBits _boot_event;
 
-    std::array<LstpGpioIrqConfig, LstpGpioNum> _irq_states{};
+    /** Note: best practice is to have LSTP GPIO IRQ pins disabled by default - they
+     * should be enabled later by the host, after enumeration
+     */
+    std::array<LstpGpioIrqConfig, LstpGpioNum> _irq_config{};
 };
 
 }  // namespace nv::lstp

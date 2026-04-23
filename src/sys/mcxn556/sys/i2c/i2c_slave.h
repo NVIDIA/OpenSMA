@@ -26,6 +26,7 @@
 #include "nv/i2c/port.h"
 #include "nv/logger/log.h"
 #include "nv/nv.h"
+#include "sys/i2c/utils.h"
 
 #include NV_IPC_CONFIG_H
 
@@ -142,12 +143,42 @@ public:
         }
     }
 
+    void peripheral_recovery()
+    {
+        nv::logger::info(nv::logger::Event::I2CSlaveRecovery,
+                         {static_cast<uint8_t>(_task_state),
+                          static_cast<uint8_t>(nv::common::to_underlying(_i2c_bus) & 0xFFU),
+                          static_cast<uint8_t>(_handle.isBusy ? 1 : 0),
+                          static_cast<uint8_t>(_handle.transferredCount & 0xFFU),
+                          static_cast<uint8_t>(_handle.transfer.event & 0xFFU),
+                          static_cast<uint8_t>(_handle.transfer.receivedAddress & 0xFFU),
+                          static_cast<uint8_t>(_handle.transfer.completionStatus & 0xFFU)});
+
+        // Abort current transfer and disable slave
+        LPI2C_SlaveTransferAbort(_base_addr, &_handle);
+        LPI2C_SlaveEnable(_base_addr, false);
+
+        // Retrive slave configuration from registers, reset, and re-init slave
+        lpi2c_slave_config_t slave_config{};
+        uint32_t peripheral_clk_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(_base_addr));
+        if (peripheral_clk_hz == 0) {
+            nv::error("fail to get clock frequency\n");
+            peripheral_clk_hz = 25000000UL;
+        }
+        slave_config_fill_from_registers(_base_addr, peripheral_clk_hz, slave_config);
+        LPI2C_SlaveInit(_base_addr, &slave_config, peripheral_clk_hz);
+        _task_state = Init;
+
+        // Restart slave and state machine
+        start();
+    }
+
 private:
     // Internal Constants
     // ---------------------------------------------
 
     // Internal - Used for tracking the state of the driver in callbacks
-    enum DriverState
+    enum DriverState : uint8_t
     {
         Init,
         Idle,

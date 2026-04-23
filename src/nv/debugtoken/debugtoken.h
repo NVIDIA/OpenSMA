@@ -57,9 +57,6 @@ enum Constants
 // Log throttling configuration to prevent SPI flash wear out
 constexpr uint32_t MaxLogFailures = 10;  // Maximum consecutive failure logs before throttling
 
-// Use SPI offset from sys flash config
-constexpr auto SpiOffset = sys::flash::config::DebugTokenSpiOffset;
-
 /// Type of token.
 enum class Type : uint32_t
 {
@@ -152,14 +149,16 @@ constexpr uint8_t DebugTokenSubtypeNone   = 0x00;  // No specific subtype
 constexpr uint8_t DebugTokenSubtypeMcuFw  = 0x01;  // MCU firmware debug
 constexpr uint8_t DebugTokenSubtypeCpldFw = 0x02;  // CPLD firmware debug
 
+// Subtypes for MCU debug capability (0x02) token type
+constexpr uint8_t DebugTokenSubtypePwrFailI2cDebug = 0x02;  // pwr_fail_i2c_debug
+
 // Subtypes for CpldDebug (0x04) token type
 constexpr uint8_t DebugTokenSubtypeCpldUnlockEn = 0x01;  // CPLD unlock enable
 
 // Valid subtypes bitmask for each token type
 constexpr uint32_t DebugTokenSubtypeValidMaskDebugFw = DebugTokenSubtypeMcuFw
                                                      | DebugTokenSubtypeCpldFw;
-constexpr uint32_t DebugTokenSubtypeValidMaskMcuDebug = 0;  // No subtypes defined yet for MCU
-                                                            // debug
+constexpr uint32_t DebugTokenSubtypeValidMaskMcuDebug  = DebugTokenSubtypePwrFailI2cDebug;
 constexpr uint32_t DebugTokenSubtypeValidMaskCpldDebug = DebugTokenSubtypeCpldUnlockEn;
 
 constexpr uint32_t get_subtype_valid_mask(uint32_t token_type)
@@ -444,6 +443,14 @@ struct [[gnu::packed]] TokenMain
 };
 
 /**
+ *  Get the remapped flash address for debug token based on the current boot slot.
+ *  Handles dual-slot boot by applying flash address remapping via get_flash_address().
+ *
+ *  @return Remapped flash address for the debug token region.
+ */
+nv::flash::Address get_token_flash_address();
+
+/**
  *  TLV version: This function will read the first word in SPI flash at token offset
  *  and compare it against MagicNum to detect presence of valid token.
  *
@@ -500,6 +507,14 @@ TokenErrorCode check_debug_token_type_enabled(Type token_type);
  *  @return TokenErrorCode for standardized error reporting
  */
 TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token_subtype);
+
+/**
+ *  Fast path: true if token type and subtype bits are set in NPDS cache (no full auth).
+ *
+ *  @param[in] token_type       Debug token type (FlashDebugFw / McuDebug / CpldDebug)
+ *  @param[in] token_subtype_bit Single subtype bit, e.g. DebugTokenSubtypePwrFailI2cDebug
+ */
+bool is_debug_token_subtype_enabled_cached(Type token_type, uint32_t token_subtype_bit);
 
 /**
  *  TLV version: This function installs debug token to spi flash upon reciept as mctp vdm

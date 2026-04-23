@@ -44,6 +44,7 @@ MEMORY
   m_FMC                 (RW)  : ORIGIN = 0x30000000, LENGTH = 0x00002300 // 8960
   m_MailBox             (RW)  : ORIGIN = 0x30002300, LENGTH = 0x00000100 // 256
   m_data                (RW)  : ORIGIN = 0x30002400, LENGTH = 0x0005DC00
+  m_diag                (RWX) : ORIGIN = 0x30060000, LENGTH = 0x00004000 // 16KB for diag tests
   m_sramx               (RW)  : ORIGIN = 0x14000000, LENGTH = 0x00018000
 }
 
@@ -260,25 +261,27 @@ SECTIONS
     *(.bss*)
     *(COMMON)
     . = ALIGN(32);
-    *(stack*);
-    *(task_data*);
+    EXCLUDE_FILE (*nv/diag/task.cpp.o) *(stack*);
+    EXCLUDE_FILE (*nv/diag/task.cpp.o) *(task_data*);
 
     . = ALIGN(0x1000);           /* Align to 4KB */
     __shared_memory_start__ = .;
     *(.c2c_memory_data)
     . = ALIGN(0x1000);           /* Align to 4KB */
     __shared_memory_end__ = .;
-    
+
     __bss_end__ = .;
     __END_BSS = .;
   } > m_data
 
- /* Uninitialized data section */
+ /* Diag task stack/data in SRAMX to reduce m_data pressure */
   .bss_2 (NOLOAD):
   {
-    /* This is used by the startup in order to initialize the .bss section */
     . = ALIGN(32);
     __bss_start_2__ = .;
+    *nv/diag/task.cpp.o(stack*);
+    *nv/diag/task.cpp.o(task_data*);
+    . = ALIGN(32);
     __bss_end_2__ = .;
     __END_BSS_2 = .;
   } > m_sramx
@@ -291,6 +294,14 @@ SECTIONS
     PROVIDE (__gcov_info_end = .);
   } > m_data
 #endif
+
+  /* Diagnostic test function RAM area */
+  .diag_ram (NOLOAD) :
+  {
+    . = ALIGN(4);
+    __diag_ram_start = .;
+    . = . + LENGTH(m_diag);
+  } > m_diag
 
   .heap :
   {
@@ -323,6 +334,7 @@ SECTIONS
 
   PROVIDE(__max_fw_size = LENGTH(m_text));
   PROVIDE(__max_ram_size = LENGTH(m_FMC) + LENGTH(m_data));
+  PROVIDE(__diag_ram_length = LENGTH(m_diag));
 
   ASSERT(__StackLimit >= __HeapLimit, "region m_data overflowed with stack and heap")
 }

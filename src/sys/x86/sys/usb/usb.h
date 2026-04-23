@@ -44,15 +44,22 @@ public:
     bool    enable_hid_rx();
     bool    check_vbus();
 
-    uint8_t write_spi(uint8_t* data, uint32_t length);
-    bool    enable_spi_rx();
-    void    recover_spi_endpoint();
+    uint8_t     write_spi(uint8_t* data, uint32_t length);
+    bool        enable_spi_rx();
+    void        recover_spi_endpoint();
+    static bool is_device_connected();
 
     // VCOM (UART bridge) stubs
     static void  vcom_rearm_rx(void* handle, uint8_t* buffer);
     static bool  vcom_send(void* handle, uint8_t* data, uint32_t length);
     static void* get_vcom_handle();
     static bool  is_vcom_ready();
+
+    // VCOM callback registration stubs
+    using VcomRxCallback    = uint8_t (*)(uint8_t*, uint32_t);
+    using VcomCloseCallback = void (*)();
+    static void set_vcom_rx_callback(VcomRxCallback /*callback*/) {}
+    static void set_vcom_close_callback(VcomCloseCallback /*callback*/) {}
 
 private:
 };

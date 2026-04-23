@@ -95,6 +95,8 @@ public:
 private:
     static constexpr uint32_t SPI_FREQ_18_75MHZ = 0x011E1A30;
 
+    void deassert_all_cs();
+
     uint8_t  _cs0_port_id{0};
     uint8_t  _cs0_pin_id{0};
     uint8_t  _cs1_port_id{0};

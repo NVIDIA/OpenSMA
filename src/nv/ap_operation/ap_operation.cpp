@@ -22,17 +22,15 @@ ApOperationErrorCode read_metadata_from_ap([[maybe_unused]] const uint32_t     s
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld   = i2c::LatticeCpld::inst();
-        auto  status = cpld.read_ufm(
-            data.data(), static_cast<uint32_t>(data.size()), start_address);
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto& cpld  = i2c::LatticeCpld::inst();
+    auto status = cpld.read_ufm(data.data(), static_cast<uint32_t>(data.size()), start_address);
 
-        return ApOperationErrorCode::Success;
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode read_image_from_ap([[maybe_unused]] const uint32_t     start_address,
@@ -41,18 +39,17 @@ ApOperationErrorCode read_image_from_ap([[maybe_unused]] const uint32_t     star
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld = i2c::LatticeCpld::inst();
 
-        auto status = cpld.read_offset(
-            data.data(), start_address, static_cast<uint32_t>(data.size()));
+    auto& cpld = i2c::LatticeCpld::inst();
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto status = cpld.read_offset(
+        data.data(), start_address, static_cast<uint32_t>(data.size()));
 
-        return ApOperationErrorCode::Success;
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode write_metadata_to_ap([[maybe_unused]] const uint32_t start_address,
@@ -61,18 +58,17 @@ ApOperationErrorCode write_metadata_to_ap([[maybe_unused]] const uint32_t start_
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld = i2c::LatticeCpld::inst();
-        // write ufm from start_address
-        auto status = cpld.write_ufm(
-            data.data(), static_cast<uint32_t>(data.size()), start_address, false);
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto& cpld = i2c::LatticeCpld::inst();
+    // write ufm from start_address
+    auto status = cpld.write_ufm(
+        data.data(), static_cast<uint32_t>(data.size()), start_address, false);
 
-        return ApOperationErrorCode::Success;
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode write_image_to_ap([[maybe_unused]] const uint32_t start_address,
@@ -81,17 +77,16 @@ ApOperationErrorCode write_image_to_ap([[maybe_unused]] const uint32_t start_add
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld   = i2c::LatticeCpld::inst();
-        auto  status = cpld.write_offset(
-            data.data(), start_address, static_cast<uint32_t>(data.size()));
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto& cpld   = i2c::LatticeCpld::inst();
+    auto  status = cpld.write_offset(
+        data.data(), start_address, static_cast<uint32_t>(data.size()));
 
-        return ApOperationErrorCode::Success;
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode read_data_from_ap([[maybe_unused]] const uint32_t     start_address,
@@ -100,17 +95,16 @@ ApOperationErrorCode read_data_from_ap([[maybe_unused]] const uint32_t     start
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        const size_t size_metadata = sizeof(fw_parser::ap::ApFwMetadata);
 
-        // metadata
-        if (start_address < size_metadata) {
-            return read_metadata_from_ap(start_address, data);
-        }
-        // image
-        else {
-            return read_image_from_ap(start_address - size_metadata, data);
-        }
+    const size_t size_metadata = sizeof(fw_parser::ap::ApFwMetadata);
+
+    // metadata
+    if (start_address < size_metadata) {
+        return read_metadata_from_ap(start_address, data);
+    }
+    // image
+    else {
+        return read_image_from_ap(start_address - size_metadata, data);
     }
 }
 
@@ -134,17 +128,15 @@ ApOperationErrorCode secure_boot_ap_fw_authenticate_prepare()
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld = i2c::LatticeCpld::inst();
 
-        auto status = cpld.enter_transparent_mode();
+    auto& cpld   = i2c::LatticeCpld::inst();
+    auto  status = cpld.isc_enable();
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
-
-        return ApOperationErrorCode::Success;
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode secure_boot_ap_fw_authenticate_callback(
@@ -153,28 +145,35 @@ ApOperationErrorCode secure_boot_ap_fw_authenticate_callback(
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        nv::info("CPLD FW Auth Status at cold boot: %d\n", ap_auth_result);
 
-        auto& cpld = i2c::LatticeCpld::inst();
+    nv::info("CPLD FW Auth Status at cold boot: %d\n", ap_auth_result);
 
-        auto status = cpld.exit_transparent_mode();
+    auto& cpld = i2c::LatticeCpld::inst();
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto status = cpld.isc_disable();
 
-        if constexpr (CPLD_ProgramN_Pin_Enabled) {
-            if (ap_auth_result == nv::spdm::crypto::CryptoStatus::Success) {
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
+    }
+
+    if constexpr (CPLD_ProgramN_Pin_Enabled) {
+        if (ap_auth_result == nv::spdm::crypto::CryptoStatus::Success) {
+            if (!cpld.is_cpld_booted()) {
+                // CPLD auth pass and not booted, release from reset
                 clear_cpld_program_pin();
             }
+            // otherwise leave program pin in HighZ to preserve latch
         }
-
-        // Sync debug token status after AP FW is ready
-        nv::debugtoken::sync_cpld_debug_token_on_boot();
-
-        return ApOperationErrorCode::Success;
+        else {
+            // CPLD auth fail, notify host
+            cpld.trigger_vgpio_event();
+        }
     }
+
+    // Sync debug token status after AP FW is ready
+    nv::debugtoken::sync_cpld_debug_token_on_boot();
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode pldm_update_ap_fw_prepare()
@@ -182,21 +181,20 @@ ApOperationErrorCode pldm_update_ap_fw_prepare()
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld = i2c::LatticeCpld::inst();
 
-        auto status = cpld.enter_transparent_mode();
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto& cpld = i2c::LatticeCpld::inst();
 
-        status = cpld.erase();
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
-
-        return ApOperationErrorCode::Success;
+    auto status = cpld.isc_enable();
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
     }
+
+    status = cpld.erase();
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
+    }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode
@@ -205,16 +203,20 @@ pldm_update_ap_fw_callback([[maybe_unused]] const nv::spdm::crypto::CryptoStatus
     if constexpr (!i2c::LatticeCpld::is_enabled()) {
         return ApOperationErrorCode::NotSupported;
     }
-    else {
-        auto& cpld   = i2c::LatticeCpld::inst();
-        auto  status = cpld.update_complete();
 
-        if (status != i2c::I2cStatus::Ok) {
-            return ApOperationErrorCode::Fail;
-        }
+    auto& cpld = i2c::LatticeCpld::inst();
 
-        return ApOperationErrorCode::Success;
+    if (ap_auth_result != nv::spdm::crypto::CryptoStatus::Success) {
+        cpld.trigger_vgpio_event();
     }
+
+    auto status = cpld.update_complete();
+
+    if (status != i2c::I2cStatus::Ok) {
+        return ApOperationErrorCode::Fail;
+    }
+
+    return ApOperationErrorCode::Success;
 }
 
 ApOperationErrorCode modify_cpld_debug_status([[maybe_unused]] bool unlock)

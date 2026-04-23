@@ -85,7 +85,7 @@ package Pdk.Pldm.Fwupdate is
 
    PLDMFW_FD_TIMEOUT_T1     : constant := 60_000; --  60 secs
    PLDMFW_FD_TIMEOUT_T2     : constant := 5_000;  --  5 secs
-   PLDMFW_FD_TIMEOUT_VERIFY : constant := 30_000; --  30 secs
+   PLDMFW_FD_TIMEOUT_VERIFY : constant := 55_000; --  55 secs
 
    PLDMFW_TIMEING_PN1    : constant := 3; --  retry 3 times
    PLDMFW_TIMEING_PT2    : constant := 4_800; --  4.8 secs

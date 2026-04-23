@@ -695,6 +695,67 @@ Status Flash::init_on_fault()
     return Driver::init_on_fault();
 }
 
+Status Flash::read_enf_cnsa(uint32_t& enf_cnsa, nv::ipc::Queue::Usecs timeout)
+{
+    constexpr uint32_t FuseSecureBootCfgIdx    = 6u;
+    constexpr uint32_t EnfCnsaShift            = 8u;
+    constexpr uint32_t EnfCnsaMask             = 0x3u << EnfCnsaShift;
+    constexpr uint32_t SecureBootCfgCmpaOffset = 0x50u;
+
+    uint32_t            sec_boot_cfg = 0;
+    const Request       EfuseReq     = {.header  = RequestHeader(RequestType::EfuseRead),
+                                        .address = FuseSecureBootCfgIdx,
+                                        .length  = sizeof(sec_boot_cfg)};
+    nv::flash::Response response{};
+    auto                status = Task::request(EfuseReq, response, timeout);
+    if (status == Status::Ok) {
+        sec_boot_cfg = *std::bit_cast<uint32_t*>(response.buffer.data());
+    }
+
+    if (status != Status::Ok && log_status_error(status)) {
+        nv::logger::error_no_wait(
+            nv::logger::Event::FlashReqError,
+            nv::logger::data_from_two_u32(static_cast<uint32_t>(EfuseReq.header.type),
+                                          static_cast<uint32_t>(status)),
+            nv::logger::OutputDirection::Both,
+            0s);
+    }
+
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    enf_cnsa = (sec_boot_cfg & EnfCnsaMask) >> EnfCnsaShift;
+    if (enf_cnsa != 0) {
+        return Status::Ok;
+    }
+
+    const Request CmpaReq = {.header = RequestHeader(RequestType::CmpaRead),
+                             .offset = SecureBootCfgCmpaOffset,
+                             .length = sizeof(sec_boot_cfg)};
+    response              = {};
+    status                = Task::request(CmpaReq, response, timeout);
+    if (status == Status::Ok) {
+        sec_boot_cfg = *std::bit_cast<uint32_t*>(response.buffer.data());
+    }
+
+    if (status != Status::Ok && log_status_error(status)) {
+        nv::logger::error_no_wait(
+            nv::logger::Event::FlashReqError,
+            nv::logger::data_from_two_u32(static_cast<uint32_t>(CmpaReq.header.type),
+                                          static_cast<uint32_t>(status)),
+            nv::logger::OutputDirection::Both,
+            0s);
+    }
+
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    enf_cnsa = (sec_boot_cfg & EnfCnsaMask) >> EnfCnsaShift;
+    return Status::Ok;
+}
+
 // Customer data may be programmed before jump to application
 // Disable this API to avoid unintentional use
 #if 0

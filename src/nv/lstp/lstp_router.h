@@ -114,10 +114,11 @@ public:
 
     /**
      * @brief Send GPIO IRQ event to the host
+     * @param ch_id The channel ID
      * @param gpio_index The GPIO index that triggered the interrupt
      * @param value The current GPIO value
      */
-    static void send_gpio_irq_event(uint16_t gpio_index, uint8_t value);
+    static void send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t value);
 
     /**
      * @brief Callback from I2C task with response to be sent to the USB task. (Should be called

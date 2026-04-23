@@ -87,7 +87,7 @@ TEST_F(eepromtest, test_eeprom_constructor)
     ensure::is_eq(ahs_memory.at(ahs::VENDOR_ID_2), 0x00);
     ensure::is_eq(ahs_memory.at(ahs::CHANNEL_BUS_SIZE), ahs::CHANNEL_BUS_SIZE_X4);
     ensure::is_eq(ahs_memory.at(ahs::NUM_OF_PARTITIONS), ahs::NUM_OF_PARTITIONS_1);
-    ensure::is_eq(ahs_memory.at(ahs::MAPPING_VERSION_TYPE), ahs::MAPPING_VERSION_TYPE_SURPRISE_WITH_POWER);
+    ensure::is_eq(ahs_memory.at(ahs::MAPPING_VERSION_TYPE), ahs::MAPPING_VERSION_TYPE_PRESENT_MIRROR);
     ensure::is_eq(ahs_memory.at(ahs::INTERRUPT_INFO_IO_EXPANDER), ahs::INTERRUPT_INFO_IO_EXPANDER_DISABLED);
     ensure::is_eq(ahs_memory.at(ahs::INTERRUPT_INFO_IO_EXPANDER_I2C_ADDRESS), ahs::INTERRUPT_INFO_IO_EXPANDER_DISABLED);
     ensure::is_eq(ahs_memory.at(ahs::IO_EXPANDER_0_CONFIGURATION), ahs::IO_EXPANDER_TWO_SSD);
@@ -108,7 +108,7 @@ TEST_F(eepromtest, test_eeprom_constructor)
     ensure::is_eq(ahs_memory2.at(ahs::VENDOR_ID_2), 0x00);
     ensure::is_eq(ahs_memory2.at(ahs::CHANNEL_BUS_SIZE), ahs::CHANNEL_BUS_SIZE_X4);
     ensure::is_eq(ahs_memory2.at(ahs::NUM_OF_PARTITIONS), ahs::NUM_OF_PARTITIONS_1);
-    ensure::is_eq(ahs_memory2.at(ahs::MAPPING_VERSION_TYPE), ahs::MAPPING_VERSION_TYPE_SURPRISE_WITH_POWER);
+    ensure::is_eq(ahs_memory2.at(ahs::MAPPING_VERSION_TYPE), ahs::MAPPING_VERSION_TYPE_PRESENT_MIRROR);
     ensure::is_eq(ahs_memory2.at(ahs::INTERRUPT_INFO_IO_EXPANDER), ahs::INTERRUPT_INFO_IO_EXPANDER_DISABLED);
     ensure::is_eq(ahs_memory2.at(ahs::INTERRUPT_INFO_IO_EXPANDER_I2C_ADDRESS), ahs::INTERRUPT_INFO_IO_EXPANDER_DISABLED);
     ensure::is_eq(ahs_memory2.at(ahs::IO_EXPANDER_0_CONFIGURATION), ahs::IO_EXPANDER_ONE_SSD);

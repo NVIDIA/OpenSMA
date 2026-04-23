@@ -17,17 +17,14 @@
  */
 #include "sys/i2c/i2c.h"
 
-#include <array>
-#include <cstring>
-#include <ranges>
-
-#include "fsl_debug_console.h"
+#include "fsl_clock.h"
 
 #include "nv/i2c/mutex.h"
 #include "nv/i2c/task.h"
 #include "nv/i2c/smb_direct.h"
 #include "nv/ipc/mutex.h"
 #include "nv/i2c/eeprom_cache.h"
+#include "nv/logger/log.h"
 #include "nv/logger/task.h"
 #include "sys/i2c/utils.h"
 
@@ -287,6 +284,12 @@ void Driver::bind(nv::i2c::Port port, void* task)
     _base                    = get_base(port);
     _controller_context.task = task;
     _target_context.task     = task;
+
+    _peripheral_clk_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(_base));
+    if (_peripheral_clk_hz == 0) {
+        nv::error("fail to get clock frequency\n");
+        _peripheral_clk_hz = 25000000UL;
+    }
 }
 
 void Driver::init()
@@ -318,6 +321,52 @@ void Driver::start(bool enable_target)
             nv::error("fail to start target\n");
         }
     }
+}
+
+void Driver::peripheral_recovery(bool enable_target)
+{
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(_port));
+    if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
+        return;
+    }
+
+    constexpr uint8_t I2CRecoveryLogReport = 0;
+    constexpr uint8_t I2CRecoveryLogResult = 1;
+    nv::logger::info(
+        nv::logger::Event::I2CSlaveRecovery,
+        {I2CRecoveryLogReport,
+         static_cast<uint8_t>(nv::common::to_underlying(_port) & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.isBusy ? 1 : 0),
+         static_cast<uint8_t>(_lpi2c_handle.target.transferredCount & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.transfer.event & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.transfer.receivedAddress & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.transfer.completionStatus & 0xFFU)});
+
+    // Abort current transfer and disable slave
+    LPI2C_SlaveTransferAbort(_base, &_lpi2c_handle.target);
+    LPI2C_SlaveEnable(_base, false);
+
+    // Retrive slave configuration from registers, reset, and re-init slave
+    lpi2c_slave_config_t slave_config{};
+    slave_config_fill_from_registers(_base, _peripheral_clk_hz, slave_config);
+    LPI2C_SlaveInit(_base, &slave_config, _peripheral_clk_hz);
+
+    // Enable slave and interrupts and arm for next transfer
+    LPI2C_SlaveEnable(_base, true);
+    constexpr uint32_t Mask = kLPI2C_SlaveAddressMatchEvent | kLPI2C_SlaveCompletionEvent;
+    const status_t Status = LPI2C_SlaveTransferNonBlocking(_base, &_lpi2c_handle.target, Mask);
+    nv::logger::info(
+        nv::logger::Event::I2CSlaveRecovery,
+        {I2CRecoveryLogResult,
+         static_cast<uint8_t>(nv::common::to_underlying(_port) & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.isBusy ? 1 : 0),
+         static_cast<uint8_t>(_lpi2c_handle.target.transferredCount & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.transfer.event & 0xFFU),
+         static_cast<uint8_t>(_lpi2c_handle.target.transfer.receivedAddress & 0xFFU),
+         static_cast<uint8_t>(static_cast<uint32_t>(Status) & 0xFFU),
+         static_cast<uint8_t>(static_cast<uint32_t>(Status) >> 8U & 0xFFU)});
+
+    mutex.unlock();
 }
 
 bool Driver::write(std::span<uint8_t> data)

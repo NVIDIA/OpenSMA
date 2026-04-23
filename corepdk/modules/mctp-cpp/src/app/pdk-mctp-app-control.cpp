@@ -388,12 +388,12 @@ bool Control::remove_routing_entry(uint8_t index)
         return false;
     }
 
-    _routing_map.at(index).is_need_enumerate = false;
-    _routing_map.at(index).is_enumerated     = false;
-
-    if (_num_enumerate_eid != 0) {
+    if (_num_enumerate_eid != 0 && _routing_map.at(index).is_enumerated == true) {
         _num_enumerate_eid--;
     }
+
+    _routing_map.at(index).is_need_enumerate = false;
+    _routing_map.at(index).is_enumerated     = false;
 
     return true;
 }

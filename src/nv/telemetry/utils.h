@@ -41,11 +41,13 @@ enum TelemId : uint8_t
     Gpio,
     CX8_1_Temp,
     CX8_2_Temp,
+    QM4_1_Temp,
+    QM4_2_Temp,
     MaxItem
 };
 
 // This table is only for GB products telemetries: temperature and power telemetries
-static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId>, 8>
+static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId>, 10>
     TempSensorIdToTelemIdMapping = {
         {
          // Legacy Sensor ID for GB products
@@ -61,7 +63,9 @@ static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId
              TelemId::InternalTemp},  // TempSMAInternal
             {nv::mctp::Type3TemperatureSensors::TempCX8_1, TelemId::CX8_1_Temp},  // TempCX8_1
             {nv::mctp::Type3TemperatureSensors::TempCX8_2, TelemId::CX8_2_Temp},  // TempCX8_2
-        }
+            {nv::mctp::Type3TemperatureSensors::QM4_1_Temp, TelemId::QM4_1_Temp},
+         {nv::mctp::Type3TemperatureSensors::QM4_2_Temp, TelemId::QM4_2_Temp},
+         }
 };
 
 static constexpr std::array<std::pair<nv::mctp::Type3PowerSensors, TelemId>, 3>

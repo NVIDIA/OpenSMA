@@ -19,6 +19,7 @@
 #include "mcu_internal_temp.h"
 #include "nv/nv.h"
 #include "nv/common/debug.h"
+#include "nv/logger/log.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/volt_mon/adc.h"
 #include "sys/adc/adc.h"
@@ -134,6 +135,8 @@ Status McuInternalTemp::get_temperature_celsius(float& temperature)
 
     // Check for timeout (ADC auto-stops after CMD 15 completes, cmdNext=None)
     if (sys::adc::ADC::get_fifo_count(adcId, nv::volt_mon::AdcTempFifoSelect) < 2) {
+        nv::logger::error(nv::logger::Event::McuTempFifoTimeout,
+                          nv::logger::data_from_u32(static_cast<uint32_t>(adcId)));
         temperature = AbsoluteZero;
         // Restart scanning mode before return
         nv::volt_mon::Adc::start_scanning(sensor.adcId);

@@ -81,6 +81,11 @@ bool Driver::enable_spi_rx()
 
 void Driver::recover_spi_endpoint() {}
 
+bool Driver::is_device_connected()
+{
+    return false;
+}
+
 void Driver::vcom_rearm_rx(void* /* handle */, uint8_t* /* buffer */) {}
 
 bool Driver::vcom_send(void* /* handle */, uint8_t* /* data */, uint32_t /* length */)

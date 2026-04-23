@@ -75,5 +75,7 @@ public:
                          [[maybe_unused]] void* transfer,
                          [[maybe_unused]] void* user_data)
     {}
+
+    void peripheral_recovery() {}
 };
 }  // namespace sys::i2c

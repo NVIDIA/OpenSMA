@@ -25,9 +25,22 @@
 #include "nv/logger/log.h"
 #include NV_IPC_CONFIG_H
 
+#include <cstdint>
+
 extern void projectTryRunAdcTrigger();
 
 namespace nv::ahs {
+
+/** Hot-swap timer uses bits [0,15); I2C peripheral recovery uses one bit per instance in
+ * [16,31) */
+constexpr unsigned             I2cPeripheralRecoveryBitShift   = 16U;
+constexpr nv::ipc::Event::Bits HotSwapTimerEventsMask          = 0x0000FFFFU;
+constexpr nv::ipc::Event::Bits I2cPeripheralRecoveryEventsMask = 0xFFFF0000U;
+
+static_assert(nv::nhp::NumNhpInstances < 16U,
+              "I2C recovery encoding uses bit 16+instance; NumNhpInstances must be < 16");
+static_assert(nv::nhp::NumNhpInstances * nv::nhp::NumE1sDrives <= 16U,
+              "Hot swap timer bits must stay in lower 16 bits of hotSwapEventId");
 
 /** @brief Static pointer to the single task instance for callback access */
 Task* Task::taskInstance = nullptr;
@@ -119,6 +132,8 @@ void Task::start()
 
     // coverity[no_escape] should never leave here
     while (true) {
+        processPendingI2cPeripheralRecovery();
+
         // Delay for the configured delay time
         if (delay_time != std::chrono::microseconds::zero()) {
             nv::ipc::Task::delay(delay_time);
@@ -232,13 +247,62 @@ void Task::adc_interrupt_callback(uint16_t value, uint8_t ahsInstance, uint8_t d
  *
  * Note: Could use ctimer interrupt for this instead of polling.
  */
+bool Task::isAhsInstanceConstructed(uint8_t ahsInstance)
+{
+    if (nullptr == Task::taskInstance) {
+        return false;
+    }
+    if (ahsInstance >= Task::taskInstance->ahs_instances.size()) {
+        return false;
+    }
+    return Task::taskInstance->ahs_instances.at(ahsInstance).has_value();
+}
+
+void Task::request_i2c_peripheral_recovery(uint8_t ahs_instance_index)
+{
+    if (ahs_instance_index >= 16U) {
+        return;
+    }
+    if (!isAhsInstanceConstructed(ahs_instance_index)) {
+        return;
+    }
+    const auto bits = static_cast<nv::ipc::Event::Bits>(
+        1U << (I2cPeripheralRecoveryBitShift + ahs_instance_index));
+    (void)taskInstance->hotSwapTimerEvent.set(bits);
+}
+
+void Task::processPendingI2cPeripheralRecovery()
+{
+    const auto pending_bits = hotSwapTimerEvent.bits();
+    if (!pending_bits.has_value()) {
+        return;
+    }
+    const uint32_t recovery = static_cast<uint32_t>(pending_bits.value())
+                            & I2cPeripheralRecoveryEventsMask;
+    if (recovery == 0U) {
+        return;
+    }
+    (void)hotSwapTimerEvent.clear(static_cast<nv::ipc::Event::Bits>(recovery));
+    for (uint8_t i = 0; i < nv::nhp::NumNhpInstances; i++) {
+        if ((recovery & (1U << (I2cPeripheralRecoveryBitShift + i))) != 0U
+            && ahs_instances.at(i).has_value()) {
+            ahs_instances.at(i)->peripheral_recovery();
+        }
+    }
+}
+
 void Task::checkForHotSwapTimers()
 {
-    // Check if any hot swap timer events are pending
-    auto eventBits = static_cast<uint32_t>(hotSwapTimerEvent.bits().value());
+    // Lower 16 bits only — upper bits are I2C peripheral recovery (see
+    // processPendingI2cPeripheralRecovery).
+    const auto pending_bits = hotSwapTimerEvent.bits();
+    if (!pending_bits.has_value()) {
+        return;
+    }
+    uint32_t eventBits = static_cast<uint32_t>(pending_bits.value()) & HotSwapTimerEventsMask;
     if (eventBits != 0) {
-        // Clear the event bits and wait for clock enable to PCIe reset delay
-        hotSwapTimerEvent.clear(eventBits);
+        // Clear the hot swap timer bits and wait for clock enable to PCIe reset delay
+        hotSwapTimerEvent.clear(static_cast<nv::ipc::Event::Bits>(eventBits));
         nv::ctimer::Driver::delay_for_us(nv::nhp::ClkEnToPerstDelayUs);
 
         // Process each set bit to trigger hot swap timer interrupts

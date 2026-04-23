@@ -21,9 +21,11 @@
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 
+#include "nv/gpio/common.h"
 #include "nv/iox/iox.h"
 #include "nv/i2c/common.h"
 #include "nv/mctp/nsm_type_5.h"
+#include "nv/gpio/common.h"
 
 #include NV_IPC_CONFIG_H
 
@@ -41,6 +43,7 @@ public:
         I2cRequest = 6,
         VrGpioRequest,
         GpioSpoofingUpdate,
+        FilterUpdate,
     };
 
     struct [[gnu::packed]] Request
@@ -71,6 +74,17 @@ public:
         } entries[nv::mctp::MaxGPIOSpoofingEntries];
     };
 
+    struct [[gnu::packed]] FilterUpdateRequest
+    {
+        bool filterEnable;
+    };
+
+    struct SpoofingEntry
+    {
+        uint16_t gpioIndex;
+        bool     activated;
+    };
+
     using Buffer = std::array<uint8_t, 2>;
 
     Task();
@@ -79,6 +93,8 @@ public:
 
     static void make();
     static void entrypoint(void* params);
+    static bool send_filter_update(bool enable);
+
     // I2C request from USB
     static bool send_i2c_request(ipchandler::Id    src_id,
                                  uint8_t           address,
@@ -90,18 +106,31 @@ public:
     static bool send_vrgpio_request(uint8_t                  address,
                                     Operation                operation,
                                     std::span<const uint8_t> pins,
-                                    std::span<const uint8_t> vals);
+                                    std::span<const uint8_t> vals,
+                                    bool                     trigger_nsm_event);
 
     // GPIO spoofing state update from MCTP task
     static bool send_gpio_spoofing_update(bool                           spoofingActive,
                                           nv::mctp::GPIOSpoofingPayload& updateData);
 
 private:
+    /** Push emulated virtual GPIO levels to nv::gpio::Driver shadow (call after ioexp changes).
+     */
+    void sync_virtual_gpio_shadow();
+
     std::array<Iox, IoxNum> ioexp;
     nv::i2c::I2cHidBuffer   read_buffer{};
-    void                    handle_i2c_request(std::span<uint8_t> buffer);
-    void                    handle_vrgpio_request(std::span<uint8_t> buffer);
-    void                    handle_gpio_spoofing_update(std::span<uint8_t> buffer);
+    bool                    filter_en{};
+
+    bool                                                        spoofingActive{};
+    uint8_t                                                     numSpoofEntries{};
+    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries> spoofEntries{};
+
+    void handle_i2c_request(std::span<uint8_t> buffer);
+    void handle_vrgpio_request(std::span<uint8_t> buffer);
+    void handle_gpio_spoofing_update(std::span<uint8_t> buffer);
+    void handle_filter_update(std::span<uint8_t> buffer);
+    void apply_spoofing_to_input_port(uint8_t iox_offset, uint8_t regn, uint8_t& data);
 };
 
 }  // namespace nv::iox

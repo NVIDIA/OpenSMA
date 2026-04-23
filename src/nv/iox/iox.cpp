@@ -23,7 +23,6 @@
 #include "nv/logger/log.h"
 #include "nv/gpio/driver.h"
 #include "nv/nv.h"
-#include "nv/mctp/nsm.h"
 #include "task.h"
 
 namespace nv::iox {
@@ -320,28 +319,11 @@ Status Iox::set_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::G
 
 Status Iox::get_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::GpioState& val)
 {
-    // return immediately if the gpio is virtual
+    // Virtual GPIO has no hardware pin to read; preserve caller-supplied value
     if (port == vrPort) {
         return Status::Ok;
     }
 
-    // Find GPIO index from port and pin
-    constexpr uint16_t invalidIndex = 0xffff;
-    uint16_t           gpio_index   = invalidIndex;
-    for (uint16_t i = 0; i < nv::ipc::GpioNum; i++) {
-        const auto& gpio_config = nv::ipc::GpioSetup.at(i);
-        if (std::get<0>(gpio_config) == port && std::get<1>(gpio_config) == pin) {
-            gpio_index = i;
-            break;
-        }
-    }
-
-    // Check for GPIO spoofing
-    if (gpio_index != invalidIndex && applySpoofingIfActive(gpio_index, port, pin, val)) {
-        return Status::Ok;  // Spoofed value returned
-    }
-
-    // No spoofing, read actual hardware
     uint8_t data = 0;
     auto    err  = nv::gpio::Driver::read(port, pin, data);
     if (err != nv::gpio::Status::Ok) {
@@ -432,74 +414,6 @@ void Iox::set_gpio_bit(uint8_t bit, bool set)
 bool Iox::get_gpio_bit(uint8_t bit)
 {
     return (g_gpio.gpio_value & (1U << bit)) != 0;
-}
-
-void Iox::setSpoofingConfig(
-    bool                                                         spoofingActive,
-    uint8_t                                                      numSpoofEntries,
-    std::array<SpoofingEntry, nv::mctp::MaxGPIOSpoofingEntries>& spoofEntries)
-{
-    this->spoofingActive  = spoofingActive;
-    this->numSpoofEntries = numSpoofEntries;
-
-    for (uint8_t i = 0; i < numSpoofEntries; i++) {
-        this->spoofEntries.at(i).gpioIndex = spoofEntries.at(i).gpioIndex;
-        this->spoofEntries.at(i).activated = spoofEntries.at(i).activated;
-    }
-}
-
-bool Iox::applySpoofingIfActive(uint16_t             gpio_index,
-                                nv::gpio::GpioPort   port,
-                                nv::gpio::GpioPin    pin,
-                                nv::gpio::GpioState& val)
-{
-    if (!spoofingActive) {
-        return false;  // Spoofing not active
-    }
-
-    // Check if this is an input GPIO (only input GPIOs are spoofed)
-    nv::gpio::Direction gpio_dir = nv::gpio::Direction::Input;
-    if (nv::gpio::Driver::getDirection(port, pin, gpio_dir) != nv::gpio::Status::Ok) {
-        return false;
-    }
-
-    if (gpio_dir != nv::gpio::Direction::Input) {
-        return false;  // Only spoof input GPIOs
-    }
-
-    // Get default value for this GPIO
-    nv::gpio::GpioState default_value{};
-
-    // Search through IoxConfigs to find the matching PinConfig to get default pin state
-    bool found = false;
-    for (const auto& iox_config : nv::ipc::IoxConfigs) {
-        if (iox_config.addr == addr) {
-            for (const auto& pin_config : iox_config.pinConfig) {
-                if (pin_config.port == port && pin_config.pin == pin) {
-                    default_value = pin_config.val;
-                    found         = true;
-                    break;
-                }
-            }
-        }
-        if (found) {
-            break;
-        }
-    }
-
-    // Check if this GPIO is in the spoofing list
-    for (uint8_t i = 0; i < numSpoofEntries && i < spoofEntries.size(); i++) {
-        if (spoofEntries.at(i).activated && spoofEntries.at(i).gpioIndex == gpio_index) {
-            // Return inverted default value (spoofed)
-            val = (default_value == nv::gpio::GpioState::Low) ? nv::gpio::GpioState::High
-                                                              : nv::gpio::GpioState::Low;
-            return true;  // Spoofed value returned
-        }
-    }
-
-    // Spoofing active but this GPIO not in list - return default value
-    val = default_value;
-    return true;
 }
 
 }  // namespace nv::iox

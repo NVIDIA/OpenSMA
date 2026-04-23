@@ -153,7 +153,7 @@ enum class Key : uint32_t
     PdsOtpSimultaneousFuseAddress79,
     PdsOtpSimultaneousFuseAddress80,
     PdsOtpSimultaneousFuseAddress81,
-    // SoC Power Smoothing persistent settings (set via NSM Type 5 SetDeviceModeSettings)
+    // SoC Power Smoothing persistent settings (set via NSM Type 5 SetDeviceModeSettingsV2)
     PdsSoCPowerSmoothEnabled,  ///< SoC Power Smoothing enabled: 0=disabled, 1=enabled
     PdsSoCPowerSmoothCurrentPresetIndex,  ///< Current preset index (0-3)
     PdsSoCPowerBrakeEnabled,              ///< Power brake enabled: 0=disabled, 1=enabled

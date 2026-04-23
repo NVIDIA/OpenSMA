@@ -46,8 +46,24 @@ void Task::make()
     // uuid only get before kernel start
     flash::Driver::get_uuid(task.uuid);
 
-    ipc::Timer::make(
-        ipc::TimerId::MctpEnumerate, 1s, mctp::Driver::on_enumeration_done_timer, false);
+    ipc::Timer::make(ipc::TimerId::MctpEnumerate,
+                     Driver::EnumeratePeriod,
+                     mctp::Driver::on_enumeration_done_timer,
+                     false);
+    static_assert(!nv::ipc::EnableEndpointStatusChangeDebounce
+                      || nv::ipc::EndpointStatusChangePeriodMs != 0,
+                  "EndpointStatusChangePeriodMs must not be 0 when "
+                  "EndpointStatusChangeDebounce is enabled");
+
+    if constexpr (nv::ipc::EnableEndpointStatusChangeDebounce) {
+        for (uint8_t i = 0; i < ipc::DownStreamNum; ++i) {
+            ipc::Timer::make(static_cast<ipc::TimerId>(
+                                 static_cast<int>(ipc::TimerId::EndpointStatusChangeStart) + i),
+                             Driver::EndpointStatusChangePeriod,
+                             mctp::Driver::on_endpoint_status_change_timer,
+                             false);
+        }
+    }
 }
 
 void Task::entrypoint(void* params)

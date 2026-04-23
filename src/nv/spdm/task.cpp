@@ -145,8 +145,9 @@ nv::spdm::Task& Task::get_task()
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    // last check, reserved 512 words for future usage
-    constexpr auto StackSize = std::max(2880 + 512, int(configMINIMAL_STACK_SIZE));
+    // Minimum stack plus future overhead plus increase to support additional APs.
+    constexpr auto StackSize = std::max(2880 + 512 + (nv::pldm::ApNum > 0 ? 384 : 0),
+                                        int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -245,6 +246,19 @@ Task::Task()
         }
     }
 
+    {
+        uint32_t enf_cnsa     = 0;
+        auto     flash_status = nv::flash::Flash::read_enf_cnsa(enf_cnsa);
+        if (flash_status == nv::flash::Status::Ok) {
+            nv::logger::info(nv::logger::Event::SpdmCmpaEnfCnsa,
+                             nv::logger::data_from_u32(enf_cnsa));
+        }
+        else {
+            nv::logger::error(nv::logger::Event::SpdmCmpaEnfCnsa,
+                              nv::logger::data_from_u32(std::to_underlying(flash_status)));
+        }
+    }
+
     // start to generate the cert
     // use dummy certificate
     if constexpr (nv::ipc::SpdmDummyCertificates == true) {
@@ -306,6 +320,10 @@ Task::Task()
     if constexpr (CPLD_ProgramN_Pin_Enabled) {
         this->secure_boot.secure_boot_main();
     }
+    // Validate MCU pwr-fail I2C debug token against NPDS cache at boot.
+    // Ignore return value.
+    (void)nv::debugtoken::check_debug_token_subtype_enabled(
+        nv::debugtoken::Type::McuDebug, nv::debugtoken::DebugTokenSubtypePwrFailI2cDebug);
 
     // coverity[no_escape] - no escape is expected
     while (true) {

@@ -31,8 +31,8 @@ namespace nv::vruart {
  * Handles bidirectional data transfer between UART and USB virtual COM port
  *
  * Data flow (event-driven, single task):
- *   USB RX ISR → set UsbRxBit → Task waits → UART TX → re-arm USB
- *   UART RX ISR → enqueue + set UartRxBit → Task waits → USB TX
+ *   USB RX → UsbRxDoneBit → Task → UART TX → re-arm USB
+ *   UART RX → enqueue + UartRxDoneBit → Task → USB TX
  */
 class Bridge
 {
@@ -85,11 +85,14 @@ public:
     [[noreturn]] void main();
 
 private:
-    // Strict backpressure for USB RX: ISR saves pointer, Task processes
+    // Single-core: USB RX callback saves pointer here
     volatile uint8_t* pending_usb_data = nullptr;
     volatile uint32_t pending_usb_len  = 0;
 
-    // TX buffer for queue receive
+    // RX buffer: single-core callback copy / dual-core queue recv
+    Buffer rx_buf{};
+
+    // TX buffer for UbridgeTx queue receive
     Buffer tx_buf{};
 };
 

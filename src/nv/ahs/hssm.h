@@ -42,21 +42,6 @@ public:
     // ---------------------------------------------
 
     /**
-     * @brief Constructs a hot swap controller with initial state values
-     *
-     * @param pin_config Pin configuration for the drive
-     * @param pgood Initial power good status
-     * @param prsntL Initial presence detection status
-     * @param hotSwapEvent Pointer to hot swap event for notifications
-     * @param driveNum Drive number identifier
-     */
-    E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
-               bool                   pgood,
-               bool                   prsntL,
-               nv::ipc::Event*        hotSwapEvent,
-               uint8_t                driveNum);
-
-    /**
      * @brief Constructs a hot swap controller with default initial state
      *
      * @param pin_config Pin configuration for the drive
@@ -98,6 +83,7 @@ private:
      */
     enum HotSwapState
     {
+        HotSwapInit,   /**< Initial state: hot swap not initialized */
         DriveDisabled, /**< Initial state: drive not present */
         WaitPgood,     /**< Power enabled, waiting for power good or timeout */
         WaitClkStable, /**< Clocks enabled, waiting for stabilization time */
@@ -140,14 +126,6 @@ private:
      * @param blueLed Target blue LED state
      */
     void set_leds(bool amberLed, bool blueLed);
-
-    /**
-     * @brief Initializes all pins to their default state
-     *
-     * Sets all controlled pins to safe default values during initialization.
-     * Typically sets power and clock pins to disabled state.
-     */
-    void init_pins();
 
     /**
      * @brief Sets a GPIO pin to the specified state

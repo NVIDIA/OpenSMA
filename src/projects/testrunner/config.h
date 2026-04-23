@@ -94,15 +94,11 @@ constexpr bool EnableLstp = false;
 
 namespace nv::lstp {
 
-constexpr uint16_t                                       LstpGpioNum = 0;
-constexpr inline std::array<LstpGpioConfig, LstpGpioNum> PinConfigs{};
-constexpr inline std::array<uint8_t, LstpGpioNum>        LstpGpioMap = {};
+constexpr uint8_t  LstpNumChannels = 0;
+constexpr uint16_t LstpGpioNum     = 0;
 
-constexpr uint8_t LstpNumChannels = 0;
-
-// clang-format off
-constexpr std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{};
-// clang-format on
+constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{};
+constexpr inline std::array<LstpGpioPinInfo, LstpGpioNum>      PinConfigs{};
 
 static_assert(ValidateLstpChannelConfigs(LstpChannels));
 static_assert(nv::ipc::EnableLstp == (LstpNumChannels > 0));
@@ -117,6 +113,10 @@ constexpr bool EnableIpmi = IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi
 namespace nv::ipc {
 // Indicate if it is dual core project
 constexpr bool EnableDualCore = false;
+constexpr bool EnableNcsi     = false;
+
+// After USB bus reset while enumerated, record mailbox and soft-reset
+constexpr bool EnableUsbPortResetSelfReset = false;
 
 /// All Tasks must be part of this enum.
 enum class TaskId
@@ -142,6 +142,7 @@ enum class TaskId
     Usb        = Privileged + 0,
     Ubridge    = Privileged + 1,
     Flash      = Privileged + 2,
+    Diag       = Privileged + 3,
     EndPrivileged,
     End   = EndPrivileged,
     Timer = End,
@@ -203,6 +204,7 @@ enum class QueueId
     LstpToGpio,
     Iox,
     UbridgeTx,
+    UbridgeRx,
     Ssif,
     End
 };
@@ -230,6 +232,8 @@ constexpr uint8_t UpStreamNum             = 1;
 constexpr uint8_t DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
 constexpr uint8_t RoutingInfoUpdateSize   = 0;
 constexpr uint8_t RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
+constexpr bool    EnableEndpointStatusChangeDebounce = false;
+constexpr auto    EndpointStatusChangePeriodMs       = 0;
 
 constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos{
 
@@ -308,6 +312,7 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {         QueueId::LstpToGpio,                        1,                                     LstpToGpioSize},
     {                QueueId::Iox,                        8,                                                 80},
     {          QueueId::UbridgeTx,                        4,                                                514},
+    {          QueueId::UbridgeRx,                        4,                                                514},
     {               QueueId::Ssif,                        1,                                                  1}
 };
 /// All Events must be part of this enum.
@@ -330,6 +335,7 @@ enum class EventId
     Spi2Event,
     LogEvent,
     SpdmTask,
+    DiagEvent,
     TaskBootStatus,
     TaskAliveStatus,
     GpuPwrCtrlEvent,
@@ -362,6 +368,8 @@ enum class TimerId
     Ap2Status,
     Ap3Status,
     EepromUpdate,
+    EndpointStatusChangeStart,
+    EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     End
 };
 
@@ -511,6 +519,7 @@ struct I2cVirtualAddressMappingTableItem
     bool                  is_ocp_device;
     QueueId               queue_id;
     nv::ipchandler::Id    ipchandler_id;
+    bool                  need_debug_token     = false;
     I2cDynamicAddressType dynamic_address_type = I2cDynamicAddressType::NotDynamicType;
 };
 
@@ -618,6 +627,7 @@ constexpr bool I2cTransparent = false;
 constexpr bool                                          EnableIoxEmulation = false;
 constexpr inline size_t                                 IoxNum             = 0;
 constexpr inline uint8_t                                IoxI2cBaseAddr     = 0x50;
+constexpr uint32_t                                      IoxFilterSeconds   = 0;
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
@@ -717,6 +727,7 @@ constexpr uint32_t EepromUpdateTimerUs = 0;
 }  // namespace nv::ipc
 
 namespace nv::i2c {
+constexpr bool EnableI2cPeripheralRecovery = false;
 
 // Error Injection configuration: explicit count for I2C and IOX
 constexpr size_t NV_I2C_ERROR_INJECTION_PORTS = 0;  // Number of I2C handlers configured for

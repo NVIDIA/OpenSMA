@@ -115,6 +115,9 @@ public:
     static Status read_crc(uint32_t&             data,
                            nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
 
+    static Status read_enf_cnsa(uint32_t&             enf_cnsa,
+                                nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
+
     // Only used for logging fault
     static Status init_on_fault();
 

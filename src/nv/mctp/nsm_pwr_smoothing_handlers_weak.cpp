@@ -67,11 +67,6 @@ __attribute__((weak)) Ccode handle_get_soc_therm_brake_enabled([[maybe_unused]] 
     return Ccode::ErrorUnsupportedCmd;  // Feature not available
 }
 
-__attribute__((weak)) Ccode handle_get_supported_device_modes([[maybe_unused]] NsmPktResp& ntx)
-{
-    return Ccode::ErrorUnsupportedCmd;  // Feature not available
-}
-
 // ============================================================================
 // Weak Type-5 Set handlers - return ErrorUnsupportedCmd to indicate feature not available
 // ============================================================================
@@ -150,6 +145,18 @@ __attribute__((weak)) Ccode handle_trigger_adc_calibration()
 }
 
 __attribute__((weak)) Ccode handle_get_adc_calibration_results([[maybe_unused]] NsmPktResp& ntx)
+{
+    return Ccode::ErrorUnsupportedCmd;  // Feature not available
+}
+
+__attribute__((weak)) Ccode
+handle_adc_calib_set_loopback_dac_code([[maybe_unused]] uint16_t dac_code)
+{
+    return Ccode::ErrorUnsupportedCmd;  // Feature not available
+}
+
+__attribute__((weak)) Ccode handle_get_power_smooth_raw_readback(
+    [[maybe_unused]] uint8_t readback_id, [[maybe_unused]] NsmPktResp& ntx)
 {
     return Ccode::ErrorUnsupportedCmd;  // Feature not available
 }

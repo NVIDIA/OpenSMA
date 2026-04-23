@@ -32,6 +32,10 @@ static_assert(nv::vruart::Bridge::Buffsz == 2U + sys::uart::edmaXferBufSize,
 #include "nv/ipc/supervisor.h"
 
 #include "sys/usb/usb.h"
+#if __has_include("sys/ipc/mcmgr_wrapper.h")
+#include "nv/ipc/common.h"
+#include "sys/ipc/mcmgr_wrapper.h"
+#endif
 
 using namespace nv::ipc;
 using namespace std::chrono_literals;
@@ -83,10 +87,24 @@ uint8_t Bridge::usb_rx_callback(uint8_t* data, uint32_t length)
         return 0;
     }
 
-    // Strict backpressure: save pointer, don't re-arm USB (NAK host)
-    Bridge::inst().pending_usb_data = data;
-    Bridge::inst().pending_usb_len  = length;
-    // volatile ensures writes complete; FreeRTOS event has internal barrier
+    if constexpr (ipc::EnableNcsi) {
+        // Dual-core mode: Copy data immediately to avoid race condition
+        // In dual-core, 'data' may point to shared buffer that can be overwritten
+        if (length > Bridge::inst().rx_buf.size()) {
+            length = Bridge::inst().rx_buf.size();
+        }
+        std::memcpy(Bridge::inst().rx_buf.data(), data, length);
+        Bridge::inst().pending_usb_data = Bridge::inst().rx_buf.data();
+        Bridge::inst().pending_usb_len  = length;
+
+        // Re-arm immediately in dual-core mode (no backpressure from USB side)
+        sys::usb::Driver::vcom_rearm_rx(sys::usb::Driver::get_vcom_handle(), data);
+    }
+    else {
+        // Single-core mode: Save pointer, don't re-arm USB (provides backpressure)
+        Bridge::inst().pending_usb_data = data;
+        Bridge::inst().pending_usb_len  = length;
+    }
 
     // Notify task
     set_usb_rx_done_event();
@@ -136,13 +154,7 @@ uint8_t Bridge::enqueue(const uint8_t* data, uint32_t length)
         return 0;  // USB not ready, silently drop
     }
 
-    /*
-     * Buffer format: [2 bytes length (little-endian)] + [up to 512 bytes data]
-     *
-     * Note: length is guaranteed <= 512 by caller (LPUART_UserCallback), which passes
-     * data from eDMA receive buffer (edmaXferBufSize = 512). No explicit bounds check
-     * needed here - the hardware/eDMA configuration enforces the limit.
-     */
+    // Length ≤ 512 (enforced by eDMA config)
     Buffer buf{};
     std::memcpy(buf.data() + 2, data, length);
     std::memcpy(buf.data(), &length, sizeof(uint16_t));
@@ -176,68 +188,77 @@ uint8_t Bridge::enqueue(const uint8_t* data, uint32_t length)
 // Event-driven task loop
 [[noreturn]] void Bridge::main()
 {
-    auto&            queue = Queue::make(QueueId::UbridgeTx);
-    auto&            event = Event::make(EventId::UartBridgeEvent);
-    ipc::Queue::Item item(std::bit_cast<uint8_t*>(&tx_buf), tx_buf.size());
+    auto&            tx_queue = Queue::make(QueueId::UbridgeTx);
+    auto&            event    = Event::make(EventId::UartBridgeEvent);
+    ipc::Queue::Item tx_item(std::bit_cast<uint8_t*>(&tx_buf), tx_buf.size());
 
     constexpr uint32_t WaitBits = UsbRxDoneBit | UartRxDoneBit | UartTxDoneBit | UsbTxDoneBit;
 
     while (true) {
-        /*
-         * Wait for any event (block until event occurs)
-         *
-         * Note: Using Event Group instead of Task Notification for:
-         *   1. Architecture consistency - nv/ layer should not call FreeRTOS directly
-         *   2. Dual-core compatibility - Task Notification doesn't work cross-core
-         *   3. EventId abstraction - decouples sender from receiver
-         *
-         * Trade-off: Event Group from ISR requires 2 context switches (via daemon task)
-         * vs Task Notification's 1 switch. No issues observed so far.
-         */
-        auto bits   = event.wait(WaitBits, false, false);
+        // 100ms timeout
+        auto bits = event.wait(WaitBits, false, false, 100ms);
+        if (!bits.has_value()) {
+            continue;  // Timeout, loop back
+        }
         auto active = bits.value() & WaitBits;
 
-        // Handle USB RX → UART TX
-        // Note: No need to check pending_usb_data/len validity:
-        // - UsbRxDoneBit is only set after usb_recv() saves valid data
-        // - USB RX is only re-armed after UART TX completes, so no overlap
+        // Handle USB RX -> UART TX
         if (active & UsbRxDoneBit) {
             event.clear(UsbRxDoneBit);
-            // FreeRTOS event.wait() guarantees visibility of ISR writes
-            // NOLINT justified: volatile→non-volatile, ISR won't overlap (USB re-arm gate)
-            tx(std::span<uint8_t>(
-                const_cast<uint8_t*>(pending_usb_data),  // NOLINT(*-const-cast)
-                pending_usb_len));
+
+            if constexpr (ipc::EnableNcsi) {
+                // Dual-core: drain UbridgeRx queue (data from usb_proxy task)
+                // Format: [2-byte length LE][data]
+                auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
+                ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
+                while (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
+                    uint16_t len = 0;
+                    std::memcpy(&len, rx_buf.data(), sizeof(len));
+                    if (len > 0 && len <= rx_buf.size() - 2) {
+                        tx(std::span<uint8_t>(rx_buf.data() + 2, len));
+                    }
+                }
+            }
+            else {
+                // Single-core: data comes via callback -> pending_usb_data
+                tx(std::span<uint8_t>(
+                    const_cast<uint8_t*>(pending_usb_data),  // NOLINT(*-const-cast)
+                    pending_usb_len));
+            }
         }
 
-        // Handle UART TX complete → re-arm USB RX
-        // Note: No need to check uart_tx_pending - UartTxDoneBit is only set when TX completes
+        // Handle UART TX complete -> re-arm USB RX
         if (active & UartTxDoneBit) {
             event.clear(UartTxDoneBit);
 
-            auto* data       = const_cast<uint8_t*>(pending_usb_data);  // NOLINT(*-const-cast)
-            pending_usb_data = nullptr;
-            pending_usb_len  = 0;
-            // vcom_rearm_rx() is the gate - ISR won't fire until called
+            if constexpr (ipc::EnableNcsi) {
+                // Dual-core: notify Core1 so it can re-arm ACM receive
+                (void)sys::ipc::task::Mcmgr::trigger_event_force(
+                    nv::ipc::CoreId::Core1,
+                    nv::ipc::task::EventType::Communication,
+                    static_cast<uint16_t>(nv::ipc::task::CmdCode::InterCoreAcmTxDone));
+            }
+            else {
+                // Single-core: Re-arm USB RX to receive next packet
+                auto* data = const_cast<uint8_t*>(pending_usb_data);  // NOLINT(*-const-cast)
+                pending_usb_data = nullptr;
+                pending_usb_len  = 0;
 
-            // Re-arm USB RX
-            sys::usb::Driver::vcom_rearm_rx(sys::usb::Driver::get_vcom_handle(), data);
+                sys::usb::Driver::vcom_rearm_rx(sys::usb::Driver::get_vcom_handle(), data);
+            }
         }
 
-        // Handle UART RX → USB TX from queue
+        // Handle UART RX -> USB TX from queue
         if (active & UartRxDoneBit) {
             event.clear(UartRxDoneBit);
 
             // Drain queue: USB TX is fast, bounded retry if busy
-            // Note: len is guaranteed valid (0 < len <= 512) - see enqueue() comment for
-            // details
             void* handle = sys::usb::Driver::get_vcom_handle();
-            while (queue.recv(item, 0ms) == Queue::Status::Ok) {
+            while (tx_queue.recv(tx_item, 0ms) == Queue::Status::Ok) {
                 uint16_t len = 0;
                 std::memcpy(&len, tx_buf.data(), sizeof(len));  // Little-endian
 
                 // Bounded retry for USB TX - avoid indefinite blocking if USB fails
-                // Max wait: 100 * 20µs = 2ms per packet (USB HS TX is ~10µs for 512B)
                 constexpr int MaxRetries = 100;
                 for (int retry = 0; retry < MaxRetries; ++retry) {
                     if (sys::usb::Driver::vcom_send(handle, tx_buf.data() + 2, len) == 0) {
@@ -246,28 +267,14 @@ uint8_t Bridge::enqueue(const uint8_t* data, uint32_t length)
                     constexpr uint32_t RetryDelayUs = 20;
                     nv::ctimer::Driver::delay_for_us(RetryDelayUs);
                 }
-                // If still failing after MaxRetries, data is dropped - USB may be disconnected
             }
         }
 
-        // UsbTxDoneBit: intentionally not used - no code sets this event.
-        // USB HS TX is very fast (~10µs for 512B at 480Mbps), spin-wait above
-        // is more efficient than context switch overhead (~10-50µs).
+        // UsbTxDoneBit: intentionally not used
         if (active & UsbTxDoneBit) {
-            event.clear(UsbTxDoneBit);  // Dead code, kept for completeness
+            event.clear(UsbTxDoneBit);
         }
     }
 }
 
 }  // namespace nv::vruart
-
-// Fixed hooks consumed by sys::usb (no runtime callback registration)
-extern "C" uint8_t nv_usb_vcom_rx(uint8_t* data, uint32_t length)
-{
-    return nv::vruart::Bridge::usb_rx_callback(data, length);
-}
-
-extern "C" void nv_usb_vcom_close()
-{
-    nv::vruart::Bridge::flush_tx_queue();
-}

@@ -34,18 +34,17 @@ using auth_params_t = nboot_img_auth_parms_t;  // for 556
 nv::spdm::crypto::CryptoStatus
 authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwType);
 
-nv::spdm::crypto::CryptoStatus perform_image_auth_ecdsa(nboot_context_t& nbootCtx,
-                                                        uint8_t*         imageAddress,
-                                                        nboot_bool_t&    is_signature_verified,
-                                                        auth_params_t&   parms);
-nv::spdm::crypto::CryptoStatus perform_image_auth_ecdsa_svc(nboot_context_t& nbootCtx,
-                                                            uint8_t*         imageAddress,
-                                                            nboot_bool_t& is_signature_verified,
-                                                            auth_params_t& parms);
-nv::spdm::crypto::CryptoStatus
-perform_image_auth_ecdsa_impl(nboot_context_t& nbootCtx,
-                              uint8_t*         imageAddress,
-                              nboot_bool_t&    is_signature_verified,
-                              auth_params_t&   parms);
+nv::spdm::crypto::CryptoStatus perform_image_auth(nboot_context_t& nbootCtx,
+                                                  uint8_t*         imageAddress,
+                                                  nboot_bool_t&    is_signature_verified,
+                                                  auth_params_t&   parms);
+nv::spdm::crypto::CryptoStatus perform_image_auth_svc(nboot_context_t& nbootCtx,
+                                                      uint8_t*         imageAddress,
+                                                      nboot_bool_t&    is_signature_verified,
+                                                      auth_params_t&   parms);
+nv::spdm::crypto::CryptoStatus perform_image_auth_impl(nboot_context_t& nbootCtx,
+                                                       uint8_t*         imageAddress,
+                                                       nboot_bool_t&    is_signature_verified,
+                                                       auth_params_t&   parms);
 
 }  // namespace sys::crypto

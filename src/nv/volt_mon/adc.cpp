@@ -18,6 +18,7 @@
 
 #include "nv/volt_mon/adc.h"
 #include "nv/ipc/task.h"
+#include "nv/logger/log.h"
 #include "nv/nv.h"
 
 namespace nv::volt_mon {
@@ -112,8 +113,8 @@ Status Adc::start_oneshot(VoltMon& sensor)
     for (size_t i = 0;
          i < MaxOneShotConvTime && !sys::adc::ADC::adc_ready(static_cast<uint32_t>(adcId));
          ++i) {
-        constexpr uint32_t TenTicks = 10;
-        vTaskDelay(TenTicks);  // 10 x 5ms = 50ms (yield cpu to avoid blocking)
+        constexpr uint32_t tickNum = 1;
+        vTaskDelay(tickNum);  // tickNum x 5ms (yield cpu to avoid blocking)
     }
 
     // get reading
@@ -121,6 +122,8 @@ Status Adc::start_oneshot(VoltMon& sensor)
     if (!sys::adc::ADC::get_adc_reading(static_cast<uint32_t>(adcId),
                                         result,
                                         static_cast<uint8_t>(AdcDataResultFifo::_0))) {
+        nv::logger::error(nv::logger::Event::AdcOneShotConvTimeout,
+                          nv::logger::data_from_u32(static_cast<uint32_t>(adcId)));
         adcerr.at(static_cast<uint32_t>(adcId)) = Status::AdcOneShotConvTimeout;
         stop_sampling(adcId);
         status = Status::AdcOneShotConvTimeout;
@@ -135,10 +138,6 @@ Status Adc::start_oneshot(VoltMon& sensor)
 
 Status Adc::start_scanning(AdcInstance adcId)
 {
-    if (adcId >= AdcInstance::Invalid) {
-        return Status::InvalidAdcInstance;
-    }
-
     // Skip if this ADC has no sensors requiring scanning mode (e.g., only MCU temp configured)
     if (!((adcId == AdcInstance::_0 && SensorOnAdc0)
           || (adcId == AdcInstance::_1 && SensorOnAdc1))) {
@@ -232,21 +231,25 @@ void Adc::dbginfo_impl(AdcMode   triggerMode,
 
 bool Adc::adc_isr_get_conv_result(AdcInstance adcId, sys::adc::ADC::AdcConvResult& result)
 {
+    const auto adcIndex = static_cast<uint32_t>(adcId);
+
     /**
      * once interrupt is triggered, always reset flags and disable interrupt first
      */
-    auto flags = sys::adc::ADC::get_status_flags(static_cast<uint32_t>(adcId));
-    sys::adc::ADC::clear_status_flags(static_cast<uint32_t>(adcId), flags);
+    auto flags = sys::adc::ADC::get_status_flags(adcIndex);
+    sys::adc::ADC::clear_status_flags(adcIndex, flags);
 
     /**
      * read the result from fifo0 as we need to disable adc next
      */
     if (sys::adc::ADC::get_adc_reading(
-            static_cast<uint32_t>(adcId), result, static_cast<uint32_t>(AdcDataResultFifo::_0))
+            adcIndex, result, static_cast<uint32_t>(AdcDataResultFifo::_0))
         != true) {
-        nv::error("ADC%d_IRQHandler: isr found no valid reading\r\n",
-                  static_cast<uint32_t>(adcId));
-        volt_mon::Adc::adcerr.at(static_cast<uint32_t>(adcId)) = Status::AdcIsrNoValidReading;
+        nv::logger::Logger::add_from_isr(
+            nv::logger::Event::LeakDetectIsrNoValidReading.unique_id,
+            nv::logger::Level::Error,
+            nv::logger::data_from_two_u32(adcIndex, flags));
+        volt_mon::Adc::adcerr.at(adcIndex) = Status::AdcIsrNoValidReading;
         return false;
     }
 

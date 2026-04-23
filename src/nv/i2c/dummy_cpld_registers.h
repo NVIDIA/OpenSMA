@@ -19,6 +19,7 @@
 #ifndef PRODUCT_CPLD_REGISTERS_H
 #define PRODUCT_CPLD_REGISTERS_H
 
+#include <array>
 #include <cstdint>
 
 // ============================================================================
@@ -503,5 +504,11 @@ constexpr uint8_t HMC_FWD_I2C2_PERI_ERROR_CODE_MASK    = 0xFF;
 constexpr uint8_t HMC_FWD_I2C2_PERI_ERROR_CODE_DEFAULT = 0x00;
 
 }  // namespace Cpld_User_Reg
+
+namespace Cpld_Feature_Row {
+constexpr std::array<uint8_t, 8> EXPECTED_FEATURE_ROW = {
+    0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00};
+constexpr std::array<uint8_t, 2> EXPECTED_FEABITS = {0x02, 0x00};
+}  // namespace Cpld_Feature_Row
 
 #endif  // PRODUCT_CPLD_REGISTERS_H

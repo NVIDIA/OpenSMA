@@ -564,9 +564,13 @@ bool construct_l5_cert_impl(nv::spdm::certlib::CertArray& l5_cert_array)
                                    ? nv::spdm::cert::AkSignatureRamAddr0
                                    : nv::spdm::cert::AkSignatureRamAddr1;
     // NOLINTBEGIN
-    auto& dev_ak_cert = *std::bit_cast<nv::spdm::ak::DevAkTemplate*>(
-        reinterpret_cast<uint8_t*>(L5CertAddr));
+    const auto& FmcOrdinal = *std::bit_cast<std::array<uint8_t, 5>*>(
+        reinterpret_cast<uint8_t*>(nv::spdm::cert::FmcOrdinalNumberRamAddr));
     // NOLINTEND
+    const bool     IsFmcV3        = FmcOrdinal < nv::spdm::ak::FmcV4OrdinalThreshold;
+    const uint32_t AkTemplateSize = IsFmcV3 ? sizeof(nv::spdm::ak::DevAkTemplateV3)
+                                            : sizeof(nv::spdm::ak::DevAkTemplate);
+
     /* turn the generated signature into cert format*/
     // NOLINTBEGIN
     auto& signature = *std::bit_cast<std::array<uint8_t, 96>*>(
@@ -638,14 +642,31 @@ bool construct_l5_cert_impl(nv::spdm::certlib::CertArray& l5_cert_array)
     cert_sign.bit_string.length = cert_sign.sequence_small.length
                                 + sizeof(cert_sign.sequence_small)
                                 + sizeof(cert_sign.bit_string.padding_length);
-    const uint32_t WholeCertLength = sizeof(nv::spdm::ak::DevAkTemplate)
+
+    const uint32_t WholeCertLength = AkTemplateSize
                                    + ObjectIdentifier_1_2_840_10045_4_3_3.size()
                                    + cert_sign.bit_string.length
                                    + sizeof(cert_sign.bit_string.length)
                                    + sizeof(cert_sign.bit_string.token)
-                                   - sizeof(dev_ak_cert.total_certificate);
-    dev_ak_cert.total_certificate.length_msb = WholeCertLength >> 8u;
-    dev_ak_cert.total_certificate.length_lsb = WholeCertLength % 256u;
+                                   - sizeof(nv::spdm::certlib::Sequence);
+    if (IsFmcV3) {
+        // NOLINTBEGIN
+        auto& dev_ak_v3_cert = *std::bit_cast<nv::spdm::ak::DevAkTemplateV3*>(
+            reinterpret_cast<uint8_t*>(L5CertAddr));
+        // NOLINTEND
+        dev_ak_v3_cert.total_certificate.length_msb = static_cast<uint8_t>(WholeCertLength
+                                                                           >> 8u);
+        dev_ak_v3_cert.total_certificate.length_lsb = static_cast<uint8_t>(WholeCertLength
+                                                                           % 256u);
+    }
+    else {
+        // NOLINTBEGIN
+        auto& dev_ak_cert = *std::bit_cast<nv::spdm::ak::DevAkTemplate*>(
+            reinterpret_cast<uint8_t*>(L5CertAddr));
+        // NOLINTEND
+        dev_ak_cert.total_certificate.length_msb = static_cast<uint8_t>(WholeCertLength >> 8u);
+        dev_ak_cert.total_certificate.length_lsb = static_cast<uint8_t>(WholeCertLength % 256u);
+    }
 
     /* save the construct alais cert into ram*/
     // NOLINTBEGIN
@@ -653,7 +674,7 @@ bool construct_l5_cert_impl(nv::spdm::certlib::CertArray& l5_cert_array)
         alais_cert_array = *std::bit_cast<nv::spdm::certlib::CertArray*>(
             reinterpret_cast<uint8_t*>(L5CertAddr));
     // NOLINTEND
-    auto  cert_it         = alais_cert_array.begin() + sizeof(nv::spdm::ak::DevAkTemplate);
+    auto  cert_it         = alais_cert_array.begin() + AkTemplateSize;
     auto& bit_string_view = *std::bit_cast<std::array<uint8_t, sizeof(Signature::bit_string)>*>(
         &cert_sign.bit_string);
     auto& sequence_small_view = *std::bit_cast<

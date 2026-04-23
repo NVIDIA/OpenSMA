@@ -111,9 +111,19 @@ struct RuntimeCfg
         SFXP22_10 value{0};        // Override value in SFXP22_10 format
     };
 
-    OverrideConfig override_soc_input;     // Override SoC input (param 20)
-    OverrideConfig override_edpp_offset;   // Override EDPP output (param 21)
-    OverrideConfig override_isink_offset;  // Override ISINK output (param 22)
+    OverrideConfig override_soc_input;     // Override SoC input (param 40)
+    OverrideConfig override_edpp_offset;   // Override EDPP output percent (param 41)
+    OverrideConfig override_isink_offset;  // Override ISINK output percent (param 42)
+
+    struct OverrideDacRawConfig
+    {
+        bool     enabled{false};
+        uint16_t dac_raw{0};  // Code passed to Dac::set (12-bit effective)
+    };
+    OverrideDacRawConfig override_edpp_dac_raw;   // Param 43; if enabled, overrides param 41 +
+                                                  // PID path to DAC
+    OverrideDacRawConfig override_isink_dac_raw;  // Param 44; if enabled, overrides param 42 +
+                                                  // PID path to DAC
 };
 
 }  // namespace nv::soc_pwr_smoothing

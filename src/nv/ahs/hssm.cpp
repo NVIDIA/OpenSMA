@@ -38,38 +38,6 @@ constexpr static bool EnablePerstLActiveHigh = ENABLE_PERSTL_ACTIVE_HIGH ? true 
 namespace nv::ahs {
 
 /**
- * @brief Constructs a hot swap controller with initial state values
- *
- * Initializes the hot swap controller with the specified pin configuration,
- * initial status values, and hot swap event pointer. Sets up GPIO pins
- * and immediately updates the state machine with the initial conditions.
- *
- * @param pin_config Pin configuration for the drive
- * @param pgood Initial power good status
- * @param prsntL Initial presence detection status
- * @param hotSwapEvent Pointer to hot swap event for notifications
- * @param driveNum Drive number identifier
- */
-E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
-                       bool                   pgood,
-                       bool                   prsntL,
-                       nv::ipc::Event*        hotSwapEvent,
-                       uint8_t                driveNum)
-: state(DriveDisabled)
-, pinout(pin_config)
-, _hotSwapEvent(hotSwapEvent)
-, _driveNum(driveNum)
-{
-    // Initialize all pins to their default state
-    init_pins();
-
-    // Update state machine with initial conditions
-    updateStateMachine(pgood, prsntL, false);
-
-    nv::info("Initialized drive %d hot swap controller.\n", _driveNum);
-}
-
-/**
  * @brief Constructs a hot swap controller with default initial state
  *
  * Initializes the hot swap controller with the specified pin configuration
@@ -83,17 +51,11 @@ E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
 E1sHotSwap::E1sHotSwap(nv::nhp::E1sOutputPins pin_config,
                        nv::ipc::Event*        hotSwapEvent,
                        uint8_t                driveNum)
-: state(DriveDisabled)
+: state(HotSwapInit)
 , pinout(pin_config)
 , _hotSwapEvent(hotSwapEvent)
 , _driveNum(driveNum)
 {
-    // Initialize all pins to their default state
-    init_pins();
-
-    // Update state machine with default initial state (drive not present)
-    updateStateMachine(false, true, false);
-
     nv::info("Initialized drive %d hot swap controller.\n", _driveNum);
 }
 
@@ -131,6 +93,28 @@ E1sHotSwap::E1sHotSwap() : state(), pinout(), _hotSwapEvent(), _driveNum()
 void E1sHotSwap::updateStateMachine(bool pgood, bool prsntL, bool perstL, bool timerDone)
 {
     switch (state) {
+        case HotSwapInit: {
+            // Drive not present, waiting for drive to be inserted
+            if (prsntL) {
+                // Drive not present - stay in disabled state
+                state = DriveDisabled;
+            }
+            else if (!pgood) {
+                // Drive present but no power - enable power and wait for power good
+                state = WaitPgood;
+            }
+            else if (pgood) {
+                // Drive present and power available - enable clocks and wait for stabilization
+                if (perstL) {
+                    state = DriveOn;
+                }
+                else {
+                    state = WaitClkStable;
+                    startTimer();
+                }
+            }
+            break;
+        }
         case DriveDisabled: {
             // Drive not present, waiting for drive to be inserted
             if (prsntL) {
@@ -331,24 +315,6 @@ void E1sHotSwap::set_leds(bool amberLed, bool blueLed)
         set_pin(pinout.led_tristate_ctrl_port, pinout.led_tristate_ctrl_pin, HiZ);
         nv::warn("Host VIOLATED E.1s spec by attempting to drive both LEDs.\n");
     }
-}
-
-/**
- * @brief Initializes all pins to their default state
- *
- * Sets all controlled pins to safe default values during initialization.
- * Typically sets power and clock pins to disabled state and LED pin to
- * high impedance for safety.
- */
-void E1sHotSwap::init_pins()
-{
-    // Initialize all pins to safe default states
-    set_pin(pinout.perst_l_port, pinout.perst_l_pin, HiZ);     // PCIe reset deasserted
-    set_pin(pinout.clk_en_l_port, pinout.clk_en_l_pin, High);  // Clocks disabled
-    set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);       // Power disable not asserted
-    set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);     // Power enable asserted
-    set_pin(pinout.led_tristate_ctrl_port, pinout.led_tristate_ctrl_pin, HiZ);  // LED pin high
-                                                                                // impedance
 }
 
 /**

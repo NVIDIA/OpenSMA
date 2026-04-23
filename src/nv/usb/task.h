@@ -16,6 +16,23 @@
  * limitations under the License.
  */
 #pragma once
+
+#include <cstdint>
+
+#include "sys/usb/usb_config_wrapper.h"
+
+namespace nv::usb {
+// Magic value to indicate USB port reset in mailbox
+constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
+}  // namespace nv::usb
+
+// When USB handled by Core1 bare-metal, provide stubs that forward to usb_proxy
+#if SYS_USB_DISABLED
+
+#include "nv/usb/usb_stub.h"
+
+#else  // SYS_USB_DISABLED == 0 - Original implementation
+
 #include "nv/i2c/common.h"
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
@@ -24,15 +41,14 @@
 #include "nv/mctp/interface.h"
 #include "nv/mctp/router.h"
 #include "nv/usb/hid_smb.h"
+#include "nv/usb/mctp_router.h"
+#include "nv/usb/usb_mctp_header.h"
 #include "nv/lstp/lstp_router.h"
 #include "sys/ipc/event.h"
 #include "sys/usb/usb.h"
 #include "sys/usb/usb_device_descriptor.h"
 
 namespace nv::usb {
-
-// Magic value to indicate USB port reset in mailbox
-constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
 
 enum class Status
 {
@@ -79,6 +95,7 @@ public:
     void               recover_lstp_endpoint();
     static usb::Status set_lstp_rx_event();
     static usb::Status set_lstp_tx_done_event();
+    static bool        is_lstp_device_connected();
     void               lstp_receive();
     uint8_t            lstp_transmit();
 
@@ -95,27 +112,20 @@ public:
     static void wdt_notify();
 
 protected:
-    constexpr static uint16_t UsbDmtfId  = 0xB41A;
+    using MctpHeader                     = UsbMctpHeader;
+    constexpr static uint16_t UsbDmtfId  = nv::usb::UsbDmtfId;
     constexpr static uint32_t BufferSize = USB_MCTP_OUT_BUFFER_LENGTH;
 
     constexpr static uint32_t HidBufferSize = 64;
 
-    using Buffer       = std::array<uint8_t, BufferSize>;
-    using HidBuffer    = std::array<uint8_t, HidBufferSize>;
-    using RoutingTable = std::array<mctp::ShardRoutingTable, ipc::RoutingTableSize>;
-
-    struct [[gnu::packed]] Header
-    {
-        uint16_t dmtf_id;
-        uint8_t  rsvb;
-        uint8_t  length;
-    };
+    using Buffer    = std::array<uint8_t, BufferSize>;
+    using HidBuffer = std::array<uint8_t, HidBufferSize>;
 
     struct [[gnu::packed]] MctpPacket
     {
-        Header                                                    usb_hdr;
-        nv::mctp::Header                                          mctp_hdr;
-        std::array<uint8_t, mctp::PktBufDataLen - sizeof(Header)> msg;
+        MctpHeader                                                    usb_hdr;
+        nv::mctp::Header                                              mctp_hdr;
+        std::array<uint8_t, mctp::PktBufDataLen - sizeof(MctpHeader)> msg;
     };
 
     HidSmb               _hid_smb;
@@ -161,3 +171,5 @@ public:  // static api section
 };
 
 }  // namespace nv::usb
+
+#endif  // !SYS_USB_DISABLED
