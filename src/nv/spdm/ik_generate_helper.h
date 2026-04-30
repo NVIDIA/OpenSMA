@@ -23,6 +23,7 @@ using namespace nv;
 namespace nv::spdm::ik {
 
 constexpr std::array<uint8_t, 5> FmcV4OrdinalThreshold = {'0', '0', '0', '0', '4'};
+constexpr uint32_t               FmcV4NumericThreshold = 4;
 
 // FMC v4 template (current format: CN = "MCXN556 SMA")
 // variable name start with Template is hard code value.
@@ -224,7 +225,10 @@ enum class TemplateComparisonError : uint32_t
     SignatureMismatch              = 8
 };
 
-// Check if two templates are the same
-TemplateComparisonError check_two_template_is_same(const DevIkTemplate& template_1,
-                                                   const DevIkTemplate& template_2);
+// Check if two templates are the same.
+// TemplateType must be either DevIkTemplate (V4) or DevIkTemplateV3 (V3).
+// Both arguments must be the same type so that struct offsets align with cert bytes.
+template<typename TemplateType>
+TemplateComparisonError check_two_template_is_same(const TemplateType& template_1,
+                                                   const TemplateType& template_2);
 }  // namespace nv::spdm::ik

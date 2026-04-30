@@ -101,27 +101,6 @@ private:
     // active before next cfpa configuration write. Otherwise, the content in the customer area
     // will be overwrite by active one.
     bool cfpa_customer_updated{};
-
-    // Get active image version
-    static constexpr uint32_t ImageVersionOffset = 0x24;
-    static constexpr uint32_t ImageVersionMask   = 0xFFFF0000;
-    static constexpr uint32_t ImageVersionShift  = 16;
-
-    uint32_t get_image_version();
-
-    // Get active firmware version
-    static constexpr uint32_t InvalidValue           = 0xFFFFFFFF;
-    static constexpr uint32_t ManifestMagic          = 0x6d676d69;
-    static constexpr uint32_t KeyIndexSkipOffset     = 0x14;
-    static constexpr uint32_t CertBlockAddressOffset = 0x28;
-    static constexpr uint32_t CertBlockSizeOffset    = 0x8;
-    static constexpr uint32_t ManifestVersionOffset  = 0x8;
-    uint32_t                  get_firmware_version();
-
-    // Get active key index
-    static constexpr uint32_t CertBlockMagic       = 0x72646863;
-    static constexpr uint32_t CertBlockFlagsOffset = 0xC;
-    uint32_t                  get_key_index();
 };
 
 }  // namespace sys::flash

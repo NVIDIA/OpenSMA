@@ -142,6 +142,7 @@ typedef enum
     DtStatusFailNonceValidityUpdate,
     DtStatusFailBadAgentVer,
     DtStatusFailBadTokenVer,
+    DtStatusFailBadLifecycleState,
     DtStatusMax,
 } DtStatusT;
 
@@ -265,7 +266,8 @@ DtStatusT verify_dbg_token_fields(
     const std::array<uint8_t, nv::debugtoken::DT_NONCE_SIZE>&       nonce,
     MeasNumT                                                        meas_num,
     uint32_t                                                        token_ver,
-    uint16_t                                                        agent_ver);
+    uint16_t                                                        agent_ver,
+    uint8_t                                                         lifecycle_state);
 
 bool is_pds_dbg_token_nonce_valid();
 bool gen_and_save_dbg_token_nonce();
@@ -275,6 +277,7 @@ bool set_pds_dbg_token_nonce_valid(uint32_t valid);
 void spdm_get_and_save_dbg_token_nonce(MeasNumT meas_num, bool& nonce_status);
 bool get_pds_dbg_token_nonce(std::array<uint8_t, nv::debugtoken::DT_NONCE_SIZE>& nonce);
 void get_debug_token_status(nv::debugtoken::DebugTokenStatsT& status);
+nv::debugtoken::LifecycleState get_device_lifecycle_state();
 void get_debug_token_tlv_config(nv::debugtoken::DebugTokenTlvConfig& config);
 
 }  // namespace measurement

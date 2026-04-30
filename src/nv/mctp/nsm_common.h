@@ -28,6 +28,11 @@ struct WriteProtectionGpioConfig
     Type4WriteProtectionFunction function;
     uint8_t                      port;
     uint8_t                      pin;
+    // Bit position in GetSmaBaseboardSettings(data_index=0x00) response
+    // byte 0. Use values from nv::mctp::T5SmaBaseboardWpResponseBit
+    // defined in nsm_type_5.h. Stored as uint8_t here to keep nsm_common.h
+    // free of Type 5 specific dependencies.
+    uint8_t response_bit_pos;
 };
 
 }  // namespace nv::mctp

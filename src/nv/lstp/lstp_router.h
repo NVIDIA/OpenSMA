@@ -121,17 +121,16 @@ public:
     static void send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t value);
 
     /**
-     * @brief Callback from I2C task with response to be sent to the USB task. (Should be called
-     * from_i2c not to_i2c)
+     * @brief Callback from I2C task with response to be sent to the USB task.
      * @param src_id The source IPCHANDLER ID
      * @param read_len The length of the read data
      * @param read_data The read data
      * @param i2c_status The I2C status
      */
-    static void to_i2c(ipchandler::Id    src_id,
-                       uint16_t          read_len,
-                       ipc::Queue::Item& read_data,
-                       i2c::I2cStatus    i2c_status);
+    static void send_i2c(ipchandler::Id    src_id,
+                         uint16_t          read_len,
+                         ipc::Queue::Item& read_data,
+                         i2c::I2cStatus    i2c_status);
 
     /**
      * @brief Sends an LSTP message to the IPMI channel
@@ -139,7 +138,16 @@ public:
      * @param buffer The buffer with the message data
      * @param size The length of the message data
      */
-    static void to_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size);
+    static void send_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size);
+
+    /**
+     * @brief Send a message to the UART channel
+     *
+     * @param buffer The buffer with the message data
+     *
+     * @return True if the message enqueued successfully, false otherwise
+     */
+    static bool send_uart(std::span<uint8_t>& buffer);
 
 private:
     struct ChannelState
@@ -230,6 +238,13 @@ private:
      * @return The status of the operation
      */
     LstpStatus receive_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+
+    /**
+     * @brief Receive a message from the UART channel
+     * @param buffer The buffer with the request data
+     * @return The status of the operation
+     */
+    LstpStatus receive_uart(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
 };
 
 }  // namespace nv::lstp

@@ -419,7 +419,7 @@ void BOARD_BootClockFROHF144M(void);
 #define BOARD_BOOTCLOCKPLL150M_FLEXCOMM6_CLOCK        12000000UL     /* Clock consumers of FLEXCOMM6_clock output : LPI2C6, LPSPI6, LPUART6, LP_FLEXCOMM6 */
 #define BOARD_BOOTCLOCKPLL150M_FLEXCOMM7_CLOCK        48000000UL     /* Clock consumers of FLEXCOMM7_clock output : LPI2C7, LPSPI7, LPUART7, LP_FLEXCOMM7 */
 #define BOARD_BOOTCLOCKPLL150M_FLEXCOMM8_CLOCK        0UL            /* Clock consumers of FLEXCOMM8_clock output : LPI2C8, LPSPI8, LPUART8, LP_FLEXCOMM8 */
-#define BOARD_BOOTCLOCKPLL150M_FLEXCOMM9_CLOCK        0UL            /* Clock consumers of FLEXCOMM9_clock output : LPI2C9, LPSPI9, LPUART9, LP_FLEXCOMM9 */
+#define BOARD_BOOTCLOCKPLL150M_FLEXCOMM9_CLOCK        12000000UL     /* Clock consumers of FLEXCOMM9_clock output : LPI2C9, LPSPI9, LPUART9, LP_FLEXCOMM9 */
 #define BOARD_BOOTCLOCKPLL150M_FLEXIO_CLOCK           0UL            /* Clock consumers of FLEXIO_clock output : FLEXIO0 */
 #define BOARD_BOOTCLOCKPLL150M_FLEXSPI_CLOCK          0UL            /* Clock consumers of FLEXSPI_clock output : FLEXSPI0 */
 #define BOARD_BOOTCLOCKPLL150M_FREQME_REFERENCE_CLOCK 0UL            /* Clock consumers of FREQME_reference_clock output : FREQME0 */

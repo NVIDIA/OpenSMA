@@ -11,7 +11,7 @@ product: Pins v17.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.12.10
+processor_version: 25.09.10
 external_user_signals: {}
 pin_labels:
 - {pin_num: T6, pin_signal: PIO4_12/WUU0_IN20/USB0_VBUS_DET/FC2_P0/CT4_MAT0/FLEXIO0_D20/PLU_OUT0/CAN0_RXD/ADC0_A5/ADC1_A5, label: GA_GPIO9_IROT_ERROR_N, identifier: xxd;P12;IROT_ERROR}
@@ -35,9 +35,9 @@ pin_labels:
     SSIF SCL}
 - {pin_num: D14, pin_signal: PIO3_7/FC6_P6/FC7_P1/CT4_MAT3/PWM0_B1/FLEXIO0_D15/SMARTDMA_PIO7/FLEXSPI0_A_SCLK/SIM0_VCCEN/SAI0_MCLK, label: LSTP SPI CLK}
 - {pin_num: F15, pin_signal: PIO3_9/FC6_P5/FC7_P2/CT_INP5/PWM0_B2/FLEXIO0_D17/SMARTDMA_PIO9/FLEXSPI0_A_DATA1/SIM0_RST/SAI0_TX_FS, label: LSTP SPI IO1 SDI}
-- {pin_num: K17, pin_signal: PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS, label: LSTP SPI CS1}
+- {pin_num: K17, pin_signal: PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS, label: LSTP SPI CS1, identifier: SPI0_CS1}
 - {pin_num: D15, pin_signal: PIO3_2/FC7_P0/CT4_MAT0/PWM0_X0/FLEXIO0_D10/SMARTDMA_PIO2/SIM1_PD, label: LSTP SPI IO0 SDO}
-- {pin_num: B17, pin_signal: PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b, label: LSTP SPI CS0}
+- {pin_num: B17, pin_signal: PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b, label: LSTP SPI CS0, identifier: SPI0_CS0}
 - {pin_num: F17, pin_signal: PIO3_10/FC6_P2/FC7_P4/CT1_MAT0/PWM0_A3/FLEXIO0_D18/SMARTDMA_PIO10/FLEXSPI0_A_DATA2/SIM0_CLK/SAI0_TXD0, label: LSTP SPI CS3}
 - {pin_num: F16, pin_signal: PIO3_11/WUU0_IN24/FC6_P3/FC7_P5/CT1_MAT1/PWM0_B3/FLEXIO0_D19/SMARTDMA_PIO11/FLEXSPI0_A_DATA3/SIM0_IO/SAI0_RXD0, label: LSTP SPI CS2}
 - {pin_num: C8, pin_signal: PIO0_20/WUU0_IN4/FC0_P4/FC1_P0/CT_INP0/FLEXIO0_D4/I3C0_SDA/TSI0_CH15/ADC0_A12, label: I2C1 SDA}
@@ -48,11 +48,13 @@ pin_labels:
 - {pin_num: F12, pin_signal: PIO0_13/FC1_P5/FC0_P1/CT0_MAT3/FLEXIO0_D5/ADC0_B13, label: I2C0 SCL}
 - {pin_num: C15, pin_signal: PIO3_1/TRIG_IN1/FC6_P0/FC7_P6/CT_INP17/PWM0_B0/FLEXIO0_D9/SMARTDMA_PIO1/FLEXSPI0_A_SS1_b, label: LSTP I2C SDA}
 - {pin_num: D17, pin_signal: PIO3_6/CLKOUT/FC6_P1/CT4_MAT2/PWM0_A1/FLEXIO0_D14/SMARTDMA_PIO6/FLEXSPI0_A_DQS/SIM1_VCCEN/SAI1_MCLK, label: LSTP I2C SCL}
-- {pin_num: A14, pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9, label: LSTP GPIO LED}
-- {pin_num: F10, pin_signal: PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18, label: LSTP GPIO INT}
+- {pin_num: A14, pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9, label: LSTP GPIO LED, identifier: GPIO_LED}
+- {pin_num: F10, pin_signal: PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18, label: LSTP GPIO INT, identifier: GPIO_INT}
 - {pin_num: P1, pin_signal: PIO4_0/WUU0_IN18/TRIG_IN6/FC2_P0/CT_INP16/SMARTDMA_PIO24/PLU_IN0, label: LSTP SSIF SDA}
 - {pin_num: P2, pin_signal: PIO4_1/TRIG_IN7/FC2_P1/CT_INP17/SMARTDMA_PIO25/PLU_IN1, label: LSTP SSIF SCL}
 - {pin_num: E14, pin_signal: PIO3_8/WUU0_IN23/FC6_P4/FC7_P0/CT_INP4/PWM0_A2/FLEXIO0_D16/SMARTDMA_PIO8/FLEXSPI0_A_DATA0/SIM0_PD/SAI0_TX_BCLK, label: LSTP SPI IO0 SDO}
+- {pin_num: J3, pin_signal: PIO2_3/FC9_P1/SDHC0_D0/SCT0_OUT1/FLEXIO0_D11/SMARTDMA_PIO23/FLEXSPI0_B_SCLK/SAI0_RXD0, label: LSTP UART TX}
+- {pin_num: K3, pin_signal: PIO2_4/WUU0_IN17/FC9_P0/SDHC0_CLK/SCT0_OUT2/FLEXIO0_D12/SMARTDMA_PIO24/FLEXSPI0_B_DATA0/SAI0_RXD1, label: LSTP UART RX}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -104,15 +106,18 @@ BOARD_InitPins:
   - {pin_num: A1, peripheral: LP_FLEXCOMM4, signal: LPFLEXCOMM_P0, pin_signal: PIO1_8/WUU0_IN10/LPTMR1_ALT3/TRACE_DATA0/FC4_P0/FC5_P4/CT_INP8/SCT0_OUT2/FLEXIO0_D16/SMARTDMA_PIO4/PLU_OUT0/ENET0_TXD2/I3C1_SDA/TSI0_CH17/ADC1_A8}
   - {pin_num: D14, peripheral: LP_FLEXCOMM7, signal: LPFLEXCOMM_P1, pin_signal: PIO3_7/FC6_P6/FC7_P1/CT4_MAT3/PWM0_B1/FLEXIO0_D15/SMARTDMA_PIO7/FLEXSPI0_A_SCLK/SIM0_VCCEN/SAI0_MCLK}
   - {pin_num: F15, peripheral: LP_FLEXCOMM7, signal: LPFLEXCOMM_P2, pin_signal: PIO3_9/FC6_P5/FC7_P2/CT_INP5/PWM0_B2/FLEXIO0_D17/SMARTDMA_PIO9/FLEXSPI0_A_DATA1/SIM0_RST/SAI0_TX_FS}
-  - {pin_num: K17, peripheral: GPIO3, signal: 'GPIO, 19', pin_signal: PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS}
-  - {pin_num: B17, peripheral: GPIO3, signal: 'GPIO, 0', pin_signal: PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b}
+  - {pin_num: K17, peripheral: GPIO3, signal: 'GPIO, 19', pin_signal: PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS, direction: OUTPUT, gpio_init_state: 'true'}
+  - {pin_num: B17, peripheral: GPIO3, signal: 'GPIO, 0', pin_signal: PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b,
+    direction: OUTPUT, gpio_init_state: 'true'}
   - {pin_num: D17, peripheral: LP_FLEXCOMM6, signal: LPFLEXCOMM_P1, pin_signal: PIO3_6/CLKOUT/FC6_P1/CT4_MAT2/PWM0_A1/FLEXIO0_D14/SMARTDMA_PIO6/FLEXSPI0_A_DQS/SIM1_VCCEN/SAI1_MCLK}
   - {pin_num: C15, peripheral: LP_FLEXCOMM6, signal: LPFLEXCOMM_P0, pin_signal: PIO3_1/TRIG_IN1/FC6_P0/FC7_P6/CT_INP17/PWM0_B0/FLEXIO0_D9/SMARTDMA_PIO1/FLEXSPI0_A_SS1_b}
-  - {pin_num: A14, peripheral: GPIO0, signal: 'GPIO, 5', pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9}
-  - {pin_num: F10, peripheral: GPIO0, signal: 'GPIO, 26', pin_signal: PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18, eft_interrupt: disable}
+  - {pin_num: A14, peripheral: GPIO0, signal: 'GPIO, 5', pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9, direction: OUTPUT, gpio_init_state: 'true'}
+  - {pin_num: F10, peripheral: GPIO0, signal: 'GPIO, 26', pin_signal: PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18, direction: INPUT}
   - {pin_num: P1, peripheral: LP_FLEXCOMM2, signal: LPFLEXCOMM_P0, pin_signal: PIO4_0/WUU0_IN18/TRIG_IN6/FC2_P0/CT_INP16/SMARTDMA_PIO24/PLU_IN0}
   - {pin_num: P2, peripheral: LP_FLEXCOMM2, signal: LPFLEXCOMM_P1, pin_signal: PIO4_1/TRIG_IN7/FC2_P1/CT_INP17/SMARTDMA_PIO25/PLU_IN1}
   - {pin_num: E14, peripheral: LP_FLEXCOMM7, signal: LPFLEXCOMM_P0, pin_signal: PIO3_8/WUU0_IN23/FC6_P4/FC7_P0/CT_INP4/PWM0_A2/FLEXIO0_D16/SMARTDMA_PIO8/FLEXSPI0_A_DATA0/SIM0_PD/SAI0_TX_BCLK}
+  - {pin_num: J3, peripheral: LP_FLEXCOMM9, signal: LPFLEXCOMM_P1, pin_signal: PIO2_3/FC9_P1/SDHC0_D0/SCT0_OUT1/FLEXIO0_D11/SMARTDMA_PIO23/FLEXSPI0_B_SCLK/SAI0_RXD0}
+  - {pin_num: K3, peripheral: LP_FLEXCOMM9, signal: LPFLEXCOMM_P0, pin_signal: PIO2_4/WUU0_IN17/FC9_P0/SDHC0_CLK/SCT0_OUT2/FLEXIO0_D12/SMARTDMA_PIO24/FLEXSPI0_B_DATA0/SAI0_RXD1}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -125,16 +130,50 @@ BOARD_InitPins:
  * END ****************************************************************************************************************/
 void BOARD_InitPins(void)
 {
+    /* Enables the clock for GPIO0: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Gpio0);
+    /* Enables the clock for GPIO3: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Gpio3);
     /* Enables the clock for GPIO4: Enables clock */
     CLOCK_EnableClock(kCLOCK_Gpio4);
     /* Enables the clock for PORT0 controller: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port0);
     /* Enables the clock for PORT1: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port1);
+    /* Enables the clock for PORT2: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Port2);
     /* Enables the clock for PORT3: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port3);
     /* Enables the clock for PORT4: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port4);
+
+    gpio_pin_config_t GPIO_LED_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO0_5 (pin A14)  */
+    GPIO_PinInit(BOARD_INITPINS_GPIO_LED_GPIO, BOARD_INITPINS_GPIO_LED_PIN, &GPIO_LED_config);
+
+    gpio_pin_config_t GPIO_INT_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO0_26 (pin F10)  */
+    GPIO_PinInit(BOARD_INITPINS_GPIO_INT_GPIO, BOARD_INITPINS_GPIO_INT_PIN, &GPIO_INT_config);
+
+    gpio_pin_config_t SPI0_CS0_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO3_0 (pin B17)  */
+    GPIO_PinInit(BOARD_INITPINS_SPI0_CS0_GPIO, BOARD_INITPINS_SPI0_CS0_PIN, &SPI0_CS0_config);
+
+    gpio_pin_config_t SPI0_CS1_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO3_19 (pin K17)  */
+    GPIO_PinInit(BOARD_INITPINS_SPI0_CS1_GPIO, BOARD_INITPINS_SPI0_CS1_PIN, &SPI0_CS1_config);
 
     gpio_pin_config_t IROT_ERROR_config = {
         .pinDirection = kGPIO_DigitalInput,
@@ -163,9 +202,6 @@ void BOARD_InitPins(void)
     };
     /* Initialize GPIO functionality on pin PIO4_20 (pin T10)  */
     GPIO_PinInit(BOARD_INITPINS_PGOOD_GPIO, BOARD_INITPINS_PGOOD_PIN, &PGOOD_config);
-
-    /* EFT detect interrupts configuration on PORT0_ */
-    PORT_DisableEFTDetectInterrupts(PORT0, 0x04000000u);
 
     /* PORT0_12 (pin D11) is configured as FC0_P0 */
     PORT_SetPinMux(PORT0, 12U, kPORT_MuxAlt3);
@@ -245,7 +281,7 @@ void BOARD_InitPins(void)
                       | PORT_PCR_IBE(PCR_IBE_ibe1));
 
     /* PORT0_26 (pin F10) is configured as PIO0_26 */
-    PORT_SetPinMux(PORT0, 26U, kPORT_MuxAlt0);
+    PORT_SetPinMux(BOARD_INITPINS_GPIO_INT_PORT, BOARD_INITPINS_GPIO_INT_PIN, kPORT_MuxAlt0);
 
     PORT0->PCR[26] = ((PORT0->PCR[26] &
                        /* Mask bits to zero which are setting */
@@ -255,7 +291,7 @@ void BOARD_InitPins(void)
                       | PORT_PCR_IBE(PCR_IBE_ibe1));
 
     /* PORT0_5 (pin A14) is configured as PIO0_5 */
-    PORT_SetPinMux(PORT0, 5U, kPORT_MuxAlt0);
+    PORT_SetPinMux(BOARD_INITPINS_GPIO_LED_PORT, BOARD_INITPINS_GPIO_LED_PIN, kPORT_MuxAlt0);
 
     PORT0->PCR[5] = ((PORT0->PCR[5] &
                       /* Mask bits to zero which are setting */
@@ -346,8 +382,28 @@ void BOARD_InitPins(void)
                      /* Input Buffer Enable: Enables. */
                      | PORT_PCR_IBE(PCR_IBE_ibe1));
 
+    /* PORT2_3 (pin J3) is configured as FC9_P1 */
+    PORT_SetPinMux(PORT2, 3U, kPORT_MuxAlt2);
+
+    PORT2->PCR[3] = ((PORT2->PCR[3] &
+                      /* Mask bits to zero which are setting */
+                      (~(PORT_PCR_IBE_MASK)))
+
+                     /* Input Buffer Enable: Enables. */
+                     | PORT_PCR_IBE(PCR_IBE_ibe1));
+
+    /* PORT2_4 (pin K3) is configured as FC9_P0 */
+    PORT_SetPinMux(PORT2, 4U, kPORT_MuxAlt2);
+
+    PORT2->PCR[4] = ((PORT2->PCR[4] &
+                      /* Mask bits to zero which are setting */
+                      (~(PORT_PCR_IBE_MASK)))
+
+                     /* Input Buffer Enable: Enables. */
+                     | PORT_PCR_IBE(PCR_IBE_ibe1));
+
     /* PORT3_0 (pin B17) is configured as PIO3_0 */
-    PORT_SetPinMux(PORT3, 0U, kPORT_MuxAlt0);
+    PORT_SetPinMux(BOARD_INITPINS_SPI0_CS0_PORT, BOARD_INITPINS_SPI0_CS0_PIN, kPORT_MuxAlt0);
 
     PORT3->PCR[0] = ((PORT3->PCR[0] &
                       /* Mask bits to zero which are setting */
@@ -367,7 +423,7 @@ void BOARD_InitPins(void)
                      | PORT_PCR_IBE(PCR_IBE_ibe1));
 
     /* PORT3_19 (pin K17) is configured as PIO3_19 */
-    PORT_SetPinMux(PORT3, 19U, kPORT_MuxAlt0);
+    PORT_SetPinMux(BOARD_INITPINS_SPI0_CS1_PORT, BOARD_INITPINS_SPI0_CS1_PIN, kPORT_MuxAlt0);
 
     PORT3->PCR[19] = ((PORT3->PCR[19] &
                        /* Mask bits to zero which are setting */

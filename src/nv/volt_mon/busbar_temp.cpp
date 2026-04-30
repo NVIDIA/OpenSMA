@@ -31,6 +31,7 @@
 #include "nv/ipc/task.h"
 
 #include "nv/volt_mon/adc.h"
+#include "nv/logger/log.h"
 
 namespace nv::busbar_temp {
 
@@ -325,6 +326,15 @@ void BusbarTemp::update_adccmd_threshold(uint8_t sensorIdx, uint16_t thLow, uint
 void BusbarTemp::busbar_temp_adc_isr(AdcInstance                         instance,
                                      const sys::adc::ADC::AdcConvResult& result)
 {
+    nv::logger::Logger::add_from_isr(nv::logger::Event::BusbarTempIsr.unique_id,
+                                     nv::logger::Event::BusbarTempIsr.default_level,
+                                     volt_mon::make_adc_isr_log_data(instance,
+                                                                     result.commandIdSource,
+                                                                     result.triggerIdSource,
+                                                                     result.loopCountIndex,
+                                                                     result.convValue),
+                                     nv::logger::OutputDirection::Flash);
+
     uint8_t   sensorIdx = 0;
     Threshold thLow = 0, thHigh = 0;
 

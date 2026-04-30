@@ -18,11 +18,11 @@
 /* clang-format off */
 /* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
 !!GlobalInfo
-product: Clocks v19.0
+product: Clocks v18.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.12.10
+processor_version: 25.09.10
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 /* clang-format on */
 
@@ -284,6 +284,7 @@ outputs:
 - {id: FLEXCOMM4_clock.outFreq, value: 12 MHz}
 - {id: FLEXCOMM6_clock.outFreq, value: 12 MHz}
 - {id: FLEXCOMM7_clock.outFreq, value: 48 MHz}
+- {id: FLEXCOMM9_clock.outFreq, value: 12 MHz}
 - {id: FRO_12M_clock.outFreq, value: 12 MHz}
 - {id: FRO_HF_DIV_clock.outFreq, value: 48 MHz}
 - {id: FRO_HF_clock.outFreq, value: 48 MHz}
@@ -310,6 +311,7 @@ settings:
 - {id: FLEXCOMM4CLKDIV_HALT, value: Enable}
 - {id: FLEXCOMM6CLKDIV_HALT, value: Enable}
 - {id: FLEXCOMM7CLKDIV_HALT, value: Enable}
+- {id: FLEXCOMM9CLKDIV_HALT, value: Enable}
 - {id: FROHFDIV_HALT, value: Enable}
 - {id: I3C0FCLKDIV_HALT, value: Enable}
 - {id: I3C1FCLKDIV_HALT, value: Enable}
@@ -327,6 +329,7 @@ settings:
 - {id: SYSCON.FCCLKSEL4.sel, value: SCG.FRO_12M}
 - {id: SYSCON.FCCLKSEL6.sel, value: SCG.FRO_12M}
 - {id: SYSCON.FCCLKSEL7.sel, value: SYSCON.FRO_HF_DIV_CLK}
+- {id: SYSCON.FCCLKSEL9.sel, value: SCG.FRO_12M}
 - {id: SYSCON.FREQMEREFCLKSEL.sel, value: SYSCON.evtg_out0a}
 - {id: SYSCON.FREQMETARGETCLKSEL.sel, value: SYSCON.evtg_out0a}
 - {id: SYSCON.I3C0FCLKDIV.scale, value: '6'}
@@ -400,6 +403,7 @@ void BOARD_BootClockPLL150M(void)
     CLOCK_AttachClk(kFRO12M_to_FLEXCOMM4);                 /*!< Switch FLEXCOMM4 to FRO12M */
     CLOCK_AttachClk(kFRO12M_to_FLEXCOMM6);                 /*!< Switch FLEXCOMM6 to FRO12M */
     CLOCK_AttachClk(kFRO_HF_DIV_to_FLEXCOMM7);                 /*!< Switch FLEXCOMM7 to FRO_HF_DIV */
+    CLOCK_AttachClk(kFRO12M_to_FLEXCOMM9);                 /*!< Switch FLEXCOMM9 to FRO12M */
     CLOCK_AttachClk(kCLK_1M_to_WDT1);                 /*!< Switch WDT1 to CLK_1M */
 
     /*!< Set up dividers */
@@ -416,6 +420,7 @@ void BOARD_BootClockPLL150M(void)
     CLOCK_SetClkDiv(kCLOCK_DivFlexcom4Clk, 1U);           /*!< Set FLEXCOMM4CLKDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivFlexcom6Clk, 1U);           /*!< Set FLEXCOMM6CLKDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivFlexcom7Clk, 1U);           /*!< Set FLEXCOMM7CLKDIV divider to value 1 */
+    CLOCK_SetClkDiv(kCLOCK_DivFlexcom9Clk, 1U);           /*!< Set FLEXCOMM9CLKDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivWdt1Clk, 1U);           /*!< Set WDT1CLKDIV divider to value 1 */
 
     /* Set SystemCoreClock variable */

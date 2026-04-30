@@ -24,7 +24,7 @@
             <file path="board/pin_mux.h" update_enabled="true"/>
          </generated_project_files>
          <pins_profile>
-            <processor_version>25.12.10</processor_version>
+            <processor_version>25.09.10</processor_version>
             <pin_labels>
                <pin_label pin_num="T6" pin_signal="PIO4_12/WUU0_IN20/USB0_VBUS_DET/FC2_P0/CT4_MAT0/FLEXIO0_D20/PLU_OUT0/CAN0_RXD/ADC0_A5/ADC1_A5" label="GA_GPIO9_IROT_ERROR_N" identifier="xxd;P12;IROT_ERROR"/>
                <pin_label pin_num="T7" pin_signal="PIO4_13/TRIG_IN8/FC2_P1/USB1_ID/CT4_MAT1/FLEXIO0_D21/PLU_OUT1/CAN0_TXD/ADC0_B5/ADC1_B5" label="GA_GPIO10_IROT_AP_BOOT_COMPLETE" identifier="IROT_AP_BOOT;IROT_BOOT"/>
@@ -43,9 +43,9 @@
                <pin_label pin_num="B3" pin_signal="PIO1_5/FREQME_CLK_IN1/FC3_P5/FC5_P1/CT1_MAT3/SCT0_OUT1/FLEXIO0_D13/SMARTDMA_PIO1/ENET0_TXEN/SAI0_RXD1/TSI0_CH5/ADC0_A21/CMP0_IN3" label="LSTP SSIF SCL"/>
                <pin_label pin_num="D14" pin_signal="PIO3_7/FC6_P6/FC7_P1/CT4_MAT3/PWM0_B1/FLEXIO0_D15/SMARTDMA_PIO7/FLEXSPI0_A_SCLK/SIM0_VCCEN/SAI0_MCLK" label="LSTP SPI CLK"/>
                <pin_label pin_num="F15" pin_signal="PIO3_9/FC6_P5/FC7_P2/CT_INP5/PWM0_B2/FLEXIO0_D17/SMARTDMA_PIO9/FLEXSPI0_A_DATA1/SIM0_RST/SAI0_TX_FS" label="LSTP SPI IO1 SDI"/>
-               <pin_label pin_num="K17" pin_signal="PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS" label="LSTP SPI CS1"/>
+               <pin_label pin_num="K17" pin_signal="PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS" label="LSTP SPI CS1" identifier="SPI0_CS1"/>
                <pin_label pin_num="D15" pin_signal="PIO3_2/FC7_P0/CT4_MAT0/PWM0_X0/FLEXIO0_D10/SMARTDMA_PIO2/SIM1_PD" label="LSTP SPI IO0 SDO"/>
-               <pin_label pin_num="B17" pin_signal="PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b" label="LSTP SPI CS0"/>
+               <pin_label pin_num="B17" pin_signal="PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b" label="LSTP SPI CS0" identifier="SPI0_CS0"/>
                <pin_label pin_num="F17" pin_signal="PIO3_10/FC6_P2/FC7_P4/CT1_MAT0/PWM0_A3/FLEXIO0_D18/SMARTDMA_PIO10/FLEXSPI0_A_DATA2/SIM0_CLK/SAI0_TXD0" label="LSTP SPI CS3"/>
                <pin_label pin_num="F16" pin_signal="PIO3_11/WUU0_IN24/FC6_P3/FC7_P5/CT1_MAT1/PWM0_B3/FLEXIO0_D19/SMARTDMA_PIO11/FLEXSPI0_A_DATA3/SIM0_IO/SAI0_RXD0" label="LSTP SPI CS2"/>
                <pin_label pin_num="C8" pin_signal="PIO0_20/WUU0_IN4/FC0_P4/FC1_P0/CT_INP0/FLEXIO0_D4/I3C0_SDA/TSI0_CH15/ADC0_A12" label="I2C1 SDA"/>
@@ -56,11 +56,13 @@
                <pin_label pin_num="F12" pin_signal="PIO0_13/FC1_P5/FC0_P1/CT0_MAT3/FLEXIO0_D5/ADC0_B13" label="I2C0 SCL"/>
                <pin_label pin_num="C15" pin_signal="PIO3_1/TRIG_IN1/FC6_P0/FC7_P6/CT_INP17/PWM0_B0/FLEXIO0_D9/SMARTDMA_PIO1/FLEXSPI0_A_SS1_b" label="LSTP I2C SDA"/>
                <pin_label pin_num="D17" pin_signal="PIO3_6/CLKOUT/FC6_P1/CT4_MAT2/PWM0_A1/FLEXIO0_D14/SMARTDMA_PIO6/FLEXSPI0_A_DQS/SIM1_VCCEN/SAI1_MCLK" label="LSTP I2C SCL"/>
-               <pin_label pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9" label="LSTP GPIO LED"/>
-               <pin_label pin_num="F10" pin_signal="PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18" label="LSTP GPIO INT"/>
+               <pin_label pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9" label="LSTP GPIO LED" identifier="GPIO_LED"/>
+               <pin_label pin_num="F10" pin_signal="PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18" label="LSTP GPIO INT" identifier="GPIO_INT"/>
                <pin_label pin_num="P1" pin_signal="PIO4_0/WUU0_IN18/TRIG_IN6/FC2_P0/CT_INP16/SMARTDMA_PIO24/PLU_IN0" label="LSTP SSIF SDA"/>
                <pin_label pin_num="P2" pin_signal="PIO4_1/TRIG_IN7/FC2_P1/CT_INP17/SMARTDMA_PIO25/PLU_IN1" label="LSTP SSIF SCL"/>
                <pin_label pin_num="E14" pin_signal="PIO3_8/WUU0_IN23/FC6_P4/FC7_P0/CT_INP4/PWM0_A2/FLEXIO0_D16/SMARTDMA_PIO8/FLEXSPI0_A_DATA0/SIM0_PD/SAI0_TX_BCLK" label="LSTP SPI IO0 SDO"/>
+               <pin_label pin_num="J3" pin_signal="PIO2_3/FC9_P1/SDHC0_D0/SCT0_OUT1/FLEXIO0_D11/SMARTDMA_PIO23/FLEXSPI0_B_SCLK/SAI0_RXD0" label="LSTP UART TX"/>
+               <pin_label pin_num="K3" pin_signal="PIO2_4/WUU0_IN17/FC9_P0/SDHC0_CLK/SCT0_OUT2/FLEXIO0_D12/SMARTDMA_PIO24/FLEXSPI0_B_DATA0/SAI0_RXD1" label="LSTP UART RX"/>
             </pin_labels>
             <external_user_signals>
                <properties/>
@@ -111,6 +113,11 @@
                      </feature>
                   </dependency>
                   <dependency resourceType="Peripheral" resourceId="LP_FLEXCOMM2" description="Peripheral LP_FLEXCOMM2 signals are routed in the Pins Tool, but the peripheral is not initialized in the Peripherals Tool." problem_level="1" source="Pins:BOARD_InitPins">
+                     <feature name="initialized" evaluation="equal">
+                        <data>true</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="Peripheral" resourceId="LP_FLEXCOMM9" description="Peripheral LP_FLEXCOMM9 signals are routed in the Pins Tool, but the peripheral is not initialized in the Peripherals Tool." problem_level="1" source="Pins:BOARD_InitPins">
                      <feature name="initialized" evaluation="equal">
                         <data>true</data>
                      </feature>
@@ -201,30 +208,47 @@
                   <pin peripheral="LP_FLEXCOMM4" signal="LPFLEXCOMM_P0" pin_num="A1" pin_signal="PIO1_8/WUU0_IN10/LPTMR1_ALT3/TRACE_DATA0/FC4_P0/FC5_P4/CT_INP8/SCT0_OUT2/FLEXIO0_D16/SMARTDMA_PIO4/PLU_OUT0/ENET0_TXD2/I3C1_SDA/TSI0_CH17/ADC1_A8"/>
                   <pin peripheral="LP_FLEXCOMM7" signal="LPFLEXCOMM_P1" pin_num="D14" pin_signal="PIO3_7/FC6_P6/FC7_P1/CT4_MAT3/PWM0_B1/FLEXIO0_D15/SMARTDMA_PIO7/FLEXSPI0_A_SCLK/SIM0_VCCEN/SAI0_MCLK"/>
                   <pin peripheral="LP_FLEXCOMM7" signal="LPFLEXCOMM_P2" pin_num="F15" pin_signal="PIO3_9/FC6_P5/FC7_P2/CT_INP5/PWM0_B2/FLEXIO0_D17/SMARTDMA_PIO9/FLEXSPI0_A_DATA1/SIM0_RST/SAI0_TX_FS"/>
-                  <pin peripheral="GPIO3" signal="GPIO, 19" pin_num="K17" pin_signal="PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS"/>
-                  <pin peripheral="GPIO3" signal="GPIO, 0" pin_num="B17" pin_signal="PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b"/>
+                  <pin peripheral="GPIO3" signal="GPIO, 19" pin_num="K17" pin_signal="PIO3_19/FC7_P6/CT2_MAT1/FLEXIO0_D27/SMARTDMA_PIO19/SAI1_RX_FS">
+                     <pin_features>
+                        <pin_feature name="direction" value="OUTPUT"/>
+                        <pin_feature name="gpio_init_state" value="true"/>
+                     </pin_features>
+                  </pin>
+                  <pin peripheral="GPIO3" signal="GPIO, 0" pin_num="B17" pin_signal="PIO3_0/WUU0_IN22/TRIG_IN0/FC7_P3/CT_INP16/PWM0_A0/FLEXIO0_D8/SMARTDMA_PIO0/FLEXSPI0_A_SS0_b">
+                     <pin_features>
+                        <pin_feature name="direction" value="OUTPUT"/>
+                        <pin_feature name="gpio_init_state" value="true"/>
+                     </pin_features>
+                  </pin>
                   <pin peripheral="LP_FLEXCOMM6" signal="LPFLEXCOMM_P1" pin_num="D17" pin_signal="PIO3_6/CLKOUT/FC6_P1/CT4_MAT2/PWM0_A1/FLEXIO0_D14/SMARTDMA_PIO6/FLEXSPI0_A_DQS/SIM1_VCCEN/SAI1_MCLK"/>
                   <pin peripheral="LP_FLEXCOMM6" signal="LPFLEXCOMM_P0" pin_num="C15" pin_signal="PIO3_1/TRIG_IN1/FC6_P0/FC7_P6/CT_INP17/PWM0_B0/FLEXIO0_D9/SMARTDMA_PIO1/FLEXSPI0_A_SS1_b"/>
-                  <pin peripheral="GPIO0" signal="GPIO, 5" pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9"/>
+                  <pin peripheral="GPIO0" signal="GPIO, 5" pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9">
+                     <pin_features>
+                        <pin_feature name="direction" value="OUTPUT"/>
+                        <pin_feature name="gpio_init_state" value="true"/>
+                     </pin_features>
+                  </pin>
                   <pin peripheral="GPIO0" signal="GPIO, 26" pin_num="F10" pin_signal="PIO0_26/FC1_P2/CT0_MAT2/ADC0_B18">
                      <pin_features>
-                        <pin_feature name="eft_interrupt" value="disable"/>
+                        <pin_feature name="direction" value="INPUT"/>
                      </pin_features>
                   </pin>
                   <pin peripheral="LP_FLEXCOMM2" signal="LPFLEXCOMM_P0" pin_num="P1" pin_signal="PIO4_0/WUU0_IN18/TRIG_IN6/FC2_P0/CT_INP16/SMARTDMA_PIO24/PLU_IN0"/>
                   <pin peripheral="LP_FLEXCOMM2" signal="LPFLEXCOMM_P1" pin_num="P2" pin_signal="PIO4_1/TRIG_IN7/FC2_P1/CT_INP17/SMARTDMA_PIO25/PLU_IN1"/>
                   <pin peripheral="LP_FLEXCOMM7" signal="LPFLEXCOMM_P0" pin_num="E14" pin_signal="PIO3_8/WUU0_IN23/FC6_P4/FC7_P0/CT_INP4/PWM0_A2/FLEXIO0_D16/SMARTDMA_PIO8/FLEXSPI0_A_DATA0/SIM0_PD/SAI0_TX_BCLK"/>
+                  <pin peripheral="LP_FLEXCOMM9" signal="LPFLEXCOMM_P1" pin_num="J3" pin_signal="PIO2_3/FC9_P1/SDHC0_D0/SCT0_OUT1/FLEXIO0_D11/SMARTDMA_PIO23/FLEXSPI0_B_SCLK/SAI0_RXD0"/>
+                  <pin peripheral="LP_FLEXCOMM9" signal="LPFLEXCOMM_P0" pin_num="K3" pin_signal="PIO2_4/WUU0_IN17/FC9_P0/SDHC0_CLK/SCT0_OUT2/FLEXIO0_D12/SMARTDMA_PIO24/FLEXSPI0_B_DATA0/SAI0_RXD1"/>
                </pins>
             </function>
          </functions_list>
       </pins>
-      <clocks name="Clocks" version="19.0" enabled="true" update_project_code="true">
+      <clocks name="Clocks" version="18.0" enabled="true" update_project_code="true">
          <generated_project_files>
             <file path="board/clock_config.c" update_enabled="true"/>
             <file path="board/clock_config.h" update_enabled="true"/>
          </generated_project_files>
          <clocks_profile>
-            <processor_version>25.12.10</processor_version>
+            <processor_version>25.09.10</processor_version>
          </clocks_profile>
          <clock_configurations>
             <clock_configuration name="BOARD_BootClockFRO12M" id_prefix="" prefix_user_defined="false">
@@ -443,6 +467,7 @@
                   <clock_output id="FLEXCOMM4_clock.outFreq" value="12 MHz" locked="false" accuracy=""/>
                   <clock_output id="FLEXCOMM6_clock.outFreq" value="12 MHz" locked="false" accuracy=""/>
                   <clock_output id="FLEXCOMM7_clock.outFreq" value="48 MHz" locked="false" accuracy=""/>
+                  <clock_output id="FLEXCOMM9_clock.outFreq" value="12 MHz" locked="false" accuracy=""/>
                   <clock_output id="FRO_12M_clock.outFreq" value="12 MHz" locked="false" accuracy=""/>
                   <clock_output id="FRO_HF_DIV_clock.outFreq" value="48 MHz" locked="false" accuracy=""/>
                   <clock_output id="FRO_HF_clock.outFreq" value="48 MHz" locked="false" accuracy=""/>
@@ -470,6 +495,7 @@
                   <setting id="FLEXCOMM4CLKDIV_HALT" value="Enable" locked="false"/>
                   <setting id="FLEXCOMM6CLKDIV_HALT" value="Enable" locked="false"/>
                   <setting id="FLEXCOMM7CLKDIV_HALT" value="Enable" locked="false"/>
+                  <setting id="FLEXCOMM9CLKDIV_HALT" value="Enable" locked="false"/>
                   <setting id="FROHFDIV_HALT" value="Enable" locked="false"/>
                   <setting id="I3C0FCLKDIV_HALT" value="Enable" locked="false"/>
                   <setting id="I3C1FCLKDIV_HALT" value="Enable" locked="false"/>
@@ -487,6 +513,7 @@
                   <setting id="SYSCON.FCCLKSEL4.sel" value="SCG.FRO_12M" locked="false"/>
                   <setting id="SYSCON.FCCLKSEL6.sel" value="SCG.FRO_12M" locked="false"/>
                   <setting id="SYSCON.FCCLKSEL7.sel" value="SYSCON.FRO_HF_DIV_CLK" locked="false"/>
+                  <setting id="SYSCON.FCCLKSEL9.sel" value="SCG.FRO_12M" locked="false"/>
                   <setting id="SYSCON.FREQMEREFCLKSEL.sel" value="SYSCON.evtg_out0a" locked="false"/>
                   <setting id="SYSCON.FREQMETARGETCLKSEL.sel" value="SYSCON.evtg_out0a" locked="false"/>
                   <setting id="SYSCON.I3C0FCLKDIV.scale" value="6" locked="false"/>
@@ -502,14 +529,9 @@
                <description></description>
                <options/>
                <dependencies>
-                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.extal" description="&apos;EXTAL&apos; (Pins tool id: SCG0.extal, Clocks tool id: SCG.EXTAL) needs to be routed" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.EXTAL" description="&apos;EXTAL&apos; (Pins tool id: SCG0.EXTAL, Clocks tool id: SCG.EXTAL) needs to be routed" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
                      <feature name="routed" evaluation="">
                         <data>true</data>
-                     </feature>
-                  </dependency>
-                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.extal" description="&apos;EXTAL&apos; (Pins tool id: SCG0.extal, Clocks tool id: SCG.EXTAL) needs to have &apos;INPUT&apos; direction" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
-                     <feature name="direction" evaluation="">
-                        <data>INPUT</data>
                      </feature>
                   </dependency>
                   <dependency resourceType="SWComponent" resourceId="platform.drivers.common" description="Clocks initialization requires the COMMON Driver in the project." problem_level="2" source="Clocks:BOARD_BootClockPLL100M">
@@ -645,7 +667,7 @@
             <file path="board/peripherals.h" update_enabled="true"/>
          </generated_project_files>
          <peripherals_profile>
-            <processor_version>25.12.10</processor_version>
+            <processor_version>25.09.10</processor_version>
          </peripherals_profile>
          <functional_groups>
             <functional_group name="BOARD_InitPeripherals" uuid="78304674-57e7-4c05-895d-e21c08633a8a" called_from_default_init="true" id_prefix="" core="cm33_core0">
@@ -790,6 +812,21 @@
                   <dependency resourceType="ClockOutput" resourceId="I3C1_SLOW_clock" description="I3C1FCLKS must be greater than or equal to 1 MHz." problem_level="2" source="Peripherals:BOARD_InitPeripherals">
                      <feature name="frequency" evaluation="greaterOrEqual">
                         <data type="Frequency" unit="Hz">1000000</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="ClockOutput" resourceId="FLEXCOMM9_clock" description="FLEXCOMM9CLK is inactive." problem_level="2" source="Peripherals:BOARD_InitPeripherals">
+                     <feature name="frequency" evaluation="greaterThan">
+                        <data type="Frequency" unit="Hz">0</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="LP_FLEXCOMM9.uart_tx" description="Signal TXD is not routed." problem_level="1" source="Peripherals:BOARD_InitPeripherals">
+                     <feature name="routed" evaluation="equal">
+                        <data type="Boolean">true</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="LP_FLEXCOMM9.uart_rx" description="Signal RXD is not routed." problem_level="1" source="Peripherals:BOARD_InitPeripherals">
+                     <feature name="routed" evaluation="equal">
+                        <data type="Boolean">true</data>
                      </feature>
                   </dependency>
                </dependencies>
@@ -1312,6 +1349,61 @@
                         </struct>
                      </config_set>
                   </instance>
+                  <instance name="LP_FLEXCOMM9" uuid="fecf70a5-dbe3-4238-aa88-cbc5ea7c5ae8" type="lpflexcomm_lpuart" type_id="lpflexcomm_lpuart_2.3.0" mode="polling" peripheral="LP_FLEXCOMM9" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
+                     <config_set name="fsl_lpuart" quick_selection="QuickSelection1">
+                        <struct name="lpuartConfig">
+                           <struct name="timingConfig">
+                              <setting name="clockSource" value="LPFLEXCOMMFunctionClock"/>
+                              <setting name="lpuartSrcClkFreq" value="ClocksTool_DefaultInit"/>
+                              <setting name="baudRateBpsStr" value="115200"/>
+                           </struct>
+                           <setting name="parityMode" value="kLPUART_ParityDisabled"/>
+                           <setting name="dataBitsCount" value="kLPUART_EightDataBits"/>
+                           <setting name="isMsb" value="false"/>
+                           <setting name="stopBitCount" value="kLPUART_OneStopBit"/>
+                           <setting name="enableMatchAddress1" value="false"/>
+                           <setting name="matchAddress1" value="0"/>
+                           <setting name="enableMatchAddress2" value="false"/>
+                           <setting name="matchAddress2" value="0"/>
+                           <setting name="txFifoWatermark" value="0"/>
+                           <setting name="rxFifoWatermark" value="1"/>
+                           <setting name="enableRxRTS" value="false"/>
+                           <setting name="rtsDelayValue" value="1"/>
+                           <setting name="enableTxCTS" value="false"/>
+                           <setting name="txCtsSource" value="kLPUART_CtsSourcePin"/>
+                           <setting name="txCtsConfig" value="kLPUART_CtsSampleAtStart"/>
+                           <setting name="rxIdleType" value="kLPUART_IdleTypeStartBit"/>
+                           <setting name="rxIdleConfig" value="kLPUART_IdleCharacter1"/>
+                           <setting name="enableSingleWire" value="false"/>
+                           <setting name="enableTx" value="true"/>
+                           <setting name="enableRx" value="true"/>
+                           <struct name="timeoutConfig">
+                              <setting name="rxExtendedTimeoutValue" value="0"/>
+                              <setting name="txExtendedTimeoutValue" value="0"/>
+                              <struct name="rxCounter0">
+                                 <setting name="enableCounter" value="false"/>
+                                 <setting name="timeoutCondition" value="kLPUART_TimeoutAfterCharacters"/>
+                                 <setting name="timeoutValue" value="0"/>
+                              </struct>
+                              <struct name="rxCounter1">
+                                 <setting name="enableCounter" value="false"/>
+                                 <setting name="timeoutCondition" value="kLPUART_TimeoutAfterCharacters"/>
+                                 <setting name="timeoutValue" value="0"/>
+                              </struct>
+                              <struct name="txCounter0">
+                                 <setting name="enableCounter" value="false"/>
+                                 <setting name="timeoutCondition" value="kLPUART_TimeoutAfterCharacters"/>
+                                 <setting name="timeoutValue" value="0"/>
+                              </struct>
+                              <struct name="txCounter1">
+                                 <setting name="enableCounter" value="false"/>
+                                 <setting name="timeoutCondition" value="kLPUART_TimeoutAfterCharacters"/>
+                                 <setting name="timeoutValue" value="0"/>
+                              </struct>
+                           </struct>
+                        </struct>
+                     </config_set>
+                  </instance>
                </instances>
             </functional_group>
          </functional_groups>
@@ -1349,7 +1441,7 @@
             <file path="trustzone/resource_config.h" update_enabled="true"/>
          </generated_project_files>
          <tee_profile>
-            <processor_version>25.12.10</processor_version>
+            <processor_version>25.09.10</processor_version>
             <tool_options>
                <option id="_output_type_" value="c_code"/>
                <option id="_legacy_source_names_" value="no"/>

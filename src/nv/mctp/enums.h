@@ -177,10 +177,9 @@ enum class NsmFwEvent : uint8_t
 
 enum class NsmGlobalEventSetting : uint8_t
 {
-    EventDisable      = 0x0,
-    EventPolling      = 0x1,
-    EventPush         = 0x2,
-    EventNotSubscribe = 0x3,
+    EventDisable = 0x0,
+    EventPolling = 0x1,
+    EventPush    = 0x2,
 };
 
 typedef enum
@@ -371,6 +370,7 @@ typedef enum
     OtpL4SignatureProgrammedCheckFail = 17,
     L4verifyL5CertFail                = 18,
     InvalidTemplate                   = 19,
+    NpdsFmcNumericVersionReadFail     = 20,
 } ProgramCertificateStatus;
 
 // NVIDIA TYPE 2 PciLinks Command Code
@@ -692,7 +692,7 @@ enum Type4WriteProtectionFunction : uint8_t
 {
     WP_BASEBOARD_FRU_EEPROM = 129,  // Baseboard FRU EEPROM
     WP_NVSW_QM4_SPI         = 131,  // NVSW (QM4) SPI
-    WP_GPU_SPI              = 170,  // GPU SPI
+    WP_GPU_SPI              = 160,  // GPU SPI
     WP_CX9_SPI              = 183,  // CX9 SPI
 };
 

@@ -27,6 +27,12 @@ enum class Status
     TxFail,
 };
 
+enum class Protocol
+{
+    CdcAcm,
+    Lstp
+};
+
 enum class Instance : uint8_t
 {
     Begin,

@@ -107,6 +107,7 @@ constexpr bool EnableSpi  = IsChannelEnabled(LstpChannels, LstpChannelType::Spi)
 constexpr bool EnableGpio = IsChannelEnabled(LstpChannels, LstpChannelType::Gpio);
 constexpr bool EnableI2c  = IsChannelEnabled(LstpChannels, LstpChannelType::I2c);
 constexpr bool EnableIpmi = IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi);
+constexpr bool EnableUart = IsChannelEnabled(LstpChannels, LstpChannelType::Uart);
 
 }  // namespace nv::lstp
 
@@ -258,6 +259,19 @@ constexpr uint32_t LstpGpioIrqQueueSize  = nv::lstp::EnableGpio
                                              : 1;
 constexpr uint32_t LstpGpioIrqQueueDepth = nv::lstp::EnableGpio ? nv::lstp::LstpGpioNum : 1;
 
+/********************* Uart over USB Config starts *********************/
+constexpr nv::vruart::Signal   pintx{.port = 0, .pin = 0};
+constexpr nv::vruart::Signal   pinrx{.port = 0, .pin = 0};
+constexpr nv::vruart::Baudrate UartOverUsbBaudrate     = 115200U;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaTxChn    = nv::vruart::EdmaChn::_0;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaRxChn    = nv::vruart::EdmaChn::_1;
+constexpr nv::vruart::EdmaInst UartOverUsbEdmaInstance = nv::vruart::EdmaInst::_0;
+constexpr nv::vruart::Instance UartOverUsbUartInstance = nv::vruart::Instance::_0;
+constexpr nv::vruart::Protocol UartOverUsbProtocol     = nv::vruart::Protocol::CdcAcm;
+constexpr uint32_t UbridgeQueueSize = (UartOverUsbProtocol == nv::vruart::Protocol::Lstp) ? 512
+                                                                                          : 514;
+/********************* Uart over USB Config ends *********************/
+
 /// define all queue lengths and item_sizes here
 constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     // id, len, item_size
@@ -311,8 +325,8 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {        QueueId::LstpGpioIrq,    LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize},
     {         QueueId::LstpToGpio,                        1,                                     LstpToGpioSize},
     {                QueueId::Iox,                        8,                                                 80},
-    {          QueueId::UbridgeTx,                        4,                                                514},
-    {          QueueId::UbridgeRx,                        4,                                                514},
+    {          QueueId::UbridgeTx,                        4,                                   UbridgeQueueSize},
+    {          QueueId::UbridgeRx,                        4,                                   UbridgeQueueSize},
     {               QueueId::Ssif,                        1,                                                  1}
 };
 /// All Events must be part of this enum.
@@ -698,15 +712,6 @@ constexpr nv::gpio::GpioPin  McuReadyPinPin    = 0;
 
 constexpr bool EnableForwardNvlInfo = false;
 
-// UART Bridge configuration (stub values for testrunner)
-constexpr nv::vruart::Signal   pintx{.port = 0, .pin = 0};
-constexpr nv::vruart::Signal   pinrx{.port = 0, .pin = 0};
-constexpr nv::vruart::Baudrate UartOverUsbBaudrate     = 115200U;
-constexpr nv::vruart::EdmaChn  UartOverUsbEdmaTxChn    = nv::vruart::EdmaChn::_0;
-constexpr nv::vruart::EdmaChn  UartOverUsbEdmaRxChn    = nv::vruart::EdmaChn::_1;
-constexpr nv::vruart::EdmaInst UartOverUsbEdmaInstance = nv::vruart::EdmaInst::_0;
-constexpr nv::vruart::Instance UartOverUsbUartInstance = nv::vruart::Instance::_0;
-
 // EEPROM bridge configuration (disabled)
 constexpr bool            EnableEepromBridge = false;
 constexpr uint8_t         EepromDstAddress   = 0x50;
@@ -948,26 +953,6 @@ static_assert(sizeof(I2cTempSensorList)
                   == nv::mctp::I2cTempSensorSize
                          * sizeof(nv::i2c::I2cTempSensorThresholdsConfig),
               "Array elements should be tightly packed without padding");
-
-//********************* Write Protection Configuration *********************/
-constexpr uint8_t WP_VALID_PORT       = 0;
-constexpr uint8_t WP_VALID_PIN        = 0;
-constexpr auto    WriteProtectionSize = 4;
-constexpr inline std::array<nv::mctp::WriteProtectionGpioConfig, WriteProtectionSize>
-    WriteProtectionList{
-        nv::mctp::WriteProtectionGpioConfig{
-                                            Type4WriteProtectionFunction::WP_BASEBOARD_FRU_EEPROM, WP_VALID_PORT, WP_VALID_PIN},
-        nv::mctp::WriteProtectionGpioConfig{
-                                            Type4WriteProtectionFunction::WP_NVSW_QM4_SPI, WP_VALID_PORT, WP_VALID_PIN        },
-        nv::mctp::WriteProtectionGpioConfig{
-                                            Type4WriteProtectionFunction::WP_GPU_SPI, WP_VALID_PORT, WP_VALID_PIN             },
-        nv::mctp::WriteProtectionGpioConfig{
-                                            Type4WriteProtectionFunction::WP_CX9_SPI, WP_VALID_PORT, WP_VALID_PIN             }
-};
-
-static_assert(WriteProtectionList.size() == WriteProtectionSize,
-              "WriteProtectionList size mismatch");
-
 }  // namespace nv::mctp
 
 namespace nv::perf_mon {

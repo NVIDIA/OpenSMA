@@ -1041,21 +1041,11 @@ void mctp::Nsm::on_dcd_set_event_subscription(const Packet& rx, Packet& tx)
     ntx.data_size         = 0;
 
     if (input_event_subscription.setting == NsmGlobalEventSetting::EventDisable
-        && event_subscription.setting == NsmGlobalEventSetting::EventDisable) {
-        // TODO - Check if the understanding of the following is correct
-        // Resubscribing with this setting will cause the receiver to be unsubscribed from
-        // further events.
-        // Case : Double subscribe with disable setting -> unsubscribe
-        event_subscription.setting = NsmGlobalEventSetting::EventNotSubscribe;
-    }
-    else if (input_event_subscription.setting == NsmGlobalEventSetting::EventDisable
-             || input_event_subscription.setting == NsmGlobalEventSetting::EventPolling
-             || input_event_subscription.setting == NsmGlobalEventSetting::EventPush) {
-        event_subscription.setting = input_event_subscription.setting;
-        // TODO - Check if it allowed to use 0x00 or 0xFF to be endpoint ID
+        || input_event_subscription.setting == NsmGlobalEventSetting::EventPolling
+        || input_event_subscription.setting == NsmGlobalEventSetting::EventPush) {
+        event_subscription.setting     = input_event_subscription.setting;
         event_subscription.endpoint_id = input_event_subscription.endpoint_id;
         nsm_event_clients              = rx;
-        // Allow log when event_subscription.setting not PUSH
         if (event_subscription.setting != NsmGlobalEventSetting::EventPush) {
             log_event_subscription = false;
         }
@@ -1076,13 +1066,11 @@ void mctp::Nsm::on_dcd_get_event_subscription(const Packet& rx, Packet& tx)
     ntx.completion_code   = Ccode::Success;
     ntx.data_size         = RespSize;
 
-    if (event_subscription.setting != NsmGlobalEventSetting::EventNotSubscribe) {
-        ntx.data[0] = event_subscription.endpoint_id;
+    if (event_subscription.setting == NsmGlobalEventSetting::EventDisable) {
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
     }
     else {
-        // TODO - Decide which completion code to response
-        // Error - No receiver is currently subscribed
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+        ntx.data[0] = event_subscription.endpoint_id;
     }
 }
 

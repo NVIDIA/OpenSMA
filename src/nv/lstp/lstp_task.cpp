@@ -328,42 +328,4 @@ void LstpTask::process_gpio_irq()
             ch_id, event.gpio_index, static_cast<uint8_t>(event.value));
     }
 }
-
-/*****************************************************/
-
-void LstpTask::LstpGpioInit()
-{
-    using GpioDriver = nv::gpio::Driver;
-    using nv::gpio::Direction;
-    using nv::gpio::GpioOpenDrain;
-    using nv::gpio::GpioPullDir;
-    using nv::gpio::GpioPullStrength;
-    using nv::gpio::GpioState;
-
-    /* Initialize GPIOs from config */
-    for (size_t i = 0; i < LstpGpioNum; ++i) {
-        const auto& [port, pin, pin_config, _] = PinConfigs.at(i);
-        (void)_;
-        auto direction = (pin_config.direction == LstpGpioDirection::Output) ? Direction::Output
-                                                                             : Direction::Input;
-        auto state     = (pin_config.default_output == LstpGpioState::High) ? GpioState::High
-                                                                            : GpioState::Low;
-        GpioPullDir pull_dir = GpioPullDir::Disabled;
-        switch (pin_config.bias_pull_config) {
-            case LstpGpioBiasPullConfig::PullUp  : pull_dir = GpioPullDir::PullUp; break;
-            case LstpGpioBiasPullConfig::PullDown: pull_dir = GpioPullDir::PullDown; break;
-            case LstpGpioBiasPullConfig::NoPull  :
-            default                              : pull_dir = GpioPullDir::Disabled; break;
-        }
-        auto pull_strength = (pin_config.bias_pull_strength > 0) ? GpioPullStrength::High
-                                                                 : GpioPullStrength::Low;
-        auto open_drain    = (pin_config.output_drive_config
-                           == LstpGpioOutputDriveConfig::OpenDrain)
-                               ? GpioOpenDrain::Enable
-                               : GpioOpenDrain::Disable;
-
-        GpioDriver::init_pin(port, pin, direction, state);
-        GpioDriver::init_pin_cfg(port, pin, pull_dir, pull_strength, open_drain);
-    }
-}
 }  // namespace nv::lstp

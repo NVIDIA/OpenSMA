@@ -1286,17 +1286,31 @@ TEST_F(nsmtest, query_fw_comp_id)
 TEST_F(nsmtest, set_rot_property_invalid_length)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx
-    arr8_req req{0x06, 0x08, 0x05, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // 5 bytes instead of 6
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    arr8_req req{0x06, 0x08, 0x05, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // 5
+                                                                                         // bytes
+                                                                                         // instead
+                                                                                         // of 6
+    arr8_res res{
+        0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 8), true);
 };
 
 TEST_F(nsmtest, set_rot_property_redundancy_policy_not_supported)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x00};  // SetRedundancyPolicy
+    arr8_req req{0x06,
+                 0x08,
+                 0x06,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00,
+                 0x00};  // SetRedundancyPolicy
     //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+    arr8_res res{0x06,
+                 0x08,
+                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
@@ -1305,9 +1319,19 @@ TEST_F(nsmtest, set_rot_property_redundancy_policy_not_supported)
 TEST_F(nsmtest, set_rot_property_inband_update_policy_not_supported)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x01};  // SetInbandUpdatePolicy
+    arr8_req req{0x06,
+                 0x08,
+                 0x06,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00,
+                 0x01};  // SetInbandUpdatePolicy
     //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+    arr8_res res{0x06,
+                 0x08,
+                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
@@ -1316,9 +1340,19 @@ TEST_F(nsmtest, set_rot_property_inband_update_policy_not_supported)
 TEST_F(nsmtest, set_rot_property_ap_sku_id_not_supported)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x02};  // SetApSkuId
+    arr8_req req{0x06,
+                 0x08,
+                 0x06,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00,
+                 0x02};  // SetApSkuId
     //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+    arr8_res res{0x06,
+                 0x08,
+                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
@@ -1327,9 +1361,19 @@ TEST_F(nsmtest, set_rot_property_ap_sku_id_not_supported)
 TEST_F(nsmtest, set_rot_property_global_failover_policy_not_supported)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0x03};  // SetGlobalFailoverPolicy
+    arr8_req req{0x06,
+                 0x08,
+                 0x06,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00,
+                 0x03};  // SetGlobalFailoverPolicy
     //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
+    arr8_res res{0x06,
+                 0x08,
+                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
@@ -1338,8 +1382,17 @@ TEST_F(nsmtest, set_rot_property_global_failover_policy_not_supported)
 TEST_F(nsmtest, set_rot_property_invalid_property)
 {
     //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06, 0x08, 0x06, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00, 0xFF};  // Invalid property
-    arr8_res res{0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    arr8_req req{0x06,
+                 0x08,
+                 0x06,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00,
+                 0xFF};  // Invalid property
+    arr8_res res{
+        0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
 };
 
@@ -1348,7 +1401,8 @@ TEST_F(nsmtest, image_copy_control_invalid_length)
 {
     //          nvmsg| cmd | size| (missing data)
     arr8_req req{0x06, 0x09, 0x00};
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
 };
 
@@ -1356,7 +1410,8 @@ TEST_F(nsmtest, image_copy_control_invalid_request_type)
 {
     //          nvmsg| cmd | size| request
     arr8_req req{0x06, 0x09, 0x01, 0xFF};  // Invalid request type
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
 };
 
@@ -1364,15 +1419,15 @@ TEST_F(nsmtest, query_image_copy_progress_success)
 {
     //          nvmsg| cmd | size| request
     arr8_req req{0x06, 0x09, 0x01, 0x00};  // QueryImageCopyProgress
-    arr8_res res{0x06,  // nvmsg
-                 0x09,  // cmd
-                 0x00,  // code (Success)
-                 0x00,  // reserved
+    arr8_res res{0x06,                     // nvmsg
+                 0x09,                     // cmd
+                 0x00,                     // code (Success)
+                 0x00,                     // reserved
                  0x00,
                  0x02,  // data size
                  0x00,
-                 0x02,  // status (Completed)
-                 0x64}; // progress
+                 0x02,   // status (Completed)
+                 0x64};  // progress
     fixture.sendRecv_nsm(req, res, 4);
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
 };
@@ -1381,7 +1436,8 @@ TEST_F(nsmtest, initiate_image_copy_invalid_data)
 {
     //          nvmsg| cmd | size| request| comp_cnt
     arr8_req req{0x06, 0x09, 0x02, 0x01, 0x00};  // InitiateImageCopy, component_count = 0
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 5), true);
 };
 
@@ -1389,7 +1445,8 @@ TEST_F(nsmtest, initiate_image_copy_invalid_length_min)
 {
     //          nvmsg| cmd | size| request
     arr8_req req{0x06, 0x09, 0x01, 0x01};  // InitiateImageCopy, missing component_count
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
 };
 
@@ -1397,7 +1454,8 @@ TEST_F(nsmtest, initiate_image_copy_invalid_component_count)
 {
     //          nvmsg| cmd | size| request| comp_cnt
     arr8_req req{0x06, 0x09, 0x02, 0x01, 0x02};  // InitiateImageCopy, component_count > 1
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 5), true);
 };
 
@@ -1405,25 +1463,42 @@ TEST_F(nsmtest, initiate_image_copy_invalid_length_full)
 {
     //          nvmsg| cmd | size| request| comp_cnt| comp_class| (incomplete)
     arr8_req req{0x06, 0x09, 0x04, 0x01, 0x01, 0x0A, 0x00};  // Missing comp_id and class_idx
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 7), true);
 };
 
 TEST_F(nsmtest, initiate_image_copy_invalid_component_id)
 {
-    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                | comp_class_idx
-    arr8_req req{0x06, 0x09, 0x07, 0x01, 0x01, 0x0A, 0x00, 0xFF, 0x01, 0x00};  // Invalid comp_id
+    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                |
+    //          comp_class_idx
+    arr8_req req{0x06, 0x09, 0x07, 0x01, 0x01, 0x0A, 0x00, 0xFF, 0x01, 0x00};  // Invalid
+                                                                               // comp_id
     //          nvmsg| cmd | comp_code                               | reason_code (2 bytes)
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
+    arr8_res res{
+        0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 10), true);
 };
 
 TEST_F(nsmtest, initiate_image_copy_success)
 {
-    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                | comp_class_idx
-    arr8_req req{0x06, 0x09, 0x07, 0x01, 0x01, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // Valid MCU component
-    //          nvmsg| cmd | comp_code                                      | reason_code (2 bytes)
-    arr8_res res{0x06, 0x09, static_cast<uint8_t>(Ccode::ErrorInvalidStateForCommand),
+    //          nvmsg| cmd | size| request| comp_cnt| comp_class| comp_id                |
+    //          comp_class_idx
+    arr8_req req{0x06,
+                 0x09,
+                 0x07,
+                 0x01,
+                 0x01,
+                 0x0A,
+                 0x00,
+                 0x02,
+                 NvPldmMcuComponentIdPrefix,
+                 0x00};  // Valid MCU component
+    //          nvmsg| cmd | comp_code                                      | reason_code (2
+    //          bytes)
+    arr8_res res{0x06,
+                 0x09,
+                 static_cast<uint8_t>(Ccode::ErrorInvalidStateForCommand),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::ImageCopyCompleted) >> 0),
                  static_cast<uint8_t>(static_cast<uint16_t>(Rcode::ImageCopyCompleted) >> 8)};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 10), true);
@@ -1616,7 +1691,7 @@ TEST_F(nsmtest, type5_get_sma_baseboard_WP_settings)
                  Success,
                  0x00,
                  0x00,
-                 T5SmaBaseboardSetsResponseSize,
+                 T5SmaBaseboardWriteProtectResponseSize,
                  0x00,
                  0x00,
                  0x00,

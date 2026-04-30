@@ -97,7 +97,7 @@ bool Ssif::handle_tx()
 
 void Ssif::handle_rx()
 {
-    lstp::LstpRouter::to_ipmi(_buffer, _rx_size);
+    lstp::LstpRouter::send_ipmi(_buffer, _rx_size);
     _rx_size   = 0;
     _rx_offset = 0;
 }

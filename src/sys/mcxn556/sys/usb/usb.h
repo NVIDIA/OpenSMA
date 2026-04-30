@@ -85,22 +85,23 @@ public:
     static usb_status_t
     usb_deviceSpicallback(class_handle_t handle, uint32_t event, void* param);
 
-#if defined(USB_CONFIG_UART_BRIDGE)
-    static usb_status_t
-    usb_devicevcomcallback(class_handle_t handle, uint32_t event, void* param);
-
-    static usb_status_t usb_vcomsetconfigure(class_handle_t handle, uint8_t configure);
-    // Re-arm USB VCOM RX with dynamic packet size
     static void vcom_rearm_rx(void* handle, uint8_t* buffer);
-
-    // Send data via USB VCOM, returns true if busy
-    static bool vcom_send(void* handle, uint8_t* data, uint32_t length);
 
     // Get VCOM handle
     static void* get_vcom_handle();
 
     // Check if VCOM is ready
     static bool is_vcom_ready();
+
+    // Send data via USB VCOM, returns true if busy
+    static bool vcom_send(void* handle, uint8_t* data, uint32_t length);
+
+#if defined(USB_CONFIG_UART_BRIDGE)
+    static usb_status_t
+    usb_devicevcomcallback(class_handle_t handle, uint32_t event, void* param);
+
+    static usb_status_t usb_vcomsetconfigure(class_handle_t handle, uint8_t configure);
+    // Re-arm USB VCOM RX with dynamic packet size
 
     // VCOM RX callback: returns 0 on success
     using VcomRxCallback = uint8_t (*)(uint8_t* data, uint32_t length);

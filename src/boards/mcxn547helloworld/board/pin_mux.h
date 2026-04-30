@@ -88,6 +88,65 @@ void BOARD_InitBootPins(void);
 #define BOARD_INITPINS_PGOOD_PIN_MASK (1U << 20U)      /*!<@brief PORT pin mask */
                                                        /* @} */
 
+/*! @name PORT3_19 (coord K17), LSTP SPI CS1
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_SPI0_CS1_GPIO GPIO3                /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_SPI0_CS1_INIT_GPIO_VALUE 1U        /*!<@brief GPIO output initial state */
+#define BOARD_INITPINS_SPI0_CS1_GPIO_PIN 19U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_SPI0_CS1_GPIO_PIN_MASK (1U << 19U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_SPI0_CS1_PORT PORT3                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_SPI0_CS1_PIN 19U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_SPI0_CS1_PIN_MASK (1U << 19U)      /*!<@brief PORT pin mask */
+                                                          /* @} */
+
+/*! @name PORT3_0 (coord B17), LSTP SPI CS0
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_SPI0_CS0_GPIO GPIO3               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_SPI0_CS0_INIT_GPIO_VALUE 1U       /*!<@brief GPIO output initial state */
+#define BOARD_INITPINS_SPI0_CS0_GPIO_PIN 0U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_SPI0_CS0_GPIO_PIN_MASK (1U << 0U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_SPI0_CS0_PORT PORT3               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_SPI0_CS0_PIN 0U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_SPI0_CS0_PIN_MASK (1U << 0U)      /*!<@brief PORT pin mask */
+                                                         /* @} */
+
+/*! @name PORT0_5 (coord A14), LSTP GPIO LED
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_GPIO_LED_GPIO GPIO0               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_GPIO_LED_INIT_GPIO_VALUE 1U       /*!<@brief GPIO output initial state */
+#define BOARD_INITPINS_GPIO_LED_GPIO_PIN 5U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_GPIO_LED_GPIO_PIN_MASK (1U << 5U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_GPIO_LED_PORT PORT0               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_GPIO_LED_PIN 5U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_GPIO_LED_PIN_MASK (1U << 5U)      /*!<@brief PORT pin mask */
+                                                         /* @} */
+
+/*! @name PORT0_26 (coord F10), LSTP GPIO INT
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_GPIO_INT_GPIO GPIO0                /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_GPIO_INT_GPIO_PIN 26U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_GPIO_INT_GPIO_PIN_MASK (1U << 26U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_GPIO_INT_PORT PORT0                /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_GPIO_INT_PIN 26U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_GPIO_INT_PIN_MASK (1U << 26U)      /*!<@brief PORT pin mask */
+                                                          /* @} */
+
 /*!
  * @brief Configures pin routing and optionally pin electrical features.
  *

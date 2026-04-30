@@ -24,6 +24,7 @@
 #include <ranges>
 
 #include "nv/flash/driver.h"
+#include "nv/flash/flash.h"
 #include "nv/gpio/driver.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/constants.h"
@@ -664,19 +665,44 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 {  // for stack usage optimization
                     static_assert(sizeof(nv::spdm::ik::DevIkTemplate) <= sizeof(CertArray),
                                   "CertArray is not large enough to hold the DevIkTemplate");
+                    static_assert(sizeof(nv::spdm::ik::DevIkTemplateV3) <= sizeof(CertArray),
+                                  "CertArray is not large enough to hold the DevIkTemplateV3");
                     CertArray l4_cert_array{};
                     auto      l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
                     nv::spdm::cert::read_l4_cert(l4_cert_array_span);
 
-                    nv::spdm::ik::DevIkTemplate&
-                        template_generate_by_fw = *std::bit_cast<nv::spdm::ik::DevIkTemplate*>(
-                            &l4_cert_array[0]);
-                    const nv::spdm::ik::DevIkTemplate&
-                        template_from_input_data = *std::bit_cast<nv::spdm::ik::DevIkTemplate*>(
-                            &input_cert_array[0]);
-                    template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
-                    auto comparison_result = nv::spdm::ik::check_two_template_is_same(
-                        template_generate_by_fw, template_from_input_data);
+                    nv::flash::Data FmcNumericVersionData{};
+                    auto            fmc_version_status = nv::flash::Flash::get_data(
+                        nv::flash::Key::NpdsFmcNumericVersion, FmcNumericVersionData);
+                    if (fmc_version_status != nv::flash::Status::Ok) {
+                        vtx.data[1] = NpdsFmcNumericVersionReadFail;
+                        break;
+                    }
+                    const uint32_t fmc_numeric_version = FmcNumericVersionData;
+                    nv::info("fmc_numeric_version: %d\n", fmc_numeric_version);
+                    const bool isFmcV3 = fmc_numeric_version
+                                       < nv::spdm::ik::FmcV4NumericThreshold;
+
+                    nv::spdm::ik::TemplateComparisonError
+                        comparison_result = nv::spdm::ik::TemplateComparisonError::Success;
+                    if (isFmcV3) {
+                        auto& template_generate_by_fw = *std::bit_cast<
+                            nv::spdm::ik::DevIkTemplateV3*>(&l4_cert_array[0]);
+                        const auto& template_from_input_data = *std::bit_cast<
+                            const nv::spdm::ik::DevIkTemplateV3*>(&input_cert_array[0]);
+                        template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
+                        comparison_result = nv::spdm::ik::check_two_template_is_same(
+                            template_generate_by_fw, template_from_input_data);
+                    }
+                    else {
+                        auto& template_generate_by_fw = *std::bit_cast<
+                            nv::spdm::ik::DevIkTemplate*>(&l4_cert_array[0]);
+                        const auto& template_from_input_data = *std::bit_cast<
+                            const nv::spdm::ik::DevIkTemplate*>(&input_cert_array[0]);
+                        template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
+                        comparison_result = nv::spdm::ik::check_two_template_is_same(
+                            template_generate_by_fw, template_from_input_data);
+                    }
                     if (comparison_result != nv::spdm::ik::TemplateComparisonError::Success) {
                         // Log the specific error for debugging
                         nv::logger::error(nv::logger::Event::SpdmTemplateComparisonFailed,

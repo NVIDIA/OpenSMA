@@ -93,11 +93,6 @@ public:
      */
     static void submit_gpio_irq(GpioIndex gpio_idx);
 
-    /** @brief Initializes LSTP GPIO configuration.
-     * Should not be called if pins are handled/init by a different task
-     */
-    static void LstpGpioInit();
-
 private:
     /** @brief Processes request from _req_pkt, fills _resp_payload, and sends
      * via LstpRouter::send_gpio. */

@@ -100,6 +100,10 @@ extern "C" {
 #define I3C1_SLOW_CLOCK_SOURCE 1000000UL
 /* Definition of the clock source frequency */
 #define I3C1_CLOCK_SOURCE_MASTER 25000000UL
+/* Definition of peripheral ID */
+#define LP_FLEXCOMM9_PERIPHERAL ((LPUART_Type *) LP_FLEXCOMM9)
+/* Definition of the clock source frequency */
+#define LP_FLEXCOMM9_CLOCK_SOURCE 12000000UL
 
 /***********************************************************************************************************************
  * Global variables
@@ -117,6 +121,7 @@ extern const lpi2c_master_config_t LP_FLEXCOMM6_masterConfig;
 extern const lpuart_config_t LP_FLEXCOMM4_config;
 extern const lpi2c_slave_config_t LP_FLEXCOMM2_slaveConfig;
 extern const i3c_master_config_t I3C1_master_config;
+extern const lpuart_config_t LP_FLEXCOMM9_config;
 
 /***********************************************************************************************************************
  * Initialization functions

@@ -112,8 +112,9 @@ void DevIkHelper::construct_cert(std::span<uint8_t>& input_buffer)
     it = std::copy(
         _signature.s_value.begin(), _signature.s_value.begin() + _signature.s_length_token, it);
 }
-TemplateComparisonError check_two_template_is_same(const DevIkTemplate& template_1,
-                                                   const DevIkTemplate& template_2)
+template<typename TemplateType>
+TemplateComparisonError check_two_template_is_same(const TemplateType& template_1,
+                                                   const TemplateType& template_2)
 {
     // Check each field individually and return specific error code
     if (template_1.template_to_serial_number != template_2.template_to_serial_number
@@ -160,4 +161,9 @@ TemplateComparisonError check_two_template_is_same(const DevIkTemplate& template
 
     return TemplateComparisonError::Success;
 }
+
+template TemplateComparisonError
+check_two_template_is_same<DevIkTemplate>(const DevIkTemplate&, const DevIkTemplate&);
+template TemplateComparisonError
+check_two_template_is_same<DevIkTemplateV3>(const DevIkTemplateV3&, const DevIkTemplateV3&);
 }  // namespace nv::spdm::ik

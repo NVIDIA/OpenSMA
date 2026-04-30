@@ -10,7 +10,7 @@ product: Peripherals v15.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.12.10
+processor_version: 25.09.10
 functionalGroups:
 - name: BOARD_InitPeripherals
   UUID: 78304674-57e7-4c05-895d-e21c08633a8a
@@ -923,6 +923,116 @@ static void I3C1_init(void) {
 }
 
 /***********************************************************************************************************************
+ * LP_FLEXCOMM9 initialization code
+ **********************************************************************************************************************/
+/* clang-format off */
+/* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
+instance:
+- name: 'LP_FLEXCOMM9'
+- type: 'lpflexcomm_lpuart'
+- mode: 'polling'
+- custom_name_enabled: 'false'
+- type_id: 'lpflexcomm_lpuart_2.3.0'
+- functional_group: 'BOARD_InitPeripherals'
+- peripheral: 'LP_FLEXCOMM9'
+- config_sets:
+  - fsl_lpuart:
+    - lpuartConfig:
+      - timingConfig:
+        - clockSource: 'LPFLEXCOMMFunctionClock'
+        - lpuartSrcClkFreq: 'ClocksTool_DefaultInit'
+        - baudRateBpsStr: '115200'
+      - parityMode: 'kLPUART_ParityDisabled'
+      - dataBitsCount: 'kLPUART_EightDataBits'
+      - isMsb: 'false'
+      - stopBitCount: 'kLPUART_OneStopBit'
+      - enableMatchAddress1: 'false'
+      - matchAddress1: '0'
+      - enableMatchAddress2: 'false'
+      - matchAddress2: '0'
+      - txFifoWatermark: '0'
+      - rxFifoWatermark: '1'
+      - enableRxRTS: 'false'
+      - rtsDelayValue: '1'
+      - enableTxCTS: 'false'
+      - txCtsSource: 'kLPUART_CtsSourcePin'
+      - txCtsConfig: 'kLPUART_CtsSampleAtStart'
+      - rxIdleType: 'kLPUART_IdleTypeStartBit'
+      - rxIdleConfig: 'kLPUART_IdleCharacter1'
+      - enableSingleWire: 'false'
+      - enableTx: 'true'
+      - enableRx: 'true'
+      - timeoutConfig:
+        - rxExtendedTimeoutValue: '0'
+        - txExtendedTimeoutValue: '0'
+        - rxCounter0:
+          - enableCounter: 'false'
+          - timeoutCondition: 'kLPUART_TimeoutAfterCharacters'
+          - timeoutValue: '0'
+        - rxCounter1:
+          - enableCounter: 'false'
+          - timeoutCondition: 'kLPUART_TimeoutAfterCharacters'
+          - timeoutValue: '0'
+        - txCounter0:
+          - enableCounter: 'false'
+          - timeoutCondition: 'kLPUART_TimeoutAfterCharacters'
+          - timeoutValue: '0'
+        - txCounter1:
+          - enableCounter: 'false'
+          - timeoutCondition: 'kLPUART_TimeoutAfterCharacters'
+          - timeoutValue: '0'
+    - quick_selection: 'QuickSelection1'
+ * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
+/* clang-format on */
+const lpuart_config_t LP_FLEXCOMM9_config = {
+  .baudRate_Bps = 115200UL,
+  .parityMode = kLPUART_ParityDisabled,
+  .dataBitsCount = kLPUART_EightDataBits,
+  .isMsb = false,
+  .stopBitCount = kLPUART_OneStopBit,
+  .txFifoWatermark = 0U,
+  .rxFifoWatermark = 1U,
+  .enableRxRTS = false,
+  .enableTxCTS = false,
+  .txCtsSource = kLPUART_CtsSourcePin,
+  .txCtsConfig = kLPUART_CtsSampleAtStart,
+  .rxIdleType = kLPUART_IdleTypeStartBit,
+  .rxIdleConfig = kLPUART_IdleCharacter1,
+  .enableSingleWire = false,
+  .rtsDelay = 0,
+  .enableTx = true,
+  .enableRx = true,
+  .timeoutConfig = {
+    .rxExtendedTimeoutValue = 0U,
+    .txExtendedTimeoutValue = 0U,
+    .rxCounter0 = {
+      .enableCounter = false,
+      .timeoutCondition = kLPUART_TimeoutAfterCharacters,
+      .timeoutValue = 0U
+    },
+    .rxCounter1 = {
+      .enableCounter = false,
+      .timeoutCondition = kLPUART_TimeoutAfterCharacters,
+      .timeoutValue = 0U
+    },
+    .txCounter0 = {
+      .enableCounter = false,
+      .timeoutCondition = kLPUART_TimeoutAfterCharacters,
+      .timeoutValue = 0U
+    },
+    .txCounter1 = {
+      .enableCounter = false,
+      .timeoutCondition = kLPUART_TimeoutAfterCharacters,
+      .timeoutValue = 0U
+    }
+  }
+};
+
+static void LP_FLEXCOMM9_init(void) {
+  LPUART_Init(LP_FLEXCOMM9_PERIPHERAL, &LP_FLEXCOMM9_config, LP_FLEXCOMM9_CLOCK_SOURCE);
+}
+
+/***********************************************************************************************************************
  * Initialization functions
  **********************************************************************************************************************/
 void BOARD_InitPeripherals(void)
@@ -942,6 +1052,7 @@ void BOARD_InitPeripherals(void)
   LP_FLEXCOMM4_init();
   LP_FLEXCOMM2_init();
   I3C1_init();
+  LP_FLEXCOMM9_init();
 }
 
 /***********************************************************************************************************************

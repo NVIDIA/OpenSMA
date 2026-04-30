@@ -22,6 +22,7 @@
 
 #include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/flash.h"
+#include "nv/fw_parser/fw_parser_mcu.h"
 #include "nv/mctp/constants.h"
 #include "nv/mctp/nsm.h"
 
@@ -30,6 +31,28 @@ using namespace mctp;
 
 namespace {
 using namespace debugtoken;  // Access ReasonableSize, MaxTlvEntries, and debug token constants
+
+// Returns true when neither slot carries a prod-signed image. FMC only jumps
+// to debug firmware when a valid debug token is installed, so on prod-fused
+// HW this means erasing the token would brick the device. Fail-safe: an
+// unparseable slot counts as "not prod-signed". See Bug-5908217.
+static bool no_prod_image_available()
+{
+    constexpr uint32_t DebugKeyIndex = 0;
+
+    auto active_key = nv::fw_parser::mcu::get_image_signing_key_version(
+        nv::fw_parser::mcu::ParsingFwType::ActiveSlot);
+    auto inactive_key = nv::fw_parser::mcu::get_image_signing_key_version(
+        nv::fw_parser::mcu::ParsingFwType::InactiveSlot);
+
+    if (active_key.has_value() && (active_key.value() != DebugKeyIndex)) {
+        return false;
+    }
+    if (inactive_key.has_value() && (inactive_key.value() != DebugKeyIndex)) {
+        return false;
+    }
+    return true;
+}
 
 // Helper function to get raw data based on OCP version
 static std::span<const uint8_t> get_raw_data(const Packet& rx)
@@ -381,51 +404,38 @@ void Nsm::on_erase_token(const Packet& rx, Packet& tx)
 
     debugtoken::TokenErrorCode error_code = debugtoken::TokenErrorCode::NoErrorCode;
 
-    if (token_type == ERASE_ALL_TOKENS) {
-        // Check if any token is installed before erasing
-        if (installed_bitmask == 0) {
-            error_code = debugtoken::TokenErrorCode::TokenNotInstalled;
-        }
-        else {
-            // Erase all installed tokens
-            error_code = debugtoken::erase_installed_dbg_token_tlv();
-        }
+    // Checked first so "already gone" isn't hidden behind brick-protection.
+    if (installed_bitmask == 0) {
+        error_code = debugtoken::TokenErrorCode::TokenNotInstalled;
+    }
+    // Brick-protection, see Bug-5908217.
+    else if (get_sku_information() == debugtoken::McuProdMode && no_prod_image_available()) {
+        error_code = debugtoken::TokenErrorCode::TokenEraseRejectedNoProdImage;
+    }
+    else if (token_type == ERASE_ALL_TOKENS) {
+        error_code = debugtoken::erase_installed_dbg_token_tlv();
     }
     else if (token_type == ERASE_ALL_AND_INCREMENT) {
-        // Check if any token is installed before erasing
-        if (installed_bitmask == 0) {
-            error_code = debugtoken::TokenErrorCode::TokenNotInstalled;
-        }
-        else {
-            // Erase all installed tokens and increment ratchet counter
-            error_code = debugtoken::erase_installed_dbg_token_tlv();
+        error_code = debugtoken::erase_installed_dbg_token_tlv();
 
-            if (error_code == debugtoken::TokenErrorCode::NoErrorCode) {
-                // TODO: Implement ratchet counter increment functionality
-                // This should increment the ratchet counter in OTP/persistent storage
-            }
+        if (error_code == debugtoken::TokenErrorCode::NoErrorCode) {
+            // TODO: Implement ratchet counter increment functionality
+            // This should increment the ratchet counter in OTP/persistent storage
         }
     }
     else {
-        // Erase specific token type
-        // Note: erasing any individual token type will erase the entire token
-        // Validate request: must contain only valid bits and at least one valid bit
+        // Erasing any individual type wipes the whole composite token.
         const bool has_invalid_bits = (token_type & ~debugtoken::DebugOptionsFlags) != 0;
         const bool has_valid_bits   = (token_type & debugtoken::DebugOptionsFlags) != 0;
 
         if (has_invalid_bits || !has_valid_bits) {
             error_code = debugtoken::TokenErrorCode::TokenUnsupportedType;
         }
+        else if ((installed_bitmask & token_type) != 0) {
+            error_code = debugtoken::erase_installed_dbg_token_tlv();
+        }
         else {
-            // Check if installed token matches any requested type
-            const bool type_match = (installed_bitmask & token_type) != 0;
-            if (type_match) {
-                // Erase entire composite token
-                error_code = debugtoken::erase_installed_dbg_token_tlv();
-            }
-            else {
-                error_code = debugtoken::TokenErrorCode::TokenNotInstalled;
-            }
+            error_code = debugtoken::TokenErrorCode::TokenNotInstalled;
         }
     }
 

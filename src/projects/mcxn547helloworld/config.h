@@ -49,6 +49,7 @@
 #include "nv/pldm/common.h"
 #include "nv/volt_mon/common.h"
 #include "core0/powersensor.h"
+#include "nv/vruart/common.h"
 
 namespace nv::telemetry {
 
@@ -74,11 +75,24 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 
 namespace nv::ipc {
 constexpr bool EnableLstp = true;
+
+/********************* Uart over USB Config starts *********************/
+constexpr nv::vruart::Signal   pintx{.port = 2, .pin = 3};
+constexpr nv::vruart::Signal   pinrx{.port = 2, .pin = 4};
+constexpr nv::vruart::Baudrate UartOverUsbBaudrate     = 115200U;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaTxChn    = nv::vruart::EdmaChn::_0;
+constexpr nv::vruart::EdmaChn  UartOverUsbEdmaRxChn    = nv::vruart::EdmaChn::_1;
+constexpr nv::vruart::EdmaInst UartOverUsbEdmaInstance = nv::vruart::EdmaInst::_1;
+constexpr nv::vruart::Instance UartOverUsbUartInstance = nv::vruart::Instance::_9;
+constexpr nv::vruart::Protocol UartOverUsbProtocol     = nv::vruart::Protocol::Lstp;
+constexpr uint32_t UbridgeQueueSize = (UartOverUsbProtocol == nv::vruart::Protocol::Lstp) ? 512
+                                                                                          : 514;
+/********************* Uart over USB Config ends *********************/
 }  // namespace nv::ipc
 
 namespace nv::lstp {
 
-constexpr uint8_t  LstpNumChannels = 5;
+constexpr uint8_t  LstpNumChannels = 6;
 constexpr uint16_t LstpGpioNum     = 2;
 
 // clang-format off
@@ -102,6 +116,10 @@ constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
     LstpChannelEntry{
         LstpChannelInfo{LstpChannelType::Ipmi, 0, "SSIF"},
         LstpIpmiChannelConfig{}
+    },
+    LstpChannelEntry{
+        LstpChannelInfo{LstpChannelType::Uart, static_cast<uint8_t>(nv::ipc::UartOverUsbUartInstance), "UART"},
+        LstpUartChannelConfig{nv::ipc::UartOverUsbBaudrate}
     }
 };
 // clang-format on
@@ -113,6 +131,7 @@ constexpr bool EnableSpi  = IsChannelEnabled(LstpChannels, LstpChannelType::Spi)
 constexpr bool EnableGpio = IsChannelEnabled(LstpChannels, LstpChannelType::Gpio);
 constexpr bool EnableI2c  = IsChannelEnabled(LstpChannels, LstpChannelType::I2c);
 constexpr bool EnableIpmi = IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi);
+constexpr bool EnableUart = IsChannelEnabled(LstpChannels, LstpChannelType::Uart);
 
 }  // namespace nv::lstp
 
@@ -120,6 +139,7 @@ namespace nv::ipc {
 
 // Indicate if it is dual core project
 constexpr bool EnableDualCore = true;
+constexpr bool EnableNcsi     = false;
 // Enable SmartDMA for I3C
 #if defined(I3C_DMA_USE_STOP_OFFLOAD) || (I3C_DMA_USE_STOP_OFFLOAD == 1)
 constexpr bool EnableSmartDMA = true;
@@ -150,11 +170,12 @@ enum class TaskId
     Ipc1,
     Privileged = Ipc1 + 1,
     Usb        = Privileged + 0,
-    Flash      = Privileged + 1,
-    I3c0       = Privileged + 2,
-    Spi0       = Privileged + 3,
-    Diag       = Privileged + 4,
-    Spdm       = Privileged + 5,
+    Ubridge    = Privileged + 1,
+    Flash      = Privileged + 2,
+    I3c0       = Privileged + 3,
+    Spi0       = Privileged + 4,
+    Diag       = Privileged + 5,
+    Spdm       = Privileged + 6,
     EndPrivileged,
     End   = EndPrivileged,
     Timer = End,
@@ -181,6 +202,7 @@ constexpr inline std::array<TaskInfo, int(TaskId::KernelEnd) + 1> TaskInfos{
     TaskInfo{    TaskId::Ipc0,    CoreId::Core0},
     TaskInfo{    TaskId::Ipc1,    CoreId::Core1},
     TaskInfo{     TaskId::Usb,    CoreId::Core0},
+    TaskInfo{ TaskId::Ubridge,    CoreId::Core0},
     TaskInfo{   TaskId::Flash,    CoreId::Core0},
     TaskInfo{    TaskId::I3c0,    CoreId::Core0},
     TaskInfo{    TaskId::Spi0,    CoreId::Core0},
@@ -272,6 +294,8 @@ enum class QueueId
     LstpGpioIrq,
     LstpToGpio,
     Ssif,
+    UbridgeTx,
+    UbridgeRx,
     End
 };
 
@@ -315,6 +339,7 @@ enum class EventId
     Spi0EdmaDriverEvent,
     Lstp,
     Ssif,
+    UartBridgeEvent,
     End
 };
 
@@ -340,7 +365,8 @@ constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
     EventInfo{    EventId::TaskAliveStatus,                        CoreId::Both},
     EventInfo{EventId::Spi0EdmaDriverEvent,    get_core_from_task(TaskId::Spi0)},
     EventInfo{               EventId::Lstp,    get_core_from_task(TaskId::Lstp)},
-    EventInfo{               EventId::Ssif,    get_core_from_task(TaskId::Ssif)}
+    EventInfo{               EventId::Ssif,    get_core_from_task(TaskId::Ssif)},
+    EventInfo{    EventId::UartBridgeEvent, get_core_from_task(TaskId::Ubridge)}
 };
 
 using ClientInfo = std::tuple<mctp::Client, TaskId>;
@@ -444,17 +470,17 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {    QueueId::MctpPldmRequest,            1,                                                256,    get_core_from_task(TaskId::Mctp)},
     {    QueueId::MctpSpdmRequest,            1,                               SpdmRequestQueueSize,    get_core_from_task(TaskId::Mctp)},
     {            QueueId::MctpCmd,          130,                                                 12,    get_core_from_task(TaskId::Mctp)},
-    {               QueueId::I2c0,           16,                                                528,    get_core_from_task(TaskId::I2c0)},
-    {               QueueId::I2c1,           16,                                                528,    get_core_from_task(TaskId::I2c1)},
-    {               QueueId::I2c2,           16,                                                528,    get_core_from_task(TaskId::I2c2)},
-    {               QueueId::I2c3,           16,                                                528,    get_core_from_task(TaskId::I2c3)},
+    {               QueueId::I2c0,            8,                                                528,    get_core_from_task(TaskId::I2c0)},
+    {               QueueId::I2c1,            8,                                                528,    get_core_from_task(TaskId::I2c1)},
+    {               QueueId::I2c2,            8,                                                528,    get_core_from_task(TaskId::I2c2)},
+    {               QueueId::I2c3,            8,                                                528,    get_core_from_task(TaskId::I2c3)},
     {               QueueId::I2c4,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c5,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c6,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c7,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c8,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c9,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I3c0,           16,                                                524,    get_core_from_task(TaskId::I3c0)},
+    {               QueueId::I3c0,            8,                                                524,    get_core_from_task(TaskId::I3c0)},
     {               QueueId::I3c1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi0,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
@@ -487,7 +513,9 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
               LstpGpioIrqQDepth,                                   LstpGpioIrqQSize,
               get_core_from_task(TaskId::Lstp)                                                                                                   },
     {         QueueId::LstpToGpio,            1,                                    LstpToGpioQSize,    get_core_from_task(TaskId::Lstp)},
-    {               QueueId::Ssif,            1,                                                258,    get_core_from_task(TaskId::Ssif)}
+    {               QueueId::Ssif,            1,                                                258,    get_core_from_task(TaskId::Ssif)},
+    {          QueueId::UbridgeTx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)},
+    {          QueueId::UbridgeRx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)}
 };
 
 constexpr uint32_t I3cQueueMaxTxSize = 128;
@@ -667,7 +695,8 @@ enum BootedEventBits : uint32_t
     Spdm           = nv::common::bit(11),
     Lstp           = nv::common::bit(12),
     Ssif           = nv::common::bit(13),
-    BootStatusMask = (nv::common::bit(14) - 1),
+    Ubridge        = nv::common::bit(14),
+    BootStatusMask = (nv::common::bit(15) - 1),
 };
 
 constexpr uint32_t WatchdogResetMs       = 2000;

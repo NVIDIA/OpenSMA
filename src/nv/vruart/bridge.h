@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
  * All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -17,85 +17,23 @@
  */
 #pragma once
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <span>
+#include <type_traits>
 
+#include "nv/common/preproc.h"
+#include "nv/vruart/cdc_bridge.h"
 #include "nv/vruart/common.h"
+#include "nv/vruart/lstp_bridge.h"
+
+#include NV_IPC_CONFIG_H
 
 namespace nv::vruart {
 
-/**
- * Bridge class - UART to USB CDC ACM bridge
- * Handles bidirectional data transfer between UART and USB virtual COM port
- *
- * Data flow (event-driven, single task):
- *   USB RX → UsbRxDoneBit → Task → UART TX → re-arm USB
- *   UART RX → enqueue + UartRxDoneBit → Task → USB TX
- */
-class Bridge
-{
-public:
-    static constexpr uint32_t Buffsz = 514;  // 2 bytes length (little-endian) + 512 bytes data
-    using Buffer                     = std::array<uint8_t, Buffsz>;
-
-    // Event bits for task notification
-    enum EventBits : uint32_t
-    {
-        UsbRxDoneBit  = 1U << 0,  // USB RX complete, need to send to UART
-        UartRxDoneBit = 1U << 1,  // UART RX complete (in queue), need to send to USB
-        UartTxDoneBit = 1U << 2,  // UART TX complete, can re-arm USB RX
-        UsbTxDoneBit  = 1U << 3,  // USB TX complete (not used, see main loop comment)
-    };
-
-    // UART initialization
-    Status init(Instance      uartInstance,
-                const Signal& tx,
-                const Signal& rx,
-                Baudrate      baudrate,
-                EdmaInst      edmaInstance,
-                EdmaChn       edmaTxChn,
-                EdmaChn       edmaRxChn);
-
-    // UART transmit
-    Status tx(std::span<uint8_t> data);
-
-    // UART ready check
-    bool ready() const;
-
-    // Get singleton instance
-    static Bridge& inst();
-
-    // Enqueue UART RX data for USB TX (called from ISR)
-    static uint8_t enqueue(const uint8_t* data, uint32_t length);
-
-    // USB CDC ACM recv callback (registered with sys::usb::Driver)
-    static uint8_t usb_rx_callback(uint8_t* data, uint32_t length);
-
-    // Event setters (called from ISR)
-    static void set_usb_rx_done_event();
-    static void set_uart_rx_done_event();
-    static void set_uart_tx_done_event();
-
-    // Flush pending TX queue (called when USB port is closed)
-    static void flush_tx_queue();
-
-    // Single task entry point (event-driven loop)
-    [[noreturn]] void main();
-
-private:
-    // Single-core: USB RX callback saves pointer here
-    volatile uint8_t* pending_usb_data = nullptr;
-    volatile uint32_t pending_usb_len  = 0;
-
-    // RX buffer: single-core callback copy / dual-core queue recv
-    Buffer rx_buf{};
-
-    // TX buffer for UbridgeTx queue receive
-    Buffer tx_buf{};
-};
-
-extern Bridge bridge;
+#ifdef USB_CONFIG_UART_BRIDGE
+using Bridge = std::
+    conditional_t<nv::ipc::UartOverUsbProtocol == Protocol::Lstp, LstpBridge, CdcBridge>;
+#else
+// Set a default to avoid forcing each config.h to define UartOverUsbProtocol
+using Bridge = LstpBridge;
+#endif
 
 }  // namespace nv::vruart

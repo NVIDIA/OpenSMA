@@ -45,6 +45,10 @@ constexpr uint16_t inline to_vol_value(uint16_t adcreading)
 constexpr uint16_t MinVol = 0;
 constexpr uint16_t MaxVol = AdcVolVref;
 
+constexpr uint16_t DefaultMinLeak   = 165;   // 0.165V
+constexpr uint16_t DefaultMaxLeak   = 1600;  // 1.600V
+constexpr uint16_t DefaultMaxNormal = 1850;  // 1.850V
+
 using SensorId                     = uint8_t;
 constexpr SensorId SensorIdNotUsed = ~0;
 
@@ -161,7 +165,7 @@ enum class AdcScanMode : uint8_t
 constexpr uint32_t Fifo0WatermarkInterruptEnable = 0x01;
 
 /******************************************************************************************
- *                        NSM Type 3 Spec State Defines                                   *
+ *                          Voltage Monitor State Defines                                 *
  ******************************************************************************************/
 enum class State : uint8_t
 {
@@ -183,6 +187,26 @@ enum class State : uint8_t
 
 using Threshold = uint16_t;
 using Reading   = uint16_t;
+
+/******************************************************************************************
+ *                          Voltage Monitor Log Helpers                                   *
+ ******************************************************************************************/
+inline std::array<uint8_t, 8> make_adc_isr_log_data(AdcInstance instance,
+                                                    uint32_t    commandIdSource,
+                                                    uint32_t    triggerIdSource,
+                                                    uint32_t    loopCountIndex,
+                                                    Reading     convValue)
+{
+    constexpr uint8_t ByteMask = 0xFF;
+    return {static_cast<uint8_t>(instance),
+            static_cast<uint8_t>(commandIdSource & ByteMask),
+            static_cast<uint8_t>(triggerIdSource & ByteMask),
+            static_cast<uint8_t>(loopCountIndex & ByteMask),
+            static_cast<uint8_t>(convValue & ByteMask),
+            static_cast<uint8_t>((convValue >> 8) & ByteMask),
+            0,
+            0};
+}
 
 constexpr Threshold ThresholdNotUsed = ~0;
 

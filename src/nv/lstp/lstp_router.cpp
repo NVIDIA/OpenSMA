@@ -35,6 +35,7 @@
 #include "nv/ssif/task.h"
 #include "nv/i2c/task.h"
 #include "nv/spi/flashrom_task.h"
+#include "nv/vruart/lstp_bridge.h"
 
 namespace nv::lstp {
 
@@ -79,11 +80,6 @@ void LstpRouter::receive(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
     }
 
     auto& hdr = from<LstpHdr>(buffer.data());
-
-    if (hdr.cmd_status_code & LstpResponseBit) {
-        // Don't send response to spurious response
-        return;
-    }
 
     const LstpStatus status = receive_helper(buffer, buffer_len);
 
@@ -163,6 +159,12 @@ LstpStatus LstpRouter::receive_helper(std::array<uint8_t, nv::ipc::UsbLstpMsgSiz
             }
             break;
         }
+        case LstpChannelType::Uart: {
+            if constexpr (EnableUart) {
+                status = receive_uart(buffer);
+            }
+            break;
+        }
         default: break;
     }
 
@@ -176,7 +178,13 @@ LstpStatus LstpRouter::receive_helper(std::array<uint8_t, nv::ipc::UsbLstpMsgSiz
 LstpStatus LstpRouter::receive_ch0(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
-    auto  cmd = static_cast<LstpManagementCommand>(hdr.cmd_status_code);
+
+    if (hdr.cmd_status_code & LstpResponseBit) {
+        // Don't send response to spurious response
+        return LstpStatus::Success;
+    }
+
+    auto cmd = static_cast<LstpManagementCommand>(hdr.cmd_status_code);
 
     switch (cmd) {
         case LstpManagementCommand::ReadConfig : return read_channel_config(buffer);
@@ -304,6 +312,25 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
                           <= LstpMaxPayloadSize);
             if constexpr (EnableIpmi) {
                 // Empty config for IPMI channel
+            }
+            else {
+                return LstpStatus::NotSupported;
+            }
+            break;
+        }
+        case LstpChannelType::Uart: {
+            if constexpr (EnableUart) {
+                static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpUartChannelConfig)
+                              <= LstpMaxPayloadSize);
+                auto& uartConfigResp = from<LstpUartChannelConfig>(
+                    &resp_buffer.data()[resp_offset]);
+                resp_offset += sizeof(LstpUartChannelConfig);
+
+                const auto& uart_cfg     = std::get<LstpUartChannelConfig>(channel_cfg);
+                uartConfigResp.speed     = uart_cfg.speed;
+                uartConfigResp.data_bits = uart_cfg.data_bits;
+                uartConfigResp.stop_bits = uart_cfg.stop_bits;
+                uartConfigResp.parity    = uart_cfg.parity;
             }
             else {
                 return LstpStatus::NotSupported;
@@ -484,6 +511,13 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
 
 LstpStatus LstpRouter::receive_spi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
 {
+    auto& hdr = from<LstpHdr>(buffer.data());
+
+    if (hdr.cmd_status_code & LstpResponseBit) {
+        // Don't send response to spurious response
+        return LstpStatus::Success;
+    }
+
     std::span<uint8_t> item(buffer.data(), buffer.size());
     return LstpStatus_from(nv::spi::FlashromTask::to_spi(item));
 }
@@ -494,6 +528,13 @@ LstpStatus LstpRouter::receive_spi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
 
 LstpStatus LstpRouter::receive_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
 {
+    auto& hdr = from<LstpHdr>(req_buffer.data());
+
+    if (hdr.cmd_status_code & LstpResponseBit) {
+        // Don't send response to spurious response
+        return LstpStatus::Success;
+    }
+
     if constexpr (EnableGpio) {
         return LstpTask::submit_gpio_req(req_buffer);
     }
@@ -539,6 +580,11 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
 {
     auto&  req_hdr    = from<LstpHdr>(req_buffer.data());
     size_t req_offset = sizeof(LstpHdr);
+
+    if (req_hdr.cmd_status_code & LstpResponseBit) {
+        // Don't send response to spurious response
+        return LstpStatus::Success;
+    }
 
     const uint16_t payload_len = req_hdr.len_lsb | (req_hdr.len_msb << BYTE1_SHIFT);
     // TODO: Add multipacket support
@@ -661,11 +707,10 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
     return status;
 }
 
-// Actually callback from I2C task
-void LstpRouter::to_i2c(ipchandler::Id    src_id,
-                        uint16_t          read_len,
-                        ipc::Queue::Item& read_data,
-                        i2c::I2cStatus    i2c_status)
+void LstpRouter::send_i2c(ipchandler::Id    src_id,
+                          uint16_t          read_len,
+                          ipc::Queue::Item& read_data,
+                          i2c::I2cStatus    i2c_status)
 {
     const LstpStatus                             status = LstpStatus_from(i2c_status);
     std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buffer{};
@@ -714,12 +759,19 @@ void LstpRouter::to_i2c(ipchandler::Id    src_id,
 
 LstpStatus LstpRouter::receive_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
 {
+    auto& hdr = from<LstpHdr>(buffer.data());
+
+    if (hdr.cmd_status_code & LstpResponseBit) {
+        // Don't send response to spurious response
+        return LstpStatus::Success;
+    }
+
     std::span<uint8_t> item(buffer.data(), buffer.size());
     (void)nv::ssif::Task::to_ssif(item);
     return LstpStatus::Success;
 }
 
-void LstpRouter::to_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size)
+void LstpRouter::send_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
@@ -731,4 +783,70 @@ void LstpRouter::to_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, s
     auto item = std::span<uint8_t>(buffer);
     nv::usb::Task::to_usbLstp(item);
 }
+
+/*****************************************************
+ * LSTP UART Channel
+ *****************************************************/
+
+LstpStatus LstpRouter::receive_uart(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
+{
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buf{};
+    auto&                                        req_hdr  = from<LstpHdr>(buffer.data());
+    auto&                                        resp_hdr = from<LstpHdr>(resp_buf.data());
+
+    // Flag bits ignored without error for now
+    const auto cmd = static_cast<LstpUartCommand>(req_hdr.cmd_status_code & LstpUartCmdMask);
+
+    if (req_hdr.cmd_status_code & LstpResponseBit) {
+        // ACK/NACK response from the host - notify UART bridge task
+        // We intentionally don't check the status and don't retry on NACK. In this
+        // implementation MCU side is the console so host is expected to always ACK anyway
+        // The response is only used for serialization
+        if (cmd == LstpUartCommand::Write) {
+            nv::vruart::LstpBridge::set_usb_tx_done_event();
+        }
+        else {
+            // Response to non-existent request - ignore
+        }
+    }
+    else if (cmd == LstpUartCommand::Write) {
+        // USB RX data to be sent over UART
+        auto& queue   = ipc::Queue::make(ipc::QueueId::UbridgeRx);
+        auto  rx_item = ipc::Queue::Item(buffer.data(), buffer.size());
+        if (queue.send(rx_item, 0s) != ipc::Queue::Status::Ok) {
+            // Queue full - backpressure the host (will cause retry)
+            return LstpStatus::Nak;
+        }
+        else {
+            nv::vruart::LstpBridge::set_usb_rx_done_event();
+        }
+
+        // ACK response
+        resp_hdr.channel_id      = req_hdr.channel_id;
+        resp_hdr.cmd_status_code = static_cast<uint8_t>(LstpStatus::Success) | LstpResponseBit;
+        resp_hdr.len_lsb         = 0;
+        resp_hdr.len_msb         = 0;
+        std::span<uint8_t> item(resp_buf.data(), resp_buf.size());
+        nv::usb::Task::to_usbLstp(item);
+    }
+    else {
+        // Non-existent request
+        return LstpStatus::NotSupported;
+    }
+
+    return LstpStatus::Success;
+}
+
+bool LstpRouter::send_uart(std::span<uint8_t>& buffer)
+{
+    auto& hdr = from<LstpHdr>(buffer.data());
+
+    hdr.channel_id      = GetFirstChannelId(LstpChannels, LstpChannelType::Uart);
+    hdr.cmd_status_code = static_cast<uint8_t>(LstpUartCommand::Write);
+    // Length is already populated by UART bridge task
+
+    auto item = std::span<uint8_t>(buffer);
+    return (nv::usb::Task::to_usbLstp(item) == usb::Status::Ok);
+}
+
 }  // namespace nv::lstp

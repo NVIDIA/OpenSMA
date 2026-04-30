@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <tuple>
 #include <type_traits>
 #include <variant>
 
@@ -354,6 +355,35 @@ struct [[gnu::packed]] LstpIpmiChannelConfig
 {};
 
 /*****************************************************
+ * LSTP UART Channel
+ *****************************************************/
+
+constexpr uint8_t LstpUartCmdMask = 0x03U;  // Bits [6:2] reserved for flags
+
+enum class LstpUartCommand : uint8_t
+{
+    Write = 0x00
+};
+
+enum class LstpUartParity : uint8_t
+{
+    None  = 0,
+    Odd   = 1,
+    Even  = 2,
+    Mark  = 3,
+    Space = 4,
+};
+
+struct [[gnu::packed]] LstpUartChannelConfig
+{
+    uint32_t speed;                                                   // Baud rate in Hz
+    uint8_t  data_bits = 8;                                           // Number of data bits
+    uint8_t  stop_bits = 1;                                           // Number of stop bits
+    uint8_t  parity    = static_cast<uint8_t>(LstpUartParity::None);  // [4:7] reserved for flow
+                                                                      // control
+};
+
+/*****************************************************
  * Compile-time config helpers
  *****************************************************/
 
@@ -361,7 +391,8 @@ using LstpChannelConfig = std::variant<LstpManagementConfig,
                                        LstpSpiChannelConfig,
                                        LstpGpioChannelConfig,
                                        LstpI2cChannelConfig,
-                                       LstpIpmiChannelConfig>;
+                                       LstpIpmiChannelConfig,
+                                       LstpUartChannelConfig>;
 using LstpChannelEntry  = std::tuple<LstpChannelInfo, LstpChannelConfig>;
 
 template<size_t N>
@@ -403,6 +434,11 @@ constexpr bool ValidateLstpChannelConfigs(const std::array<LstpChannelEntry, N>&
                 break;
             case LstpChannelType::Ipmi:
                 if (!std::holds_alternative<LstpIpmiChannelConfig>(cfg)) {
+                    return false;
+                }
+                break;
+            case LstpChannelType::Uart:
+                if (!std::holds_alternative<LstpUartChannelConfig>(cfg)) {
                     return false;
                 }
                 break;

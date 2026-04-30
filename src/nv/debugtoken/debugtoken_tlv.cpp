@@ -639,6 +639,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     std::array<uint8_t, DT_DEV_SER_NUM_SIZE> serial_num           = {};
     std::array<uint8_t, DT_NONCE_SIZE>       nonce                = {};
     uint16_t                                 agent_ver            = 0;
+    uint8_t                                  lifecycle_state      = 0;
     uint32_t                                 extracted_token_type = 0;
 
     // Parse TLV data to extract these fields using cached index
@@ -684,6 +685,13 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return TokenErrorCode::TokenInvalidFormat;
     }
     memcpy(&agent_ver, token_span.data() + entry.data_offset, entry.length);
+
+    // Read lifecycle state (1 byte)
+    if (!find_tlv_in_cache(tlv_cache, TlvType::LifecycleState, entry)
+        || entry.length != sizeof(lifecycle_state)) {
+        return TokenErrorCode::TokenInvalidFormat;
+    }
+    memcpy(&lifecycle_state, token_span.data() + entry.data_offset, entry.length);
 
     // Read token type (4 bytes)
     if (!find_tlv_in_cache(tlv_cache, TlvType::TokenType, entry)
@@ -751,7 +759,8 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         nonce,
         spdm::measurement::MeasDebugTokenTlvConfiguration,
         tlv_header.version,
-        agent_ver);
+        agent_ver,
+        lifecycle_state);
 
     // Only log if verification failed
     if (dt_status != spdm::measurement::DtStatusSuccess) {
@@ -779,6 +788,8 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         case spdm::measurement::DtStatusFailBadDevSerNum:
             return TokenErrorCode::TokenInvalidSerialNumber;
         case spdm::measurement::DtStatusFailBadNonce: return TokenErrorCode::TokenInvalidNonce;
+        case spdm::measurement::DtStatusFailBadLifecycleState:
+            return TokenErrorCode::TokenInvalidLifecycleState;
 
         // Internal/other errors
         case spdm::measurement::DtStatusFailNonceValidityUpdate:

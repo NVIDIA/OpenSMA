@@ -31,6 +31,7 @@
 #include "nv/i2c/lattice_driver.h"
 #include "nv/logger/common.h"
 #include "nv/logger/log.h"
+#include "nv/mctp/constants.h"
 #include "nv/mctp/driver.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/nsm.h"
@@ -375,9 +376,101 @@ bool validateSmaBaseboardRequest(uint8_t data_index)
 }
 
 __attribute__((weak)) NsmStatus
-set_sma_baseboard_sets_resp_wp([[maybe_unused]] nv::mctp::T5SmaBaseboardSetsResponse& response)
+platform_get_sma_wp_settings([[maybe_unused]] T5SmaBaseboardWriteProtectResponse& response)
 {
     return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus
+platform_get_sma_pcie_reset([[maybe_unused]] T5SmaBaseboardPcieResetResponse& response)
+{
+    return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus platform_get_sma_gpu_degrade_mode(
+    [[maybe_unused]] T5SmaBaseboardGpuDegradeModeResponse& response)
+{
+    return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus
+platform_get_sma_power_supply([[maybe_unused]] T5SmaBaseboardPowerSupplyResponse& response)
+{
+    return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus
+platform_get_sma_gpu_presence([[maybe_unused]] T5SmaBaseboardGpuPresenceResponse& response)
+{
+    return NsmStatus::NotSupported;
+}
+
+__attribute__((weak)) NsmStatus
+platform_get_sma_gpu_pgd([[maybe_unused]] T5SmaBaseboardGpuPgdResponse& response)
+{
+    return NsmStatus::NotSupported;
+}
+
+Ccode createSmaBaseboardAggregateResponse(NsmPktBulkResp& ntx_bulk, uint16_t& size_response)
+{
+    TelemetryRecordArray aggregateArray(&ntx_bulk.data[0],
+                                        TelemetryRecordArray::DefaultMctpDataSize);
+
+    {
+        T5SmaBaseboardWriteProtectResponse response{};
+        auto                               status = platform_get_sma_wp_settings(response);
+        const bool                         valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU64(SmaBaseboardSets::WPSettings, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    {
+        T5SmaBaseboardPcieResetResponse response{};
+        auto                            status = platform_get_sma_pcie_reset(response);
+        const bool                      valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU32(
+                SmaBaseboardSets::PcieFundamentalResetValue, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    {
+        T5SmaBaseboardGpuDegradeModeResponse response{};
+        auto       status = platform_get_sma_gpu_degrade_mode(response);
+        const bool valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU8(
+                SmaBaseboardSets::GpuDegradeModeSettings, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    {
+        T5SmaBaseboardPowerSupplyResponse response{};
+        auto                              status = platform_get_sma_power_supply(response);
+        const bool                        valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU8(
+                SmaBaseboardSets::PowerSupplyStatus, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    {
+        T5SmaBaseboardGpuPresenceResponse response{};
+        auto                              status = platform_get_sma_gpu_presence(response);
+        const bool                        valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU8(SmaBaseboardSets::GpuPresence, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    {
+        T5SmaBaseboardGpuPgdResponse response{};
+        auto                         status = platform_get_sma_gpu_pgd(response);
+        const bool                   valid  = (status == NsmStatus::OK);
+        if (!aggregateArray.addRecordNvU8(SmaBaseboardSets::GpuPgdStatus, response, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+
+    size_response            = aggregateArray.arraySize();
+    ntx_bulk.telemetry_count = aggregateArray.elements();
+    return Ccode::Success;
 }
 
 Ccode handle_set_program_cpld_feature_row()
@@ -1367,26 +1460,93 @@ void Nsm::on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx)
         return;
     }
 
-    T5SmaBaseboardSetsResponse response{};
-    auto&                      ntx = NsmPktResp::from(tx);
-    ntx.completion_code            = Ccode::Success;
+    if (request.data_index == SmaBaseboardSets::Aggregate) {
+        auto&    ntx_bulk      = NsmPktBulkResp::from(tx);
+        uint16_t size_response = 0;
+        auto rcCode = nsm_type5::createSmaBaseboardAggregateResponse(ntx_bulk, size_response);
+        if (rcCode != Ccode::Success) {
+            fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+            return;
+        }
+        ntx_bulk.completion_code = Ccode::Success;
+        tx.priv.packet_length    = sizeof(Header) + AggregateHeaderResponseSize;
+        if ((tx.priv.packet_length + size_response) < std::numeric_limits<uint16_t>::max()) {
+            tx.priv.packet_length += size_response;
+        }
+        return;
+    }
 
+    NsmStatus status        = NsmStatus::InvalidData;
+    uint16_t  response_size = 0;
+
+    // Each data_index calls its own weak function with a typed response struct
     switch (request.data_index) {
         case SmaBaseboardSets::WPSettings: {
-            auto wp_status = nsm_type5::set_sma_baseboard_sets_resp_wp(response);
-            if (wp_status != NsmStatus::OK) {
-                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-                return;
+            T5SmaBaseboardWriteProtectResponse response{};
+            status = nsm_type5::platform_get_sma_wp_settings(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
+            }
+            break;
+        }
+        case SmaBaseboardSets::PcieFundamentalResetValue: {
+            T5SmaBaseboardPcieResetResponse response{};
+            status = nsm_type5::platform_get_sma_pcie_reset(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
+            }
+            break;
+        }
+        case SmaBaseboardSets::GpuDegradeModeSettings: {
+            T5SmaBaseboardGpuDegradeModeResponse response{};
+            status = nsm_type5::platform_get_sma_gpu_degrade_mode(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
+            }
+            break;
+        }
+        case SmaBaseboardSets::PowerSupplyStatus: {
+            T5SmaBaseboardPowerSupplyResponse response{};
+            status = nsm_type5::platform_get_sma_power_supply(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
+            }
+            break;
+        }
+        case SmaBaseboardSets::GpuPresence: {
+            T5SmaBaseboardGpuPresenceResponse response{};
+            status = nsm_type5::platform_get_sma_gpu_presence(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
+            }
+            break;
+        }
+        case SmaBaseboardSets::GpuPgdStatus: {
+            T5SmaBaseboardGpuPgdResponse response{};
+            status = nsm_type5::platform_get_sma_gpu_pgd(response);
+            if (status == NsmStatus::OK) {
+                response_size = sizeof(response);
+                std::memcpy(&NsmPktResp::from(tx).data[0], &response, response_size);
             }
             break;
         }
         default: break;
     }
 
-    ntx.data_size         = sizeof(response);
-    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + sizeof(response);
+    if (status != NsmStatus::OK) {
+        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+        return;
+    }
 
-    memcpy(&ntx.data[0], response.bitarray.data(), sizeof(response));
+    auto& ntx             = NsmPktResp::from(tx);
+    ntx.completion_code   = Ccode::Success;
+    ntx.data_size         = response_size;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + response_size;
 }
 
 void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)

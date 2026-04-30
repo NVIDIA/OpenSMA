@@ -564,6 +564,16 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
                              nv::logger::data_from_two_u32(FmcStatus, 0));
             nv::logger::info(nv::logger::Event::BootFmcOrdinalNumber,
                              *std::bit_cast<nv::logger::EventData*>(&FmcVersion));
+            constexpr size_t  fmc_ordinal_size    = 5;
+            constexpr uint8_t ten                 = 10;
+            flash::Data       fmc_numeric_version = 0;
+            for (size_t i = 0; i < fmc_ordinal_size; i++) {
+                const auto b        = static_cast<uint8_t>(FmcVersion >> (i * 8u));
+                fmc_numeric_version = fmc_numeric_version * ten
+                                    + static_cast<flash::Data>(b - '0');
+            }
+            flash::Flash::set_data_from_kernel(flash::Key::NpdsFmcNumericVersion,
+                                               fmc_numeric_version);
         }
         nv::logger::info(nv::logger::Event::TRNGConfigResult,
                          nv::logger::data_from_u32(TRNGConfig));

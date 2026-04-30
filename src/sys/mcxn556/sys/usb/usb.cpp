@@ -419,6 +419,32 @@ bool Driver::is_vcom_ready()
 {
     return s_vcomReady;
 }
+#else
+
+void Driver::vcom_rearm_rx(void* handle, uint8_t* buffer)
+{
+    (void)handle;
+    (void)buffer;
+}
+
+bool Driver::vcom_send(void* handle, uint8_t* data, uint32_t length)
+{
+    (void)handle;
+    (void)data;
+    (void)length;
+    return false;
+}
+
+void* Driver::get_vcom_handle()
+{
+    return nullptr;
+}
+
+bool Driver::is_vcom_ready()
+{
+    return false;
+}
+
 #endif
 
 #if defined(USB_CONFIG_COMPOSITE)

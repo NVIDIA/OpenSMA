@@ -65,6 +65,7 @@
 #include "sys/common/AHB_config.h"
 #include "sys/smartdma/driver.h"
 #include "nv/spi/flashrom_task.h"
+#include "nv/vruart/task.h"
 
 static void make_i2c_task()
 {
@@ -271,22 +272,13 @@ int main()
         sys::smartdma::Driver::init();
     }
     make_i3c_task();
-    gpio::Driver::init_pin(nv::ipc::SPI0_CS0_PORT,
-                           nv::ipc::SPI0_CS0_PIN,
-                           gpio::Direction::Output,
-                           gpio::GpioState::High);
-    gpio::Driver::init_pin(nv::ipc::SPI0_CS1_PORT,
-                           nv::ipc::SPI0_CS1_PIN,
-                           gpio::Direction::Output,
-                           gpio::GpioState::High);
     make_spi_task();
     logger::Task::make();
-
+    vruart::BridgeTask::make();
     bootloader::Driver::set_stack_cookie();
     bootloader::Driver::boot_init();
     ctimer::Driver::init();
     gpio::Driver::init();
-    lstp::LstpTask::LstpGpioInit();
     for (auto& [port, pin, det, sel] : nv::ipc::GpioInterruptSetup) {
         gpio::Driver::init_interrupt(port, pin, det, sel);
     }

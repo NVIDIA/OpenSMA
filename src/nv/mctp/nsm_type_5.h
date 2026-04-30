@@ -22,7 +22,6 @@
 #include <cstdint>
 #include <cstring>
 
-#include "nv/mctp/constants.h"
 #include "nv/mctp/enums.h"
 #include "nv/mctp/nsm_msg_bitmask.h"
 
@@ -268,23 +267,97 @@ struct [[gnu::packed]] T5SmaBaseboardSetsRequest
     }
 };
 
-constexpr auto T5SmaBaseboardSetsResponseSize = 8;
+// WP Settings response (data_index 0x00): 8 bytes
+constexpr auto T5SmaBaseboardWriteProtectResponseSize = 8;
 
-struct [[gnu::packed]] T5SmaBaseboardSetsResponse
+struct [[gnu::packed]] T5SmaBaseboardWriteProtectResponse
 {
-    std::array<uint8_t, T5SmaBaseboardSetsResponseSize> bitarray{0};
+    std::array<uint8_t, T5SmaBaseboardWriteProtectResponseSize> bitarray{0};
 };
 
-using T5SmaBaseboardSetsBitResp                  = std::tuple<uint8_t, uint8_t>;
-constexpr auto T5SmaBaseboardSetsBitPositionSize = 4;
-
-constexpr inline std::array<T5SmaBaseboardSetsBitResp, T5SmaBaseboardSetsBitPositionSize>
-    smaBaseboardSetsBitResp{
-        T5SmaBaseboardSetsBitResp{WP_BASEBOARD_FRU_EEPROM, 0x1}, // bit 1 byte 0
-        T5SmaBaseboardSetsBitResp{        WP_NVSW_QM4_SPI, 0x3}, // bit 3 byte 0
-        T5SmaBaseboardSetsBitResp{             WP_CX9_SPI, 0x4}, // bit 4 byte 0
-        T5SmaBaseboardSetsBitResp{             WP_GPU_SPI, 0x7}, // bit 7 byte 0
+// Bit positions within byte 0 of the WP Settings response (data_index 0x00)
+// per NSM MCU Usage Specification v0.5 section 7.1.4. The actual supported-
+// function list is product-specific and is declared in each project's
+// config.h via the response_bit_pos field of WriteProtectionGpioConfig.
+enum class T5SmaBaseboardWpResponseBit : uint8_t
+{
+    FruEeprom  = 1,  // bit 1: WP_BASEBOARD_FRU_EEPROM
+    NvswQm4Spi = 3,  // bit 3: WP_NVSW_QM4_SPI
+    Cx9Spi     = 4,  // bit 4: WP_CX9_SPI
+    GpuSpi     = 7,  // bit 7: WP_GPU_SPI
 };
+
+// PCIe Fundamental Reset response (data_index 0x01): 4 bytes per NSM MCU
+// Usage Specification v0.5 section 7.1.4.
+//
+// On the wire (little-endian, bit-packed):
+//   Byte 0 : Reserved
+//   Byte 1 : [7:3] cx9_perst_lo  (CX9 PERST[4:0])
+//            [2]   pexsw_perst   (CPLD PERST_SIGNALS 0xBA, bit 0)
+//            [1]   Reserved
+//            [0]   nvsw_perst    (CPLD PERST_SIGNALS 0xBA, bit 1)
+//   Byte 2 : [2:0] cx9_perst_hi  (CX9 PERST[7:5])
+//            [7:3] Reserved
+//   Byte 3 : Reserved
+//
+// Spec note: the PDF labels the CX bits as "CX8 PERST"; this is a typo and
+// refers to CX9 PERST (Fractal HGX CPLD regTbl entry CPLD_CX_PERST at 0xB9).
+//
+// cx9_perst is split across byte 1 and byte 2. Use set_cx9_perst() /
+// get_cx9_perst() to move an 8-bit CPLD_CX_PERST value in and out.
+struct [[gnu::packed]] T5SmaBaseboardPcieResetResponse
+{
+    uint8_t reserved0;
+
+    // Byte 1
+    uint8_t nvsw_perst   : 1;
+    uint8_t reserved1    : 1;
+    uint8_t pexsw_perst  : 1;
+    uint8_t cx9_perst_lo : 5;
+
+    // Byte 2
+    uint8_t cx9_perst_hi : 3;
+    uint8_t reserved2    : 5;
+
+    uint8_t reserved3;
+
+    void set_cx9_perst(uint8_t val)
+    {
+        cx9_perst_lo = val & 0x1FU;
+        cx9_perst_hi = static_cast<uint8_t>((val >> 5) & 0x07U);
+    }
+    uint8_t get_cx9_perst() const
+    {
+        return static_cast<uint8_t>(cx9_perst_lo | (cx9_perst_hi << 5));
+    }
+};
+static_assert(sizeof(T5SmaBaseboardPcieResetResponse) == 4,
+              "T5SmaBaseboardPcieResetResponse wire format must be 4 bytes");
+
+// GPU Degrade Mode response (data_index 0x03): 1 byte
+struct [[gnu::packed]] T5SmaBaseboardGpuDegradeModeResponse
+{
+    uint8_t gpu_degrade_mode;  // GPU_DEGRADE_MODE (0xD3), bits [7:0] per GPU
+};
+
+// Power Supply Status response (data_index 0x05): 1 byte
+struct [[gnu::packed]] T5SmaBaseboardPowerSupplyResponse
+{
+    uint8_t sxm_en;  // SXM_EN (0xB1), bits [7:0] per GPU
+};
+
+// GPU Presence response (data_index 0x0C): 1 byte
+struct [[gnu::packed]] T5SmaBaseboardGpuPresenceResponse
+{
+    uint8_t sxm_prsnt;  // SXM_PRSNT (0xAE), bits [7:0] per GPU
+};
+
+// GPU PGD Status response (data_index 0x0D): 1 byte
+struct [[gnu::packed]] T5SmaBaseboardGpuPgdResponse
+{
+    uint8_t sxm_pg;  // SXM_PG (0xA4), bits [7:0] per GPU
+};
+
 /** END Get SMA baseboard settings 0X05 0X64 */
 
 /** single data structure for type persistent data */
@@ -447,14 +520,19 @@ Ccode handle_get_supported_device_modes(NsmPktResp& ntx);
 namespace nsm_type5 {
 
 /**
- * Platform hook for reading write-protection GPIO states into SMA baseboard sets response.
- * Weak default in nsm_type_5.cpp returns OK (no write-protection GPIOs).
- * Strong override (e.g. p7612_hgx) reads WriteProtectionList GPIOs and sets response bits.
+ * Platform hooks for Get SMA Baseboard Settings (T5 cmd 0x64).
+ * Weak defaults in nsm_type_5.cpp return NotSupported.
+ * Strong overrides (e.g. p7612_hgx) read CPLD registers / GPIOs and fill the response struct.
  *
- * @param response  Bitarray response to populate
- * @return NsmStatus::OK on success, NsmStatus::ErrorGeneral on GPIO read failure
+ * @return NsmStatus::OK on success, NsmStatus::NotSupported if platform does not implement,
+ *         NsmStatus::I2cBusError on CPLD read failure, NsmStatus::ErrorGeneral on GPIO error
  */
-NsmStatus set_sma_baseboard_sets_resp_wp(T5SmaBaseboardSetsResponse& response);
+NsmStatus platform_get_sma_wp_settings(T5SmaBaseboardWriteProtectResponse& response);
+NsmStatus platform_get_sma_pcie_reset(T5SmaBaseboardPcieResetResponse& response);
+NsmStatus platform_get_sma_gpu_degrade_mode(T5SmaBaseboardGpuDegradeModeResponse& response);
+NsmStatus platform_get_sma_power_supply(T5SmaBaseboardPowerSupplyResponse& response);
+NsmStatus platform_get_sma_gpu_presence(T5SmaBaseboardGpuPresenceResponse& response);
+NsmStatus platform_get_sma_gpu_pgd(T5SmaBaseboardGpuPgdResponse& response);
 
 Ccode handle_set_program_cpld_feature_row();
 Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx);

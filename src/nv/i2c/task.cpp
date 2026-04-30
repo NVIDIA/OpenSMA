@@ -970,7 +970,7 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
             break;
         case static_cast<uint8_t>(ipchandler::Id::Lstp):
             if constexpr (nv::lstp::EnableI2c) {
-                nv::lstp::LstpRouter::to_i2c(this->_ipchandler_id, ReadLength, item, result);
+                nv::lstp::LstpRouter::send_i2c(this->_ipchandler_id, ReadLength, item, result);
             }
             break;
         default: break;

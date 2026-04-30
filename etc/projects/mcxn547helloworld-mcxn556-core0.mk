@@ -149,6 +149,8 @@ SOURCES += \
 	$(PATH_SDK_DEVICE)/drivers/fsl_wwdt.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_lpspi_edma.c \
+	$(PATH_SDK_DEVICE)/drivers/fsl_lpuart.c \
+	$(PATH_SDK_DEVICE)/drivers/fsl_lpuart_edma.c \
 	$(PATH_SDK_DEVICE)/drivers/romapi/nboot/src/fsl_nboot.c
 
 

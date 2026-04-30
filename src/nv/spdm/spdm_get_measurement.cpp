@@ -536,7 +536,8 @@ DtStatusT verify_dbg_token_fields(
     const std::array<uint8_t, nv::debugtoken::DT_NONCE_SIZE>&       nonce,
     MeasNumT                                                        meas_num,
     uint32_t                                                        token_ver,
-    uint16_t                                                        agent_ver)
+    uint16_t                                                        agent_ver,
+    uint8_t                                                         lifecycle_state)
 {
     // validate parameters
     if (mcu_fw_ver.size() != nv::debugtoken::DT_MCU_FW_VER_SIZE) {
@@ -563,6 +564,12 @@ DtStatusT verify_dbg_token_fields(
         if (agent_ver != DT_AGENT_VER) {
             return DtStatusFailBadAgentVer;
         }
+    }
+
+    // Verify lifecycle state: if lifecycle state in the token is not the same as the device
+    // lifecycle state, reject installation
+    if (lifecycle_state != static_cast<uint8_t>(get_device_lifecycle_state())) {
+        return DtStatusFailBadLifecycleState;
     }
 
     // Verify device serial number using shared DTconfig
@@ -850,10 +857,6 @@ bool get_pds_dbg_token_nonce(std::array<uint8_t, nv::debugtoken::DT_NONCE_SIZE>&
     return true;
 }
 
-// Function declarations
-void get_debug_token_tlv_config(nv::debugtoken::DebugTokenTlvConfig& config);
-nv::debugtoken::LifecycleState get_device_lifecycle_state();
-
 // Get device lifecycle state value based on key revocation status
 nv::debugtoken::LifecycleState get_device_lifecycle_state()
 {
@@ -883,8 +886,8 @@ nv::debugtoken::LifecycleState get_device_lifecycle_state()
         }
     }
     else {
-        // If we can't read OTP, default to initial state
-        return LifecycleState::Manufacturing;
+        // If we can't read OTP, default to most restrictive state - production state
+        return LifecycleState::Production;
     }
 }
 

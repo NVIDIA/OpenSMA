@@ -19,7 +19,6 @@
 
 #include "sys/common/utils.h"
 #include "sys/flash/fccob.h"
-#include "nv/fw_parser/fw_parser_mcu.h"
 using namespace sys::flash;
 
 namespace {
@@ -168,27 +167,15 @@ CfpaDriver::increase_cfpa_secure_version(uint32_t                     sec_versio
     if (sts != kStatus_Success) {
         return sts;
     }
+    // Only enforce CFPA-local monotonicity here. The "sec_version must not exceed the
+    // running FW's SVN / inactive slot SVN / FMC SVN" policy belongs to the NSM layer
+    // (update_min_sec_ver_num) and is already validated there before this path runs.
     if (key_rollback_select == nv::flash::KeyRollbackSelect::Mcu) {
-        auto cur_firmware_version = get_firmware_version();
-        if (cur_firmware_version == InvalidValue) {
-            return kStatus_Fail;
-        }
-
-        // auto cur_image_version = get_image_version();
-
-        if (cfpa_read.secureFwVersion > sec_version || sec_version > cur_firmware_version) {
+        if (cfpa_read.secureFwVersion > sec_version) {
             nv::info("Invalid sec_version %d\n", sec_version);
             return kStatus_InvalidArgument;
         }
-
         cfpa_read.secureFwVersion = sec_version;
-
-#if 0
-        uint32_t magic = ~(cfpa_read.reserved2[0]);
-        for (uint32_t i = 0; i < 23; i++) {
-            cfpa_read.reserved2[i] = magic;  // Fake programming configuration test
-        }
-#endif
     }
     else if (key_rollback_select == nv::flash::KeyRollbackSelect::Ap0) {
         if (cfpa_read.custCtr[4] > sec_version) {
@@ -236,16 +223,11 @@ CfpaDriver::increase_cfpa_image_key_revoke(uint32_t                     key_revo
         return sts;
     }
 
+    // Only enforce CFPA-local monotonicity here. The "key_revoke must not exceed the
+    // running FW's signing key index / inactive / FMC" policy belongs to the NSM layer
+    // (update_key_permission) and is already validated there before this path runs.
     if (key_rollback_select == nv::flash::KeyRollbackSelect::Mcu) {
         if (cfpa_read.imageKeyRevoke > key_revoke) {
-            nv::info("Invalid key_revoke %d\n", key_revoke);
-            return kStatus_InvalidArgument;
-        }
-        auto cur_key_index = get_key_index();
-        if (cur_key_index == InvalidValue) {
-            return kStatus_Fail;
-        }
-        if (key_revoke > cur_key_index) {
             nv::info("Invalid key_revoke %d\n", key_revoke);
             return kStatus_InvalidArgument;
         }
@@ -398,61 +380,6 @@ status_t CfpaDriver::recover_configuration_area()
 
     L1CACHE_InvalidateCodeCache();
     return sts;
-}
-
-uint32_t CfpaDriver::get_image_version()
-{
-    uint32_t cur_version{};
-    memcpy(&cur_version, std::bit_cast<void*>(ImageVersionOffset), sizeof(cur_version));
-    cur_version = (cur_version & ImageVersionMask) >> ImageVersionShift;
-    // nv::info("img version %d\n", cur_version);
-    return cur_version;
-}
-
-uint32_t CfpaDriver::get_firmware_version()
-{
-    uint32_t cert_block_addr{};
-    memcpy(&cert_block_addr,
-           std::bit_cast<void*>(CertBlockAddressOffset),
-           sizeof(cert_block_addr));
-
-    uint32_t cert_block_size = 0;
-    memcpy(&cert_block_size,
-           std::bit_cast<void*>(cert_block_addr + CertBlockSizeOffset),
-           sizeof(cert_block_size));
-    // nv::info("total size 0x%x\n", cert_block_size);
-
-    const uint32_t ManiFestStart = cert_block_addr + cert_block_size;
-    // nv::info("ManiFestStart 0x%x\n", ManiFestStart);
-
-    uint32_t magic{};
-    memcpy(&magic, std::bit_cast<void*>(ManiFestStart), sizeof(magic));
-    if (magic != ManifestMagic) {
-        return InvalidValue;
-    }
-#if 0
-    nv::info("magic 0x%x\n", magic);
-    uint32_t format_ver{};
-    memcpy(&format_ver, std::bit_cast<void*>(ManiFestStart + 4), sizeof(format_ver));
-    nv::info("format_ver 0x%x\n", format_ver);
-#endif
-
-    uint32_t fw_ver{};
-    memcpy(
-        &fw_ver, std::bit_cast<void*>(ManiFestStart + ManifestVersionOffset), sizeof(fw_ver));
-    // nv::info("fw_ver %d\n", fw_ver);
-
-    return fw_ver;
-}
-
-uint32_t CfpaDriver::get_key_index()
-{
-    auto key_index = nv::fw_parser::mcu::get_image_signing_key_version(
-        nv::fw_parser::mcu::ParsingFwType::ActiveSlot);
-    if (key_index.has_value()) {
-        return *key_index;
-    }
-    return InvalidValue;
 }
 
 status_t CfpaDriver::read_cmpa(const std::span<uint8_t>& buffer, uint32_t offset)

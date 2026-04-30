@@ -1666,7 +1666,7 @@ protected:
     std::array<uint8_t, nsm_msg::NvMctpSupportedNum>      log_nvmsg_event_bitmask{};
     bool                                                  log_event_subscription = false;
     Packet            nsm_event_clients{};  // The rx from the set event subscribe command
-    EventSubscription event_subscription{NsmGlobalEventSetting::EventNotSubscribe, 0};
+    EventSubscription event_subscription{NsmGlobalEventSetting::EventDisable, 0};
     std::array<NsmEventCache, NsmEventNum> event_cache{};
 
     // Nsm constants, refer to nv/mctp/constants.h

@@ -289,6 +289,8 @@ struct Event
     static constexpr EventStructItem LeakDetectIsrNoValidSensorId = {0x1001, Level::Info};
     static constexpr EventStructItem AdcOneShotConvTimeout        = {0x1002, Level::Error};
     static constexpr EventStructItem McuTempFifoTimeout           = {0x1003, Level::Error};
+    static constexpr EventStructItem LeakDetectIsr                = {0x1004, Level::Info};
+    static constexpr EventStructItem BusbarTempIsr                = {0x1005, Level::Info};
 
     // Soc Pwr Smoothing
     static constexpr EventStructItem SocPwrSmoothingSocPercent       = {0x1100, Level::Info};

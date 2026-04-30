@@ -614,7 +614,7 @@ bool dispatch_c2c_data(ipc::QueueId queue_id, const uint8_t* data, uint16_t leng
         std::memcpy(buf.data() + 2, data, length);
         const auto item = ipc::Queue::ConstItem(buf.data(), buf.size());
         (void)ipc::Queue::make(ipc::QueueId::UbridgeRx).send(item, 100ms);
-        nv::vruart::Bridge::set_usb_rx_done_event();
+        nv::vruart::CdcBridge::set_usb_rx_done_event();
         return true;
     }
 #endif

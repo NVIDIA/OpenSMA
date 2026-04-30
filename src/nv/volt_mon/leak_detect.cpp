@@ -105,6 +105,41 @@ nv::flash::Key pds_key(uint8_t slot, uint8_t offset)
         static_cast<uint32_t>(nv::flash::Key::PdsLeakDetSlot0Part0)
         + slot * PdsLeakDetEntriesPerSlot + offset);
 }
+
+bool are_thresholds_valid_adc(Threshold minLeak, Threshold maxLeak, Threshold maxNormal)
+{
+    const auto adcMax = to_adc_value(MaxVol);
+    const auto H      = Hysteresis;
+
+    if (!(minLeak < maxLeak && maxLeak < maxNormal && maxNormal < adcMax)) {
+        return false;
+    }
+
+    /**
+     * Hysteresis boundary checks (all in ADC domain):
+     *
+     *  Short  [0 .......... minLeak+H]
+     *                                [maxLeak-H .......... maxNormal+H]  Nominal
+     *  Leak   [minLeak-H ...... maxLeak+H]
+     *                                [maxNormal-H ........... adcMax] Open
+     */
+    if (minLeak < H) {
+        return false;
+    }
+    if (adcMax - maxNormal < H) {
+        return false;
+    }
+
+    const uint32_t MinGap = static_cast<uint32_t>(H) * 2U + 1U;
+    if (static_cast<uint32_t>(maxLeak) - static_cast<uint32_t>(minLeak) < MinGap) {
+        return false;
+    }
+    if (static_cast<uint32_t>(maxNormal) - static_cast<uint32_t>(maxLeak) < MinGap) {
+        return false;
+    }
+
+    return true;
+}
 }  // namespace
 
 void LeakDetect::load_pds_thresholds()
@@ -112,21 +147,32 @@ void LeakDetect::load_pds_thresholds()
     for (uint8_t slot = 0; slot < PdsLeakDetMaxSlots; ++slot) {
         nv::flash::Data pack0 = 0;
         nv::flash::Data pack1 = 0;
-        nv::flash::Flash::get_data_from_kernel(pds_key(slot, 0), pack0);
-        nv::flash::Flash::get_data_from_kernel(pds_key(slot, 1), pack1);
+        const auto status0    = nv::flash::Flash::get_data_from_kernel(pds_key(slot, 0), pack0);
+        const auto status1    = nv::flash::Flash::get_data_from_kernel(pds_key(slot, 1), pack1);
+
+        if (status0 != nv::flash::Status::Ok || status1 != nv::flash::Status::Ok) {
+            continue;
+        }
 
         if (pack0 == 0 && pack1 == 0) {
             continue;
         }
 
-        const auto id = static_cast<uint8_t>(pack0 >> 16);
+        const auto id        = static_cast<uint8_t>(pack0 >> 16);
+        const auto minLeak   = static_cast<Threshold>(pack0 & LowHalfMask);
+        const auto maxLeak   = static_cast<Threshold>(pack1 >> 16);
+        const auto maxNormal = static_cast<Threshold>(pack1 & LowHalfMask);
+
+        if (!are_thresholds_valid_adc(minLeak, maxLeak, maxNormal)) {
+            continue;
+        }
 
         for (uint8_t i = 0; i < LeakDetectSensorNum; ++i) {
             if (sensor.at(i).id == id) {
                 auto& s     = sensor.at(i);
-                s.minLeak   = static_cast<Threshold>(pack0 & LowHalfMask);
-                s.maxLeak   = static_cast<Threshold>(pack1 >> 16);
-                s.maxNormal = static_cast<Threshold>(pack1 & LowHalfMask);
+                s.minLeak   = minLeak;
+                s.maxLeak   = maxLeak;
+                s.maxNormal = maxNormal;
                 break;
             }
         }
@@ -392,34 +438,11 @@ Status LeakDetect::set_thresholds(uint8_t sensorIdx, const ThresholdLeakDet& con
         return Status::InvalidSensorId;
     }
 
-    const auto adcMax = to_adc_value(MaxVol);
-    const auto H      = Hysteresis;
-    const auto minL   = to_adc_value(config.minLeak);
-    const auto maxL   = to_adc_value(config.maxLeak);
-    const auto maxN   = to_adc_value(config.maxNormal);
+    const auto minL = to_adc_value(config.minLeak);
+    const auto maxL = to_adc_value(config.maxLeak);
+    const auto maxN = to_adc_value(config.maxNormal);
 
-    if (!(minL < maxL && maxL < maxN && maxN < adcMax)) {
-        return Status::InvalidThreshold;
-    }
-
-    /**
-     * Hysteresis boundary checks (all in ADC domain):
-     *
-     *  Short  [0 .......... minL+H]
-     *                                [maxL-H .......... maxN+H]  Nominal
-     *  Leak   [minL-H ...... maxL+H]
-     *                                [maxN-H ........... adcMax] Open
-     */
-    if (minL < H) {
-        return Status::InvalidThreshold;
-    }
-    if (maxN + H > adcMax) {
-        return Status::InvalidThreshold;
-    }
-    if (minL + H + 1 > maxL - H) {
-        return Status::InvalidThreshold;
-    }
-    if (maxL + H + 1 > maxN - H) {
+    if (!are_thresholds_valid_adc(minL, maxL, maxN)) {
         return Status::InvalidThreshold;
     }
 
@@ -523,6 +546,15 @@ void LeakDetect::update_adccmd_threshold(uint8_t sensorId, uint16_t thLow, uint1
 void LeakDetect::leak_detect_adc_isr(AdcInstance                         instance,
                                      const sys::adc::ADC::AdcConvResult& result)
 {
+    nv::logger::Logger::add_from_isr(nv::logger::Event::LeakDetectIsr.unique_id,
+                                     nv::logger::Event::LeakDetectIsr.default_level,
+                                     volt_mon::make_adc_isr_log_data(instance,
+                                                                     result.commandIdSource,
+                                                                     result.triggerIdSource,
+                                                                     result.loopCountIndex,
+                                                                     result.convValue),
+                                     nv::logger::OutputDirection::Flash);
+
     uint8_t   sensorId = 0;
     Threshold thLow = 0, thHigh = 0;
 

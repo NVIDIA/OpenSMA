@@ -988,6 +988,8 @@ bool Task::handle_cxx_reset(bool ping)
             }
             result = _driver.process_daa(_address_pool);
             if (result) {
+                // delay 100ms to allow time for MCTP thread to be ready for SetEID request
+                delay(100ms);
                 return result;
             }
         }

@@ -257,12 +257,14 @@ enum class TokenErrorCode : uint16_t
     TokenFwVersionMismatch   = 0x100B,  ///< TBD - Firmware version mismatch
     TokenInvalidSerialNumber = 0x100C,  ///< Device serial number does not match with
     ///< token serial number
-    TokenInvalidPsid            = 0x100D,  ///< Invalid PSID
-    TokenAlreadyInstalled       = 0x100E,  ///< A debug token is already installed
-    TokenNotInstalled           = 0x100F,  ///< A debug token is not installed
-    TokenHashVerificationFailed = 0x1010,  ///< Hash verification failed during token
-                                           ///< processing
-    // 0x1011 - 0x1013 reserved for future use
+    TokenInvalidPsid            = 0x100D,    ///< Invalid PSID
+    TokenAlreadyInstalled       = 0x100E,    ///< A debug token is already installed
+    TokenNotInstalled           = 0x100F,    ///< A debug token is not installed
+    TokenHashVerificationFailed = 0x1010,    ///< Hash verification failed during token
+                                             ///< processing
+    TokenEraseRejectedNoProdImage = 0x1011,  ///< Erase rejected: no prod-signed
+                                             ///< image to boot after erase
+    // 0x1012 - 0x1013 reserved for future use
 };
 
 // TLV header structure

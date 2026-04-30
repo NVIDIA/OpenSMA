@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 
+#include NV_IPC_CONFIG_H
+
 #include "nv/gpio/common.h"
 #include "fsl_lpuart_edma.h"
 #include "fsl_lpuart.h"
@@ -14,8 +16,19 @@
 
 namespace sys::uart {
 
-using Type                              = LPUART_Type;
-constexpr static size_t edmaXferBufSize = 512U;
+using Type = LPUART_Type;
+
+// CDC-ACM : 512-byte packet = 512-byte UART data
+// LSTP    : 512-byte packet = 508-byte UART data + 4-byte header
+#ifdef USB_CONFIG_UART_BRIDGE
+constexpr static size_t edmaXferBufSize = (nv::ipc::UartOverUsbProtocol
+                                           == nv::vruart::Protocol::CdcAcm)
+                                            ? 512U
+                                            : 508U;
+#else
+// Set a default to avoid forcing each config.h to define UartOverUsbProtocol
+constexpr static size_t edmaXferBufSize = 508U;
+#endif
 
 class Bridge
 {

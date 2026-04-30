@@ -140,6 +140,7 @@ constexpr bool EnableSpi  = IsChannelEnabled(LstpChannels, LstpChannelType::Spi)
 constexpr bool EnableGpio = IsChannelEnabled(LstpChannels, LstpChannelType::Gpio);
 constexpr bool EnableI2c  = IsChannelEnabled(LstpChannels, LstpChannelType::I2c);
 constexpr bool EnableIpmi = IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi);
+constexpr bool EnableUart = IsChannelEnabled(LstpChannels, LstpChannelType::Uart);
 
 }  // namespace nv::lstp
 
@@ -297,6 +298,8 @@ enum class QueueId
     LstpTx,
     LstpGpioIrq,
     LstpToGpio,
+    UbridgeTx,
+    UbridgeRx,
     End
 };
 
@@ -540,7 +543,9 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {        QueueId::LstpGpioIrq,
               LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize,
               get_core_from_task(TaskId::Lstp)                                                                                          },
-    {         QueueId::LstpToGpio,   1,                                     LstpToGpioSize,    get_core_from_task(TaskId::Lstp)}
+    {         QueueId::LstpToGpio,   1,                                     LstpToGpioSize,    get_core_from_task(TaskId::Lstp)},
+    {          QueueId::UbridgeTx,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {          QueueId::UbridgeRx,   1,                                                  1, get_core_from_task(TaskId::Invalid)}
 };
 
 constexpr uint32_t I3cQueueMaxTxSize = 1;

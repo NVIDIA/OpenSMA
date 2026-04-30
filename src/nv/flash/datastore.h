@@ -49,6 +49,7 @@ enum class Key : uint32_t
     NpdsDebugTokenSubtypeCpldDebug,  ///< Subtype bitmap for CPLD debug token
     NpdsDebugTokenFailCount,         ///< Debug token failure count for log throttling
     NpdsAp0FwStatus,                 ///< AP FW status
+    NpdsFmcNumericVersion,           ///< FMC numeric version (e.g. 3 for V3, 4 for V4)
     NpdsEnd,
     NpdsInvalid,
     // here is for active ap fw authenticate data
