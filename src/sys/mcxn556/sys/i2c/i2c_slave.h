@@ -23,6 +23,7 @@
 
 #include "nv/common/debug.h"
 #include "nv/common/utils.h"
+#include "nv/ctimer/ctimer.h"
 #include "nv/i2c/port.h"
 #include "nv/logger/log.h"
 #include "nv/nv.h"
@@ -80,7 +81,8 @@ public:
             nv::error("fail to start i2c bus: %d", _i2c_bus);
             return;
         }
-        _task_state = Idle;
+        _task_state           = Idle;
+        _target_timeout_timer = 0;
     }
 
     // Binds the driver, for cases where driver config is not used
@@ -103,6 +105,7 @@ public:
     {
         // NOLINTNEXTLINE: nxp api name
         auto* this_driver_instance = static_cast<I2CSlaveDriver*>(user_data);
+        this_driver_instance->update_target_state_time_stamp(transfer->event);
         switch (transfer->event) {
             case kLPI2C_SlaveTransmitEvent:
                 this_driver_instance->service_tx_request(transfer);
@@ -143,6 +146,17 @@ public:
         }
     }
 
+    sys::ctimer::Ticks get_target_timeout_elapsed()
+    {
+        // Read the target timeout timer atomically
+        const auto target_timeout_timer = _target_timeout_timer;
+        if (target_timeout_timer == 0) {
+            return 0;
+        }
+        return sys::ctimer::Driver::get_counter_difference(
+            target_timeout_timer, nv::ctimer::Driver::read_ticks_inline());
+    }
+
     void peripheral_recovery()
     {
         nv::logger::info(nv::logger::Event::I2CSlaveRecovery,
@@ -167,7 +181,8 @@ public:
         }
         slave_config_fill_from_registers(_base_addr, peripheral_clk_hz, slave_config);
         LPI2C_SlaveInit(_base_addr, &slave_config, peripheral_clk_hz);
-        _task_state = Init;
+        _task_state           = Init;
+        _target_timeout_timer = 0;
 
         // Restart slave and state machine
         start();
@@ -324,6 +339,18 @@ private:
         }
     }
 
+    void update_target_state_time_stamp(lpi2c_slave_transfer_event_t event)
+    {
+        switch (event) {
+            case kLPI2C_SlaveCompletionEvent:
+            case kLPI2C_SlaveRepeatedStartEvent: _target_timeout_timer = 0; break;
+            case kLPI2C_SlaveTransmitAckEvent  :
+            case kLPI2C_SlaveTransmitEvent     :
+            case kLPI2C_SlaveReceiveEvent      :
+            default                            : _target_timeout_timer = nv::ctimer::Driver::read_ticks_inline(); break;
+        }
+    }
+
     // Checks if the address is a target address to ACK/NACK
     bool is_target_address(const uint8_t address)
     {
@@ -361,5 +388,7 @@ private:
     T* _parent;
 
     DriverState _task_state;  // Current state of the I2C driver
+
+    volatile sys::ctimer::Ticks _target_timeout_timer{};
 };
 }  // namespace sys::i2c

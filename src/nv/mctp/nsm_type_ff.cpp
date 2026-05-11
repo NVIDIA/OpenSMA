@@ -199,7 +199,7 @@ void Nsm::on_nv_internal_getRackPowerSmoothingTestHook(const Packet& rx, Packet&
     /*
     // Debug token check required unless confirmed dev build
     uint8_t    build_type   = 0;
-    const auto build_ok     = fill_build_type(build_type);
+    const auto build_ok     = fill_build_type(get_active_slot(), build_type);
     const bool is_dev_build = (build_ok && build_type == NsmBuildTypeDev);
     if (!is_dev_build) {
         // Check debug token is installed and valid
@@ -245,7 +245,7 @@ void Nsm::on_nv_internal_setRackPowerSmoothingTestHook(const Packet& rx, Packet&
     /*
     // Debug token check required unless confirmed dev build
     uint8_t    build_type   = 0;
-    const auto build_ok     = fill_build_type(build_type);
+    const auto build_ok     = fill_build_type(get_active_slot(), build_type);
     const bool is_dev_build = (build_ok && build_type == NsmBuildTypeDev);
     if (!is_dev_build) {
         // Check debug token is installed and valid

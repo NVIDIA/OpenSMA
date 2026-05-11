@@ -52,9 +52,13 @@ enum class RackPwrSmoothParams : uint8_t
     IsinkIntegralMin               = 25,
     IsinkIntegralMax               = 26,
     IsinkOutputMax                 = 27,
-    MaxTuningParams                = 28,
+    EdppPrimaryPidDtDivisor        = 28,  // uint32 1-1000; PID integral uses dt / value
+    EdppSecondaryPidDtDivisor      = 29,
+    IsinkPrimaryPidDtDivisor       = 30,
+    IsinkSecondaryPidDtDivisor     = 31,
+    MaxTuningParams                = 32,
 
-    // RESERVED: Values 28-39 are reserved for future tuning parameters
+    // RESERVED: Values 32-39 are reserved for future tuning parameters
     // This gap allows adding more regular params without breaking backward compatibility
     // for TestHook parameters
 
@@ -94,7 +98,7 @@ struct [[gnu::packed]] NsmTFFGetRackPwrSmoothParamRes
 struct [[gnu::packed]] NsmTFFSetRackPwrSmoothParamReq
 {
     uint8_t presetId;  // Which preset to modify (1-3, 0 is read-only)
-    uint8_t paramId;   // Which parameter to modify (tuning 0-19; TestHook 40-44 per
+    uint8_t paramId;   // Which parameter to modify (tuning 0-31; TestHook 40-44 per
                        // RackPwrSmoothParams)
     uint16_t resvd;
     uint32_t paramValue;  // SFXP22_10 encoded value or OverrideParam format

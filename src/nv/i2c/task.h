@@ -37,7 +37,7 @@ namespace nv::i2c {
 class Task : public nv::ipc::Task
 {
 public:
-    static constexpr size_t  DataSize                = nv::lstp::EnableI2c ? 524 : 76;
+    static constexpr size_t  DataSize                = nv::i2c::I2cBufferSize + 12;
     static constexpr uint8_t DynAddr                 = 0;
     static constexpr uint8_t ByteMask                = 0xFF;
     static constexpr uint8_t MaxSMBusBlockReadLength = 33;
@@ -105,7 +105,8 @@ public:
         I2cRecovery,
         CheckApStatus,
         I2cLoopbackTest,
-        EepromUpdate
+        EepromUpdate,
+        CheckTargetTimeout
     };
 
     enum class Status
@@ -133,6 +134,7 @@ public:
     static Task::Status wdt_notify(nv::watchdog::TaskMonitorIndex taskId);
     static Task::Status send_recovery_request(RecoveryCmd cmd, mctp::Client client);
     static void         check_ap_status(nv::ipc::Timer& timer);
+    static void         check_target_timeout(nv::ipc::Timer& timer);
     static void         repeated_start_timeout(nv::ipc::Timer& timer);
     static void         request_i2c_loopback_test();
     static void         stop_polling_timers();
@@ -215,6 +217,7 @@ private:
     nv::ipc::BootedEventBits            _boot_event;
     nv::ipc::Timer                      _timer;
     nv::ipc::Timer                      _repeated_start_timer;
+    nv::ipc::Timer                      _target_timeout_timer;
     nv::ipchandler::Id                  _ipchandler_id;
     APStatus                            _ap_status{APStatus::Querying};
 
@@ -252,6 +255,7 @@ private:
                       size_t&            read_len);
     I2cStatus wait_for_i2c_completion();
     void      handle_ap_status(APStatus set_status);
+    void      handle_check_target_timeout();
     void      handle_eeprom_update();
 
     // OOB Bus error telemetry
@@ -294,6 +298,24 @@ static void make_task_by_port(Task::Config config)
         // NOLINTNEXTLINE(*-reinterpret-cast)
         const std::span<uint8_t> priv(reinterpret_cast<uint8_t*>(&task), sizeof(task));
         task.setup(stack.span(), priv, Task::Priority::I2c, Task::entrypoint);
+    }
+}
+
+/// Map MCTP I2C client to the IPC queue for that downstream / US I2C task.
+constexpr inline nv::ipc::QueueId client_to_i2c_queue_id(nv::mctp::Client client)
+{
+    using namespace nv::ipc;
+    switch (client) {
+        case nv::mctp::Client::UsI2c : return QueueId::I2c0;
+        case nv::mctp::Client::DsI2c0: return QueueId::I2c1;
+        case nv::mctp::Client::DsI2c1: return QueueId::I2c2;
+        case nv::mctp::Client::DsI2c2: return QueueId::I2c3;
+        case nv::mctp::Client::DsI2c3: return QueueId::I2c4;
+        case nv::mctp::Client::DsI2c4: return QueueId::I2c5;
+        case nv::mctp::Client::DsI2c5: return QueueId::I2c6;
+        case nv::mctp::Client::DsI2c6: return QueueId::I2c7;
+        case nv::mctp::Client::DsI2c7: return QueueId::I2c8;
+        default                      : return QueueId::End;
     }
 }
 

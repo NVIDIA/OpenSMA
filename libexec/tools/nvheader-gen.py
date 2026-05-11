@@ -45,9 +45,9 @@ class NvHeader:
             major, minor, patch, build = [int(x, 10) for x in self._value.split('.')]
             return struct.pack('<HBHH', major, minor, patch, build)
 
-    class SecVersionInfo(Symbol):
+    class BuildMode(Symbol):
         def binary(self) -> bytes:
-            return struct.pack('<I', int(self._value, 16))
+            return struct.pack('<BBH', self._value, 0, 0)
 
     class ApSkuId(Symbol):
         def binary(self) -> bytes:
@@ -69,9 +69,11 @@ class NvHeader:
         def binary(self) -> bytes:
             return struct.pack('<H', int(self._value, 16))
     
-    class KeyRevocationList(Symbol):
+    class Reserved2:
+        def __init__(self, config) -> None:
+            pass
         def binary(self) -> bytes:
-            return struct.pack('<I', int(self._value, 16))
+            return struct.pack('<I', 0)
 
     class NvHeaderLength(Symbol):
         def binary(self) -> bytes:
@@ -85,13 +87,13 @@ class NvHeader:
         binary = self.SyncNumber(self._config).binary()
         binary += self.HeaderVersion(self._config).binary()
         binary += self.FwVersion(self._config).binary()
-        binary += self.SecVersionInfo(self._config).binary()
+        binary += self.BuildMode(self._config).binary()
         binary += self.ApSkuId(self._config).binary()
         binary += self.PciVendorId(self._config).binary()
         binary += self.PciDeviceId(self._config).binary()
         binary += self.PciSubsystemVendorId(self._config).binary()
         binary += self.PciSubsystemDeviceId(self._config).binary()
-        binary += self.KeyRevocationList(self._config).binary()
+        binary += self.Reserved2(self._config).binary()
         binary += self.NvHeaderLength(self._config).binary()
         with Path(out).open('w') as fp:
             fp.write(f'const unsigned char nvheader[] __attribute__((section(".header"))) = {{\n')

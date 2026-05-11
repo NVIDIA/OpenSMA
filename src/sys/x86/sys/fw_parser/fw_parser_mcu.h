@@ -9,6 +9,9 @@ namespace sys::fw_parser::mcu {
 std::expected<uint32_t, ParsingErrorCode>
 get_security_version(const ParsingFwType InputParseingFwType);
 
+std::expected<uint8_t, ParsingErrorCode>
+get_build_type(const ParsingFwType InputParseingFwType);
+
 std::expected<uint32_t, ParsingErrorCode>
 get_image_signing_key_version(const ParsingFwType InputParseingFwType);
 

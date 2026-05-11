@@ -18,7 +18,7 @@
 
 // NOLINTBEGIN - Suppress clang-tidy warnings for NTC lookup table implementation
 
-#include "ntc_table.h"
+#include "nv/volt_mon/ntc_table.h"
 
 namespace nv::volt_mon {
 

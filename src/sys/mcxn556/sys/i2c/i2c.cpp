@@ -18,6 +18,8 @@
 #include "sys/i2c/i2c.h"
 
 #include "fsl_clock.h"
+#include <cstdint>
+#include <cstring>
 
 #include "nv/i2c/mutex.h"
 #include "nv/i2c/task.h"
@@ -30,6 +32,7 @@
 
 #include "nv/nv.h"
 #include "nv/ipc/supervisor.h"
+#include "nv/ctimer/ctimer.h"
 
 using namespace nv;
 using namespace sys::i2c;
@@ -202,16 +205,53 @@ void Driver::controller_callback([[maybe_unused]] LPI2C_Type*            base,
     }
 }
 
+void Driver::update_target_state_time_stamp(lpi2c_slave_transfer_event_t event)
+{
+    switch (event) {
+        case kLPI2C_SlaveAddressMatchEvent:
+        case kLPI2C_SlaveTransmitEvent:
+        case kLPI2C_SlaveReceiveEvent:
+            _target_state_time_stamp.store(nv::ctimer::Driver::read_ticks(),
+                                           std::memory_order_relaxed);
+            break;
+        case kLPI2C_SlaveCompletionEvent:
+            _target_state_time_stamp.store(0U, std::memory_order_relaxed);
+            break;
+        default: break;
+    }
+}
+
+void Driver::check_target_timeout([[maybe_unused]] bool enable_target)
+{
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if constexpr (nv::i2c::I2CTargetTimeoutCheckIntervalMs > 0) {
+            const auto ts = _target_state_time_stamp.load(std::memory_order_relaxed);
+            if (ts == 0U) {
+                return;
+            }
+            const auto now        = nv::ctimer::Driver::read_ticks();
+            const auto elapsed_us = sys::ctimer::Driver::get_counter_difference(ts, now);
+            if (elapsed_us > nv::i2c::I2CTargetTimeoutUs) {
+                peripheral_recovery(enable_target);
+                _target_state_time_stamp.store(0U, std::memory_order_relaxed);
+            }
+        }
+    }
+}
+
 void Driver::target_callback(LPI2C_Type*             base,
                              lpi2c_slave_transfer_t* transfer,
                              void*                   user_data)
 {
     using namespace nv::i2c;
-    constexpr uint8_t        DefaultData   = 0xFF;
-    constexpr uint8_t        MinPacketSize = 4;
-    auto                     context       = static_cast<TargetContex*>(user_data);
-    auto                     task          = static_cast<Task*>(context->task);
-    const std::span<uint8_t> Buffer        = context->buffer;
+    constexpr uint8_t DefaultData   = 0xFF;
+    constexpr uint8_t MinPacketSize = 4;
+    auto              context       = static_cast<TargetContex*>(user_data);
+    auto              task          = static_cast<Task*>(context->task);
+    auto*             drv           = context->owner;
+    NV_ASSERT(drv != nullptr);
+    drv->update_target_state_time_stamp(transfer->event);
+    const std::span<uint8_t> Buffer = context->buffer;
     switch (transfer->event) {
         case kLPI2C_SlaveAddressMatchEvent:
             transfer->data     = nullptr;
@@ -284,6 +324,7 @@ void Driver::bind(nv::i2c::Port port, void* task)
     _base                    = get_base(port);
     _controller_context.task = task;
     _target_context.task     = task;
+    _target_context.owner    = this;
 
     _peripheral_clk_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(_base));
     if (_peripheral_clk_hz == 0) {
@@ -346,7 +387,7 @@ void Driver::peripheral_recovery(bool enable_target)
     LPI2C_SlaveTransferAbort(_base, &_lpi2c_handle.target);
     LPI2C_SlaveEnable(_base, false);
 
-    // Retrive slave configuration from registers, reset, and re-init slave
+    // Retrieve slave configuration from registers, reset, and re-init slave
     lpi2c_slave_config_t slave_config{};
     slave_config_fill_from_registers(_base, _peripheral_clk_hz, slave_config);
     LPI2C_SlaveInit(_base, &slave_config, _peripheral_clk_hz);
@@ -422,10 +463,15 @@ uint8_t Driver::address()
     return static_cast<uint8_t>(_base->SAMR) >> 1U;
 }
 
-void Driver::set_address(nv::i2c::Port port, uint8_t address)
+void Driver::set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr)
 {
     auto base  = get_base(port);
-    base->SAMR = static_cast<uint8_t>(address) << 1U;
+    base->SAMR = LPI2C_SAMR_ADDR0(static_cast<uint32_t>(address))
+               | LPI2C_SAMR_ADDR1(static_cast<uint32_t>(sec_addr));
+    base->SCFGR1 &= ~LPI2C_SCFGR1_ADDRCFG_MASK;
+    if (sec_addr != 0) {
+        base->SCFGR1 |= LPI2C_SCFGR1_ADDRCFG(kLPI2C_MatchAddress0OrAddress1);
+    }
     logger::info(logger::Event::I2CAddressUpdate,
                  {static_cast<uint8_t>(port), static_cast<uint8_t>(address)});
 }

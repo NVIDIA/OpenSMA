@@ -300,7 +300,7 @@ authenticate_ap_firmware(const nv::fw_parser::ap::ParsingApFwType InputParseingA
         static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_In_Progress));
 
     // check if the ap fw feature is enabled
-    if constexpr (nv::pldm::ApNum == 0) {
+    if constexpr (nv::vrot::ApList.size() == 0) {
         return CryptoStatus::FailUnknown;
     }
     // check if the input parsing ap fw type is valid

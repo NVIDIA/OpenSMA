@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include "pgood_volt.h"
+#include "nv/volt_mon/pgood_volt.h"
 #include "nv/nv.h"
 #include "nv/volt_mon/adc.h"
 

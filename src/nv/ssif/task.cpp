@@ -24,6 +24,7 @@
 
 #include "nv/bootloader.h"
 #include "nv/nv.h"
+#include "nv/watchdog/runtime.h"
 #include "sys/ipc/task.h"
 #include "nv/logger/log.h"
 
@@ -99,6 +100,21 @@ void Task::enable()
     event.set(SlaveEnable);
 }
 
+void Task::peripheral_recovery()
+{
+    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    event.set(PeripheralRecovery);
+}
+
+void Task::wdt_notify()
+{
+    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    auto sts   = event.set(WdtNotify);
+    if (sts != nv::ipc::Event::Status::Ok) {
+        // TBD
+    }
+}
+
 [[noreturn]] void Task::start()
 {
     auto queue   = nv::ipc::Queue::make(nv::ipc::QueueId::Ssif);
@@ -112,8 +128,8 @@ void Task::enable()
         // Due to SSIF protocol specifics (stateful SMBus Block Read operations, autoincrement
         // registers etc) SMBus layer logic needs to live in ISR context. This task handles
         // fully assembled IPMI messages on USB/LSTP layer.
-        auto wait_bits  = SlaveEnable | RxReady | TxReady;
-        auto event      = _event.wait(wait_bits, false, false);
+        auto wait_bits  = SlaveEnable | RxReady | TxReady | PeripheralRecovery | WdtNotify;
+        auto event      = _event.wait(wait_bits, false, false, TaskEventWaitTimeout);
         auto event_bits = event.value() & wait_bits;
 
         if (event_bits & SlaveEnable) {
@@ -137,6 +153,22 @@ void Task::enable()
                                   {static_cast<uint8_t>(status)});
             }
             _event.clear(TxReady);
+        }
+
+        if (event_bits & PeripheralRecovery) {
+            _ssif.peripheral_recovery();
+            _event.clear(PeripheralRecovery);
+        }
+
+        if (event_bits & WdtNotify) {
+            watchdog::Runtime::mark_task_alive(watchdog::TaskMonitorIndex::Ssif);
+            _event.clear(WdtNotify);
+        }
+
+        auto elapsed = _ssif.get_target_timeout_elapsed();
+        if (elapsed > MaxActivityTimeoutUs) {
+            nv::logger::error(nv::logger::Event::SsifTargetTimeout, {});
+            _ssif.peripheral_recovery();
         }
     }
 }

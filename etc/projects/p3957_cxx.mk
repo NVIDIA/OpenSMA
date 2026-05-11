@@ -88,6 +88,7 @@ else
 AP_SKU_PRJ          := 0x8
 GD_MCU_SSDID		:= 0x2211
 endif
+ENABLE_PQC_SIGN     := true
 
 GD_NV_DEBUG 		:= 1
 GDS_NV_IPC_CONFIG_H := $(PROJECT)/config.h

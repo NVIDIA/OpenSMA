@@ -1468,17 +1468,18 @@ public:
     void fill_event_msg(const EventLog& event_log, Packet& tx) const;
     bool cache_event_msg(Packet& eventMsg);
 
-    static bool fill_build_type(uint8_t& build_type);
-    static void append_number(std::array<char, NvMctpVersionLength>& buf,
-                              size_t&                                index,
-                              uint32_t                               num,
-                              size_t                                 width,
-                              bool                                   add_dot);
-    static void generate_fw_version(std::array<char, NvMctpVersionLength>& buf,
-                                    uint16_t                               major,
-                                    uint8_t                                minor,
-                                    uint16_t                               patch,
-                                    uint16_t                               build);
+    static bool    fill_build_type(uint8_t slot, uint8_t& build_type);
+    static uint8_t get_active_slot();
+    static void    append_number(std::array<char, NvMctpVersionLength>& buf,
+                                 size_t&                                index,
+                                 uint32_t                               num,
+                                 size_t                                 width,
+                                 bool                                   add_dot);
+    static void    generate_fw_version(std::array<char, NvMctpVersionLength>& buf,
+                                       uint16_t                               major,
+                                       uint8_t                                minor,
+                                       uint16_t                               patch,
+                                       uint16_t                               build);
 
     // GPIO Event Trigger
     static void
@@ -1629,7 +1630,6 @@ protected:
     uint8_t  get_inactive_fw_state();
     uint8_t  get_ap_state();
     uint32_t array_to_u32(std::array<uint8_t, 4>& buffer);
-    uint8_t  get_active_slot();
     uint8_t  get_inactive_slot();
     uint32_t convert_unary_to_key_index(uint32_t unary_value);
     bool     is_form_zeros_then_ones(uint32_t num);

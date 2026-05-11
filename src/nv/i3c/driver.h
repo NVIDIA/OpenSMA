@@ -30,7 +30,7 @@ namespace nv::i3c {
 class Driver : protected sys::i3c::Driver
 {
 public:
-    constexpr static size_t BufferSize = nv::lstp::EnableI2c ? 519 : 71;
+    constexpr static size_t BufferSize = std::max<size_t>(71, sizeof(nv::i2c::I2cRequest));
 
     static constexpr size_t  IbiDataSize   = 8;
     static constexpr uint8_t TargetAddress = 0x31;
@@ -67,9 +67,10 @@ public:
     };
 
     Driver(Port port, Freq freq, bool is_gpu, void* task, nv::ipc::EventId event_id);
-    void set_event(Event event);
-    void init();
-    void deinit();
+    constexpr Port port() const { return _port; }
+    void           set_event(Event event);
+    void           init();
+    void           deinit();
     // CCC
     bool reset_daa(bool ping);
     bool get_status(uint8_t address, uint16_t& status);
@@ -90,6 +91,7 @@ public:
     bool gpu_read_cms1(uint8_t address, std::span<uint8_t> buffer);
 
     uint32_t                  _error_log_count{};
+    uint32_t                  _i2c_error_log_count{};
     static constexpr uint32_t ErrorLogThreshold = 100;
 
 protected:

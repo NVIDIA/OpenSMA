@@ -172,10 +172,12 @@ void make_spi_task()
 {
     // LSTP
     using namespace nv;
-    spi::FlashromTask::Config config{
+    NV_TASK_DATA static sys::spi::EdmaDriver spi_edma_driver;
+    spi::FlashromTask::Config                config{
         ipc::TaskId::Spi0,
         "SPI0",
         spi::Flexcomm::Seven,
+        &spi_edma_driver,
         nv::ipc::SPI0_CS0_PORT,
         nv::ipc::SPI0_CS0_PIN,
         nv::ipc::SPI0_CS1_PORT,

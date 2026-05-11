@@ -46,6 +46,7 @@
 #include "nv/mctp/nsm_msg_bitmask.h"
 #include "nv/mctp/router.h"
 #include "nv/pldm/common.h"
+#include "nv/vrot/interface/types.h"
 #include "nv/spi/common.h"
 #include "nv/telemetry/utils.h"
 #include "nv/volt_mon/common.h"
@@ -384,6 +385,7 @@ enum class TimerId
     EepromUpdate,
     EndpointStatusChangeStart,
     EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
+    I2CTargetTimeoutCheck,
     End
 };
 
@@ -608,7 +610,8 @@ constexpr auto GetI2cVirtualMappingTable()
 
 constexpr auto I2cVirtualAddressMappingTable = GetI2cVirtualMappingTable();
 // Telemetry
-constexpr uint32_t SensorUpdateMs      = 0;
+constexpr uint32_t SmbSensorUpdateMs   = 0;
+constexpr uint32_t I3cSensorUpdateMs   = 0;
 constexpr uint8_t  InternalTempWarnBit = 0;
 constexpr uint8_t  I2cSensorAlertBit   = 0;
 constexpr uint8_t  GpioTelemetrySize   = 0;
@@ -732,7 +735,12 @@ constexpr uint32_t EepromUpdateTimerUs = 0;
 }  // namespace nv::ipc
 
 namespace nv::i2c {
-constexpr bool EnableI2cPeripheralRecovery = false;
+constexpr size_t   I2cBufferSize                   = 64;
+constexpr bool     EnableI2cPeripheralRecovery     = false;
+constexpr uint32_t I2CTargetTimeoutCheckIntervalMs = 0;
+
+constexpr std::array<mctp::Client, 0> I2CTargetTimeoutCheckClients{};
+constexpr mctp::Client                I2cTargetTimeoutTimerClient = mctp::Client::End;
 
 // Error Injection configuration: explicit count for I2C and IOX
 constexpr size_t NV_I2C_ERROR_INJECTION_PORTS = 0;  // Number of I2C handlers configured for
@@ -761,10 +769,19 @@ constexpr nv::i2c::Port SmbusDirectPort     = nv::i2c::Port::End;  // Disabled (
 constexpr uint32_t      SmbusCacheRefreshMs = 0;  // Cache refresh period in microseconds (0 to
                                                   // disable)
 
-static_assert(!(SmbusCacheRefreshMs > 0 && nv::ipc::SensorUpdateMs > 0),
+static_assert(!(SmbusCacheRefreshMs > 0 && nv::ipc::SmbSensorUpdateMs > 0),
               "Only One Timer for SMbus Direct can be enabled for I2c0 task!!!");
 
 }  // namespace nv::i2c
+
+namespace nv::lstp {
+// Device specific constraint on LSTP I2C buffer size. Make sure you really want to set this
+constexpr bool I2cSmallBuffer = false;
+
+static_assert(EnableI2c ? (I2cSmallBuffer ? nv::i2c::I2cBufferSize < 512
+                                          : nv::i2c::I2cBufferSize == 512)
+                        : !I2cSmallBuffer);
+}  // namespace nv::lstp
 
 namespace nv::mctp {
 
@@ -991,14 +1008,9 @@ constexpr static uint32_t                      ClkEnToPerstDelayUs     = 400;
 
 }  // namespace nv::nhp
 
-namespace nv::pldm {
-
-// AP component ID Information
-constexpr uint8_t                          ApNum            = 0;
-constexpr std::array<uint16_t, ApNum>      AllApComponentId = {{}};
-constexpr inline std::array<FwInfo, ApNum> FwInfoList{{}};
-static_assert(ApNum < NV_PLDM_MAX_COMPONENT_SIZE, "ApNum should be less than 3");
-}  // namespace nv::pldm
+namespace nv::vrot {
+constexpr inline std::array<ApInfo, 0> ApList = {{}};
+}  // namespace nv::vrot
 
 namespace nv::soc_pwr_smoothing {
 

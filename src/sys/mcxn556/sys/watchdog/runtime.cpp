@@ -25,6 +25,12 @@ void Runtime::init(uint32_t reset_ms, bool enable_reset)
     sys::watchdog::WwdtDriver::init(sys::watchdog::wwdt1, reset_ms, enable_reset);
 }
 
+void Runtime::update_timeout(uint32_t reset_ms)
+{
+    WWDT_Deinit(WWDT1);
+    sys::watchdog::WwdtDriver::init(sys::watchdog::wwdt1, reset_ms, false);
+}
+
 void Runtime::feed()
 {
     sys::watchdog::WwdtDriver::feed(sys::watchdog::wwdt1);

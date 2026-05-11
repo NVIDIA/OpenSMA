@@ -1210,7 +1210,7 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
 
     // Debug-Token only for Release build, on dev build there is no Debug-Token
     uint8_t    build_type = 0;
-    const auto build_ok   = this->fill_build_type(build_type);
+    const auto build_ok   = this->fill_build_type(get_active_slot(), build_type);
     if (true == build_ok && build_type == NsmBuildTypeRel
         && false == debugtoken::is_dbg_token_tlv_in_flash()) {
         fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);

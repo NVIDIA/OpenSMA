@@ -41,8 +41,22 @@ public:
         static constexpr uint32_t pid_radix = 10;
         static constexpr uint32_t dt_radix  = 31;
         static constexpr float    dt        = 100E-6;
-        static constexpr SFXP32_0 dt_inv    = to_sfxp32_0(1.0f / dt);
-        static constexpr SFXP1_31 dt_fp     = to_s32fxp<dt_radix>(dt);
+
+        static SFXP1_31 dt_fp_from_divisor(uint32_t n)
+        {
+            if (n < 1U) {
+                n = 1U;
+            }
+            else if (n > 1000U) {
+                n = 1000U;
+            }
+            // Runtime Q1.31 (same math as to_s32fxp<dt_radix>, which is consteval-only).
+            const long double val = static_cast<long double>(dt) / static_cast<long double>(n);
+            const long double multiplier   = static_cast<long double>(1ULL << dt_radix);
+            const long double result       = val * multiplier;
+            const long double round_offset = val >= 0.0L ? 0.5L : -0.5L;
+            return static_cast<SFXP1_31>(static_cast<int32_t>(result + round_offset));
+        }
 
         struct RuntimeCfg
         {
@@ -54,6 +68,7 @@ public:
             SFXP22_10 integral_max;
             SFXP22_10 output_min;
             SFXP22_10 output_max;
+            uint32_t  pid_dt_divisor{100};  // 1-1000 via NSM; integral timestep scale dt / n
         };
 
         PidController(const RuntimeCfg& cfg)
@@ -73,6 +88,7 @@ public:
 
             _last_output = (_cfg.kp * error) >> pid_radix;
 
+            const SFXP1_31  dt_fp        = dt_fp_from_divisor(_cfg.pid_dt_divisor);
             const SFXP22_10 new_integral = _integral
                                          + (SFXP22_10)(((uint64_t)error * (uint64_t)dt_fp)
                                                        >> (uint64_t)(dt_radix - pid_radix));
@@ -94,6 +110,19 @@ public:
             _last_error = to_sfxp22_10(0);
         }
 
+        int32_t get_output() const
+        {
+            return static_cast<int32_t>(sfxp22_10_to_float(_last_output));
+        }
+        int32_t get_integral() const
+        {
+            return static_cast<int32_t>(sfxp22_10_to_float(_integral));
+        }
+        int32_t get_last_error() const
+        {
+            return static_cast<int32_t>(sfxp22_10_to_float(_last_error));
+        }
+
     private:
         const RuntimeCfg& _cfg;
         SFXP22_10         _integral;
@@ -108,7 +137,7 @@ public:
     public:
         struct RuntimeCfg
         {
-            float ewma_tau{1.0f};  // seconds
+            float ewma_tau{20.0f};  // seconds
         };
 
         explicit ResidencySma(const RuntimeCfg& cfg) : _cfg(cfg) { recompute_ewma_alpha(true); }
@@ -137,7 +166,8 @@ public:
 
         void reset()
         {
-            _ewma = 0;
+            _ewma      = 0;
+            _residency = to_sfxp22_10(0);
             recompute_ewma_alpha(false);
         }
 
@@ -249,6 +279,14 @@ public:
         _residency_sma.reset();
         ports.offset = to_sfxp22_10(0);
     }
+
+    uint32_t get_residency_pid_output() const { return _residency_pid.get_output(); }
+    uint32_t get_critical_pid_output() const { return _critical_pid.get_output(); }
+    int32_t  get_residency_pid_integral() const { return _residency_pid.get_integral(); }
+    int32_t  get_critical_pid_integral() const { return _critical_pid.get_integral(); }
+    int32_t  get_residency_pid_last_error() const { return _residency_pid.get_last_error(); }
+    int32_t  get_critical_pid_last_error() const { return _critical_pid.get_last_error(); }
+    int32_t  get_target_offset() const { return 0; }
 
     void reset()
     {

@@ -3,13 +3,12 @@
         "SyncNumber": "NVDA",
         "HeaderVersion": 1,
         "FwVersion": "0000.00.0000.0000",
-        "SecVersionInfo": "0x0",
+        "BuildMode": 0,
         "ApSkuId" : "0x0",
         "PciVendorId": "0x10DE",
         "PciDeviceId": "0x2FAD",
         "PciSubsystemVendorId": "0x10DE",
         "PciSubsystemDeviceId" : "0x0",
-        "KeyRevocationList" : "0x0",
         "NvHeaderLength": 39
     },
     "schema": {
@@ -20,7 +19,7 @@
             "SyncNumber",
             "HeaderVersion",
             "FwVersion",
-            "SecVersionInfo",
+            "BuildMode",
             "ApSkuId",
             "PciVendorId",
             "PciDeviceId",
@@ -41,9 +40,10 @@
                 "type": "string",
                 "pattern": "^\\d{4}\\.\\d{2}\\.\\d{4}\\.\\d{4}$"
             },
-            "SecVersionInfo": {
-                "type": "string",
-                "pattern": "^0x[0-9a-fA-F]+$"
+            "BuildMode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
             },
             "ApSkuId": {
                 "type": "string",
@@ -62,10 +62,6 @@
                 "pattern": "^0x[0-9a-fA-F]+$"
             },
             "PciSubsystemDeviceId": {
-                "type": "string",
-                "pattern": "^0x[0-9a-fA-F]+$"
-            },
-            "KeyRevocationList": {
                 "type": "string",
                 "pattern": "^0x[0-9a-fA-F]+$"
             },

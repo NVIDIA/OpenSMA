@@ -146,7 +146,7 @@ void Task::make()
 {
     NV_TASK_DATA static Task task;
     // Minimum stack plus future overhead plus increase to support additional APs.
-    constexpr auto StackSize = std::max(2880 + 512 + (nv::pldm::ApNum > 0 ? 384 : 0),
+    constexpr auto StackSize = std::max(2880 + 512 + (nv::vrot::ApList.size() > 0 ? 384 : 0),
                                         int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)

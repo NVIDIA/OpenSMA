@@ -45,7 +45,9 @@ struct [[gnu::packed]] NvHeader
 
     uint16_t build_version;
 
-    uint32_t security_version_info;
+    uint8_t  build_mode;
+    uint8_t  reserved0;
+    uint16_t reserved1;
     uint32_t apsku_id;
 
     uint16_t pci_vendor_id;
@@ -56,9 +58,10 @@ struct [[gnu::packed]] NvHeader
 
     uint16_t pci_subsystem_id;
 
-    uint32_t key_revocation_list;
+    uint32_t reserved2;
 
-    uint16_t    nv_header_length;
+    uint16_t nv_header_length;
+
     static bool validate_nv_header(const NvHeader& InputNvHeader)
     {
         if (InputNvHeader.sync_nymber != std::array<uint8_t, 4>{'N', 'V', 'D', 'A'}) {

@@ -26,8 +26,6 @@
 
 namespace nv::i2c {
 
-constexpr static size_t I2cBufferSize = nv::lstp::EnableI2c ? 512 : 64;
-
 using I2cBuffer = std::array<uint8_t, I2cBufferSize>;
 
 static constexpr size_t I2cHidSmbBufferSize = 512;

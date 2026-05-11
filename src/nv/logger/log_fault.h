@@ -44,6 +44,7 @@ enum class Fault : uint8_t
     CpuTime,
     SecVio,
     OverSwtichSlotLimit,
+    I3CRegDump,
 };
 
 enum class ExcReturn : uint32_t

@@ -288,4 +288,6 @@ private:
     sys::topology::TopologyInfo::PlatformInfo _platform_info;
 };
 
+uint8_t initial_endpoint_status(nv::mctp::Client client);
+
 }  // namespace nv::i3c

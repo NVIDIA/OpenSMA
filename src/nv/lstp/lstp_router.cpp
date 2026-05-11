@@ -599,8 +599,10 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
     nv::i2c::I2cFlags  flags     = nv::i2c::I2cFlags::NoFlag;
     std::span<uint8_t> write_data;
 
-    auto cmd = static_cast<LstpI2cCommand>(req_hdr.cmd_status_code & LstpI2cCmdMask);
+    constexpr size_t MaxI2cPayloadSize = std::min<size_t>(LstpMaxPayloadSize,
+                                                          nv::i2c::I2cBufferSize);
 
+    auto cmd = static_cast<LstpI2cCommand>(req_hdr.cmd_status_code & LstpI2cCmdMask);
     switch (cmd) {
         case LstpI2cCommand::BusRecovery: return LstpStatus::NotSupported;
 
@@ -660,7 +662,7 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
             address = read_recv_len_req.address;
 
             // Response length determined by first byte received (SMBus block read)
-            read_len = static_cast<uint16_t>(nv::ipc::UsbLstpMsgSize - sizeof(LstpHdr));
+            read_len = static_cast<uint16_t>(MaxI2cPayloadSize);
             flags    = nv::i2c::I2cFlags::RecvLen;
             break;
         }
@@ -690,9 +692,8 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
         default: return LstpStatus::NotSupported;
     }
 
-    // NOLINTNEXTLINE: expected to not work if EnableLstp is false
-    if (read_len > LstpMaxPayloadSize) {
-        return LstpStatus::Error;
+    if (write_len > MaxI2cPayloadSize || read_len > MaxI2cPayloadSize) {
+        return LstpStatus::TooLarge;
     }
 
     if (req_hdr.cmd_status_code & LstpI2cCommandFlags::NoStop) {

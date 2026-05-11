@@ -26,6 +26,7 @@
 
 #include "usb.h"
 #include "sys/usb/usb_device_config.h"
+#include "sys/common/common.h"
 #include "usb_device_ch9.h"
 #include "fsl_device_registers.h"
 #include "usb_phy.h"
@@ -133,7 +134,7 @@ void USB_DeviceIsrEnable(void)
 #endif
 
     /* Set interrupt priority and enable IRQ */
-    NVIC_SetPriority((IRQn_Type)irqNumber, USB_DEVICE_INTERRUPT_PRIORITY);
+    NVIC_SetPriority((IRQn_Type)irqNumber, nv::ipc::UsbDeviceInterruptPriority);
     EnableIRQ((IRQn_Type)irqNumber);
 }
 

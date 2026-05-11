@@ -87,6 +87,7 @@ enum class LstpStatus : uint8_t
     Nak          = 0x04,
     ArbLost      = 0x05,
     NotSupported = 0x06,
+    TooLarge     = 0x07,
     IrqInterrupt = 0xFF,  // Used for interrupt-driven communication
 };
 

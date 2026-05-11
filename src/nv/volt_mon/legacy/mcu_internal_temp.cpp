@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-#include "mcu_internal_temp.h"
+#include "nv/volt_mon/mcu_internal_temp.h"
 #include "nv/nv.h"
 #include "nv/common/debug.h"
 #include "nv/logger/log.h"

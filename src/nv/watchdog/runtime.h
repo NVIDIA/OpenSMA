@@ -26,6 +26,7 @@ class Runtime : public sys::watchdog::WwdtDriver
 {
 public:
     static void               init(uint32_t reset_ms, bool enable_reset);
+    static void               update_timeout(uint32_t reset_ms);
     static void               feed();
     static void               start_task_status_query([[maybe_unused]] ipc::Timer& id);
     static void               mark_task_alive(TaskMonitorIndex index);

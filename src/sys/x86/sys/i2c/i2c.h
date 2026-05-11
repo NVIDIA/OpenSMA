@@ -30,14 +30,15 @@ class Driver
 public:
     constexpr static size_t BufferSzie = 76;
 
-    void               bind(nv::i2c::Port port, void* task);
-    void               init();
-    void               start(bool enable_target);
-    void               peripheral_recovery(bool enable_target);
-    bool               write(std::span<uint8_t> data);
-    uint8_t            address();
-    bool               get_status(uint8_t address);
-    static void        set_address(nv::i2c::Port port, uint8_t address) {};
+    void        bind(nv::i2c::Port port, void* task);
+    void        init();
+    void        start(bool enable_target);
+    void        peripheral_recovery(bool enable_target);
+    void        check_target_timeout(bool enable_target);
+    bool        write(std::span<uint8_t> data);
+    uint8_t     address();
+    bool        get_status(uint8_t address);
+    static void set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0) {};
     nv::i2c::I2cStatus i2c_read(uint8_t            address,
                                 std::span<uint8_t> buffer,
                                 nv::i2c::I2cFlags  flags = nv::i2c::I2cFlags::NoFlag);

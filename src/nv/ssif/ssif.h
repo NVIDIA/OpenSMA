@@ -23,19 +23,22 @@
 
 namespace nv::ssif {
 
-constexpr static size_t  MaxPartSize   = 32;
-constexpr static size_t  StartPartSize = MaxPartSize - 2;
-constexpr static size_t  RemPartSize   = MaxPartSize - 1;
-constexpr static uint8_t LastReadBlock = 0xFF;
+constexpr static size_t   MaxPartSize          = 32;
+constexpr static size_t   StartPartSize        = MaxPartSize - 2;
+constexpr static size_t   RemPartSize          = MaxPartSize - 1;
+constexpr static uint8_t  LastReadBlock        = 0xFF;
+constexpr static uint32_t MaxActivityTimeoutUs = 100'000;
 
 // Includes extra byte for PEC when size == MaxPartSize
 using PartDataBuffer = std::array<uint8_t, MaxPartSize + 1>;
 
 enum EventBits : nv::ipc::Event::Bits
 {
-    RxReady     = 1_bit,
-    TxReady     = 2_bit,
-    SlaveEnable = 3_bit
+    RxReady            = 1_bit,
+    TxReady            = 2_bit,
+    SlaveEnable        = 3_bit,
+    PeripheralRecovery = 4_bit,
+    WdtNotify          = 5_bit
 };
 
 enum SmbusCommand : uint8_t
@@ -142,6 +145,11 @@ public:
     std::span<uint8_t> get_tx_buffer();
     bool               handle_tx();
     void               handle_rx();
+    void               peripheral_recovery();
+    sys::ctimer::Ticks get_target_timeout_elapsed()
+    {
+        return _driver.get_target_timeout_elapsed();
+    }
 
     // Callbacks for I2C slave events (ISR context)
     static bool i2c_ack_callback(uint8_t& address, bool is_read, void* this_ssif_instance);

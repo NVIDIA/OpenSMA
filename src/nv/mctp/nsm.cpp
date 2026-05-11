@@ -721,21 +721,30 @@ uint8_t mctp::Nsm::fill_signing_type(uint8_t index)
     }
 }
 
-bool mctp::Nsm::fill_build_type(uint8_t& build_type)
+bool mctp::Nsm::fill_build_type(uint8_t slot, uint8_t& build_type)
 {
-    const uint8_t BuildType = NV_BUILD_MODE;
-    if (BuildType == MakefileBuildTypeDev) {
-        build_type = NsmBuildTypeDev;
-        return true;
-    }
-    else if (BuildType == MakefileBuildTypeRel) {
-        build_type = NsmBuildTypeRel;
-        return true;
-    }
-    else {
+    const fw_parser::mcu::ParsingFwType parsing_type = (slot == Slot0Id)
+                                                         ? fw_parser::mcu::ParsingFwType::Slot0
+                                                         : fw_parser::mcu::ParsingFwType::Slot1;
+
+    auto result = fw_parser::mcu::get_build_type(parsing_type);
+    if (!result.has_value()) {
         build_type = NsmBuildTypeUndefined;
         return false;
     }
+
+    const uint8_t raw_build_type = *result;
+    if (raw_build_type == MakefileBuildTypeDev) {
+        build_type = NsmBuildTypeDev;
+        return true;
+    }
+    else if (raw_build_type == MakefileBuildTypeRel) {
+        build_type = NsmBuildTypeRel;
+        return true;
+    }
+
+    build_type = NsmBuildTypeUndefined;
+    return false;
 }
 
 void mctp::Nsm::fill_boot_status_code(std::array<uint8_t, 8>& input)
@@ -1533,6 +1542,10 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
     key_data_valid_slot0 = fill_key_index(Slot0Id, key_index_slot0);
     key_data_valid_slot1 = fill_key_index(Slot1Id, key_index_slot1);
     active_slot          = get_active_slot();
+
+    const bool slot0_valid = (active_slot == Slot0Id) || is_inactive_authenticate(Slot0Id);
+    const bool slot1_valid = (active_slot == Slot1Id) || is_inactive_authenticate(Slot1Id);
+
     get_redundancy_policy(redundancy_policy_persistent, redundancy_policy_current);
     auto gpio_status = nv::gpio::Status::Error;
     if (nv::ipc::GlobalWpPort != nv::gpio::InvalidGpioPort) {
@@ -1667,7 +1680,7 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 7,  5, Firmware version string for slot 0
     ntx.resp_aggregate.tag_firmware_ver_string_slot0.tag = TagFirmwareVerString;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0.v   = 1;
+    ntx.resp_aggregate.tag_firmware_ver_string_slot0.v   = slot0_valid ? 1 : 0;
     ntx.resp_aggregate.tag_firmware_ver_string_slot0
         .length = RotTagLength::TagFirmwareVerStringLen;
     ntx.resp_aggregate.tag_firmware_ver_string_slot0.rsvd = 0;
@@ -1689,7 +1702,7 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 8,  2, VersionComparisonStamp for slot 0
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.tag = TagVerComparisonStamp;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.v   = 1;
+    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.v   = slot0_valid ? 1 : 0;
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot0
         .length = RotTagLength::TagVerComparisonStampLen;
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.rsvd = 0;
@@ -1705,16 +1718,21 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 9,  0, BuildType for slot 0
     ntx.resp_aggregate.tag_build_type_slot0.tag     = TagBuildType;
-    ntx.resp_aggregate.tag_build_type_slot0.v       = (fill_build_type(build_type)) ? 1 : 0;
+    ntx.resp_aggregate.tag_build_type_slot0.v       = (slot0_valid
+                                                 && fill_build_type(Slot0Id, build_type))
+                                                        ? 1
+                                                        : 0;
     ntx.resp_aggregate.tag_build_type_slot0.length  = RotTagLength::TagBuildTypeLen;
     ntx.resp_aggregate.tag_build_type_slot0.rsvd    = 0;
     ntx.resp_aggregate.tag_build_type_slot0.b       = 0;
     ntx.resp_aggregate.tag_build_type_slot0.data[0] = build_type;
 
     // TAG 10,  0, SigningType for slot 0
-    ntx.resp_aggregate.tag_signing_type_slot0.tag = TagSigningType;
-    ntx.resp_aggregate.tag_signing_type_slot0.v   = (key_data_valid_slot0 == Ccode::Success) ? 1
-                                                                                             : 0;
+    ntx.resp_aggregate.tag_signing_type_slot0.tag     = TagSigningType;
+    ntx.resp_aggregate.tag_signing_type_slot0.v       = (slot0_valid
+                                                   && key_data_valid_slot0 == Ccode::Success)
+                                                          ? 1
+                                                          : 0;
     ntx.resp_aggregate.tag_signing_type_slot0.length  = RotTagLength::TagSigningTypeLen;
     ntx.resp_aggregate.tag_signing_type_slot0.rsvd    = 0;
     ntx.resp_aggregate.tag_signing_type_slot0.b       = 0;
@@ -1723,7 +1741,9 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 4,   0, WriteProtectState for slot 0
     ntx.resp_aggregate.tag_write_protect_state_slot0.tag = TagWriteProtectState;
-    ntx.resp_aggregate.tag_write_protect_state_slot0.v   = (gpio_status == nv::gpio::Status::Ok)
+    ntx.resp_aggregate.tag_write_protect_state_slot0.v   = (slot0_valid
+                                                          && gpio_status
+                                                                 == nv::gpio::Status::Ok)
                                                              ? 1
                                                              : 0;
     ntx.resp_aggregate.tag_write_protect_state_slot0
@@ -1734,7 +1754,8 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
         .data[0] = (wp_state == static_cast<uint8_t>(nv::gpio::GpioState::High)) ? 1 : 0;
 
     // TAG 11,  0, Firmware State for slot 0
-    ntx.resp_aggregate.tag_firmware_state_slot0.tag     = TagFirmwareState;
+    ntx.resp_aggregate.tag_firmware_state_slot0.tag = TagFirmwareState;
+    // FW state should always be valid
     ntx.resp_aggregate.tag_firmware_state_slot0.v       = 1;
     ntx.resp_aggregate.tag_firmware_state_slot0.length  = RotTagLength::TagFirmwareStateLen;
     ntx.resp_aggregate.tag_firmware_state_slot0.rsvd    = 0;
@@ -1746,8 +1767,9 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 12, 1, SecurityVersionNumber for slot 0
     ntx.resp_aggregate.tag_security_ver_num_slot0.tag    = TagSecurityVerNum;
-    ntx.resp_aggregate.tag_security_ver_num_slot0.v      = (fill_sec_ver_num(Slot0Id, svn_data)
-                                                       == Ccode::Success)
+    ntx.resp_aggregate.tag_security_ver_num_slot0.v      = (slot0_valid
+                                                       && fill_sec_ver_num(Slot0Id, svn_data)
+                                                              == Ccode::Success)
                                                              ? 1
                                                              : 0;
     ntx.resp_aggregate.tag_security_ver_num_slot0.length = RotTagLength::TagSecurityVerNumLen;
@@ -1758,10 +1780,12 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
         &ntx.resp_aggregate.tag_security_ver_num_slot0.data, &svn_data_short, sizeof(uint16_t));
 
     // TAG 14, 1, SigningKeyIndex for slot 0
-    ntx.resp_aggregate.tag_signing_key_index_slot0.tag = TagSigningKeyIndex;
-    ntx.resp_aggregate.tag_signing_key_index_slot0.v = (key_data_valid_slot0 == Ccode::Success)
-                                                         ? 1
-                                                         : 0;
+    ntx.resp_aggregate.tag_signing_key_index_slot0.tag    = TagSigningKeyIndex;
+    ntx.resp_aggregate.tag_signing_key_index_slot0.v      = (slot0_valid
+                                                        && key_data_valid_slot0
+                                                               == Ccode::Success)
+                                                              ? 1
+                                                              : 0;
     ntx.resp_aggregate.tag_signing_key_index_slot0.length = RotTagLength::TagSigningKeyIndexLen;
     ntx.resp_aggregate.tag_signing_key_index_slot0.rsvd   = 0;
     ntx.resp_aggregate.tag_signing_key_index_slot0.b      = 0;
@@ -1779,7 +1803,7 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 7,  5, Firmware version string for slot 1
     ntx.resp_aggregate.tag_firmware_ver_string_slot1.tag = TagFirmwareVerString;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot1.v   = 1;
+    ntx.resp_aggregate.tag_firmware_ver_string_slot1.v   = slot1_valid ? 1 : 0;
     ntx.resp_aggregate.tag_firmware_ver_string_slot1
         .length = RotTagLength::TagFirmwareVerStringLen;
     ntx.resp_aggregate.tag_firmware_ver_string_slot1.rsvd = 0;
@@ -1801,7 +1825,7 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 8,  2, VersionComparisonStamp for slot 1
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot1.tag = TagVerComparisonStamp;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot1.v   = 1;
+    ntx.resp_aggregate.tag_ver_comparison_stamp_slot1.v   = slot1_valid ? 1 : 0;
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot1
         .length = RotTagLength::TagVerComparisonStampLen;
     ntx.resp_aggregate.tag_ver_comparison_stamp_slot1.rsvd = 0;
@@ -1817,16 +1841,21 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 9,  0, BuildType for slot 1
     ntx.resp_aggregate.tag_build_type_slot1.tag     = TagBuildType;
-    ntx.resp_aggregate.tag_build_type_slot1.v       = (fill_build_type(build_type)) ? 1 : 0;
+    ntx.resp_aggregate.tag_build_type_slot1.v       = (slot1_valid
+                                                 && fill_build_type(Slot1Id, build_type))
+                                                        ? 1
+                                                        : 0;
     ntx.resp_aggregate.tag_build_type_slot1.length  = RotTagLength::TagBuildTypeLen;
     ntx.resp_aggregate.tag_build_type_slot1.rsvd    = 0;
     ntx.resp_aggregate.tag_build_type_slot1.b       = 0;
     ntx.resp_aggregate.tag_build_type_slot1.data[0] = build_type;
 
     // TAG 10,  0, SigningType for slot 1
-    ntx.resp_aggregate.tag_signing_type_slot1.tag = TagSigningType;
-    ntx.resp_aggregate.tag_signing_type_slot1.v   = (key_data_valid_slot1 == Ccode::Success) ? 1
-                                                                                             : 0;
+    ntx.resp_aggregate.tag_signing_type_slot1.tag     = TagSigningType;
+    ntx.resp_aggregate.tag_signing_type_slot1.v       = (slot1_valid
+                                                   && key_data_valid_slot1 == Ccode::Success)
+                                                          ? 1
+                                                          : 0;
     ntx.resp_aggregate.tag_signing_type_slot1.length  = RotTagLength::TagSigningTypeLen;
     ntx.resp_aggregate.tag_signing_type_slot1.rsvd    = 0;
     ntx.resp_aggregate.tag_signing_type_slot1.b       = 0;
@@ -1835,7 +1864,9 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 4,   0, WriteProtectState for slot 1
     ntx.resp_aggregate.tag_write_protect_state_slot1.tag = TagWriteProtectState;
-    ntx.resp_aggregate.tag_write_protect_state_slot1.v   = (gpio_status == nv::gpio::Status::Ok)
+    ntx.resp_aggregate.tag_write_protect_state_slot1.v   = (slot1_valid
+                                                          && gpio_status
+                                                                 == nv::gpio::Status::Ok)
                                                              ? 1
                                                              : 0;
     ntx.resp_aggregate.tag_write_protect_state_slot1
@@ -1846,7 +1877,8 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
         .data[0] = (wp_state == static_cast<uint8_t>(nv::gpio::GpioState::High)) ? 1 : 0;
 
     // TAG 11,  0, Firmware State for slot 1
-    ntx.resp_aggregate.tag_firmware_state_slot1.tag     = TagFirmwareState;
+    ntx.resp_aggregate.tag_firmware_state_slot1.tag = TagFirmwareState;
+    // FW state should always be valid
     ntx.resp_aggregate.tag_firmware_state_slot1.v       = 1;
     ntx.resp_aggregate.tag_firmware_state_slot1.length  = RotTagLength::TagFirmwareStateLen;
     ntx.resp_aggregate.tag_firmware_state_slot1.rsvd    = 0;
@@ -1858,8 +1890,9 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
 
     // TAG 12, 1, SecurityVersionNumber for slot 1
     ntx.resp_aggregate.tag_security_ver_num_slot1.tag    = TagSecurityVerNum;
-    ntx.resp_aggregate.tag_security_ver_num_slot1.v      = (fill_sec_ver_num(Slot1Id, svn_data)
-                                                       == Ccode::Success)
+    ntx.resp_aggregate.tag_security_ver_num_slot1.v      = (slot1_valid
+                                                       && fill_sec_ver_num(Slot1Id, svn_data)
+                                                              == Ccode::Success)
                                                              ? 1
                                                              : 0;
     ntx.resp_aggregate.tag_security_ver_num_slot1.length = RotTagLength::TagSecurityVerNumLen;
@@ -1870,10 +1903,12 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
         &ntx.resp_aggregate.tag_security_ver_num_slot1.data, &svn_data_short, sizeof(uint16_t));
 
     // TAG 14, 1, SigningKeyIndex for slot 1
-    ntx.resp_aggregate.tag_signing_key_index_slot1.tag = TagSigningKeyIndex;
-    ntx.resp_aggregate.tag_signing_key_index_slot1.v = (key_data_valid_slot1 == Ccode::Success)
-                                                         ? 1
-                                                         : 0;
+    ntx.resp_aggregate.tag_signing_key_index_slot1.tag    = TagSigningKeyIndex;
+    ntx.resp_aggregate.tag_signing_key_index_slot1.v      = (slot1_valid
+                                                        && key_data_valid_slot1
+                                                               == Ccode::Success)
+                                                              ? 1
+                                                              : 0;
     ntx.resp_aggregate.tag_signing_key_index_slot1.length = RotTagLength::TagSigningKeyIndexLen;
     ntx.resp_aggregate.tag_signing_key_index_slot1.rsvd   = 0;
     ntx.resp_aggregate.tag_signing_key_index_slot1.b      = 0;
@@ -2006,10 +2041,10 @@ void mctp::Nsm::get_ap_rot_state_info(const Packet&   rx,
         NsmInBandUpdatePolicy::NotApplicable);
 
     // TAG 19, 2, ApSkuId
-    if constexpr (pldm::ApNum > 0) {
-        for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-            if (pldm::AllApComponentId.at(i) == component_id) {
-                ap_sku_id = pldm::FwInfoList.at(i).ap_sku_id;
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (ap.component_id == component_id) {
+                ap_sku_id = ap.ap_sku_id;
                 break;
             }
         }
@@ -2172,10 +2207,10 @@ void mctp::Nsm::on_get_rot_state_info(const Packet& rx, Packet& tx)
         get_rot_state_info(rx, tx);
         return;
     }
-    if constexpr (pldm::ApNum > 0) {
-        for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, pldm::AllApComponentId.at(i))) {
-                get_ap_rot_state_info(rx, tx, pldm::AllApComponentId.at(i));
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
+                get_ap_rot_state_info(rx, tx, ap.component_id);
                 return;
             }
         }
@@ -2304,9 +2339,9 @@ void mctp::Nsm::on_query_auth_key(const Packet& rx, Packet& tx)
         query_auth_key(rx, tx);
         return;
     }
-    if constexpr (pldm::ApNum > 0) {
-        for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, pldm::AllApComponentId.at(i))) {
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
                 query_ap_auth_key(rx, tx);
                 return;
             }
@@ -2588,10 +2623,10 @@ void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
                 update_auth_key(rx, tx, update_auth_key_req);
                 return;
             }
-            if constexpr (pldm::ApNum > 0) {
-                for (uint8_t i = 0; i < pldm::ApNum; ++i) {
+            if constexpr (nv::vrot::ApList.size() > 0) {
+                for (const auto& ap : nv::vrot::ApList) {
                     if (is_fw_comp_id_valid(update_auth_key_req.fw_comp_info,
-                                            pldm::AllApComponentId.at(i))) {
+                                            ap.component_id)) {
                         update_ap_auth_key(rx, tx, update_auth_key_req);
                         return;
                     }
@@ -2780,9 +2815,9 @@ void mctp::Nsm::on_query_sec_ver_num(const Packet& rx, Packet& tx)
         query_sec_ver_num(rx, tx);
         return;
     }
-    if constexpr (pldm::ApNum > 0) {
-        for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, pldm::AllApComponentId.at(i))) {
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
                 query_ap_sec_ver_num(rx, tx);
                 return;
             }
@@ -3024,10 +3059,9 @@ void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
                 update_min_sec_ver_num(rx, tx, update_min_svn_req);
                 return;
             }
-            if constexpr (pldm::ApNum > 0) {
-                for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-                    if (is_fw_comp_id_valid(update_min_svn_req.fw_comp_info,
-                                            pldm::AllApComponentId.at(i))) {
+            if constexpr (nv::vrot::ApList.size() > 0) {
+                for (const auto& ap : nv::vrot::ApList) {
+                    if (is_fw_comp_id_valid(update_min_svn_req.fw_comp_info, ap.component_id)) {
                         update_ap_min_sec_ver_num(rx, tx, update_min_svn_req);
                         return;
                     }
@@ -3054,7 +3088,7 @@ void mctp::Nsm::on_query_fw_comp_id(const Packet& rx, Packet& tx)
     // - 2 byte: Component Identifier 3 ~ 4
     // - 1 byte: Component Classification Index 5
 
-    constexpr uint8_t ComponentCount = 1 + pldm::ApNum;
+    constexpr uint8_t ComponentCount = 1 + nv::vrot::ApList.size();
     constexpr uint8_t RespSize       = 1 + 5 * ComponentCount;
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
@@ -3065,9 +3099,10 @@ void mctp::Nsm::on_query_fw_comp_id(const Packet& rx, Packet& tx)
 
     std::array<FwCompInfo, ComponentCount> components{{}};
     components.at(0) = {NvMctpFwComponentClass, McuComponentId, 0};
-    if constexpr (pldm::ApNum > 0) {
-        for (uint8_t i = 0; i < pldm::ApNum; ++i) {
-            components.at(1 + i) = {NvMctpFwComponentClass, pldm::AllApComponentId.at(i), 0};
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        size_t i = 1;
+        for (const auto& ap : nv::vrot::ApList) {
+            components.at(i++) = {NvMctpFwComponentClass, ap.component_id, 0};
         }
     }
     FwCompIds<ComponentCount> fw_comp_ids{components};

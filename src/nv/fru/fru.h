@@ -49,6 +49,11 @@ enum class Status
     FruInvalidData,       // Invalid or corrupted FRU data
 };
 
+static_assert(static_cast<int>(Status::FruI2cBusy) == 1);
+static_assert(static_cast<int>(Status::FruI2cNack) == 2);
+static_assert(static_cast<int>(Status::FruI2cTimeout) == 3);
+static_assert(static_cast<int>(Status::FruI2cError) == 4);
+
 /**
  * Fixed-size output container to avoid dynamic allocation in API surface.
  *

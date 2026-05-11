@@ -17,56 +17,20 @@
  */
 
 #pragma once
-#include <cstdint>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 namespace nv::pldm {
-#define NV_PLDM_MAX_COMPONENT_SIZE 3
 
-inline constexpr uint16_t COMP_CPLD = 0xff03;
-inline constexpr uint16_t COMP_HPDO = 0xff04;
-
-struct FwInfo
+template<typename ApInfo, size_t N>
+constexpr std::array<uint16_t, N>
+make_component_id_list(const std::array<ApInfo, N>& ap_list) noexcept
 {
-    uint16_t component_id;
-    uint32_t fw_size;
-    uint32_t fw_offset;
-    uint32_t ap_sku_id;
-    uint8_t  build_mode;
-};
+    std::array<uint16_t, N> result{};
 
-template<size_t N>
-constexpr bool component_id_in_fw_info_list(uint16_t                     component_id,
-                                            const std::array<FwInfo, N>& fw_info_list) noexcept
-{
-    if constexpr (N == 0) {
-        return false;
-    }
     for (size_t i = 0; i < N; ++i) {
-        if (fw_info_list[i].component_id == component_id) {
-            return true;
-        }
-    }
-    return false;
-}
-
-template<size_t N>
-constexpr FwInfo get_fw_info_from_list(uint16_t                     component_id,
-                                       uint8_t&                     is_valid,
-                                       const std::array<FwInfo, N>& fw_info_list)
-{
-    FwInfo result{};
-    is_valid = 0;
-
-    if constexpr (N > 0) {
-        for (uint8_t i = 0; i < N; ++i) {
-            if (fw_info_list[i].component_id == component_id) {
-                result   = fw_info_list[i];
-                is_valid = 1;
-                break;
-            }
-        }
+        result[i] = ap_list[i].component_id;
     }
     return result;
 }

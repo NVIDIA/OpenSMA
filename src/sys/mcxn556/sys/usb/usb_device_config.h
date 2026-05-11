@@ -85,7 +85,5 @@
 #endif
 #endif
 
-#define USB_DEVICE_INTERRUPT_PRIORITY (3U)
-
 #endif /* _USB_DEVICE_CONFIG_H_ */
        // NOLINTEND

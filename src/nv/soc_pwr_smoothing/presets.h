@@ -27,11 +27,13 @@
 namespace nv::soc_pwr_smoothing {
 
 // Preset configuration constants
-constexpr uint8_t NUM_PRESETS         = 4;
-constexpr uint8_t DEFAULT_PRESET      = 0;  // Read-only default preset
-constexpr uint8_t MIN_WRITABLE_PRESET = 1;  // First writable preset
-constexpr uint8_t MAX_WRITABLE_PRESET = 3;  // Last writable preset
-constexpr uint8_t INVALID_PRESET_ID   = 0xFF;
+constexpr uint8_t  NUM_PRESETS         = 4;
+constexpr uint8_t  DEFAULT_PRESET      = 0;  // Read-only default preset
+constexpr uint8_t  MIN_WRITABLE_PRESET = 1;  // First writable preset
+constexpr uint8_t  MAX_WRITABLE_PRESET = 3;  // Last writable preset
+constexpr uint8_t  INVALID_PRESET_ID   = 0xFF;
+constexpr uint16_t MIN_DT_SCALER       = 1U;
+constexpr uint16_t MAX_DT_SCALER       = 1000U;
 
 // Array size = RackPwrSmoothParams::MaxParamCount (45); indices 20-39 are reserved (zero).
 constexpr uint8_t PARAM_COUNT = static_cast<uint8_t>(

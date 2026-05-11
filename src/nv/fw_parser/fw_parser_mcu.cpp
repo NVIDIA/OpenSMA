@@ -25,6 +25,11 @@ get_security_version(const ParsingFwType InputParseingFwType)
     return sys::fw_parser::mcu::get_security_version(InputParseingFwType);
 }
 
+std::expected<uint8_t, ParsingErrorCode> get_build_type(const ParsingFwType InputParseingFwType)
+{
+    return sys::fw_parser::mcu::get_build_type(InputParseingFwType);
+}
+
 std::expected<uint32_t, ParsingErrorCode>
 get_image_signing_key_version(const ParsingFwType InputParseingFwType)
 {

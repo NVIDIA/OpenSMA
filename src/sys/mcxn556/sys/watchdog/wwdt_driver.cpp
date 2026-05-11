@@ -64,6 +64,43 @@ void LogWdtFault(uint32_t msp_frame, uint32_t lr_value)
     nv::logger::FaultLogger::fault(
         nv::logger::Fault::RuntimeWdt, fault_buffer, nv::logger::FaultDataSize);
 
+    //   [ 0.. 3] ctimer_tick
+    //   [ 4.. 7] lr_value
+    //   [ 8..11] R0
+    //   [12..15] R1
+    //   [16..19] R2
+    //   [20..23] R3
+    //   [24..27] R12
+    //   [28..31] LR
+    //   [32..35] PC
+    //   [36..39] xPSR
+    constexpr uint32_t XpsrOffset = sizeof(ctimer_tick) + sizeof(lr_value)
+                                  + 7 * sizeof(uint32_t);
+    uint32_t IsrNum = fault_buffer[XpsrOffset] & 0x1FF;
+
+    if (IsrNum == (I3C0_IRQn + NVIC_USER_IRQ_OFFSET)
+        || IsrNum == (I3C1_IRQn + NVIC_USER_IRQ_OFFSET)) {
+        uint8_t   i3c_index = static_cast<uint8_t>(IsrNum - (I3C0_IRQn + NVIC_USER_IRQ_OFFSET));
+        I3C_Type* i3c_inst  = i3c_index == 0 ? I3C0 : I3C1;
+        memcpy(fault_buffer.data(),
+               std::bit_cast<void*>(&(i3c_inst->MSTATUS)),
+               sizeof(i3c_inst->MSTATUS));
+        memcpy(fault_buffer.data() + 4,
+               std::bit_cast<void*>(&(i3c_inst->MERRWARN)),
+               sizeof(i3c_inst->MERRWARN));
+        memcpy(fault_buffer.data() + 8,
+               std::bit_cast<void*>(&(i3c_inst->MINTMASKED)),
+               sizeof(i3c_inst->MINTMASKED));
+        memcpy(fault_buffer.data() + 12,
+               std::bit_cast<void*>(&(i3c_inst->MCONFIG)),
+               sizeof(i3c_inst->MCONFIG));
+        memcpy(fault_buffer.data() + 16,
+               std::bit_cast<void*>(&(i3c_inst->MDATACTRL)),
+               sizeof(i3c_inst->MDATACTRL));
+        nv::logger::FaultLogger::fault(
+            nv::logger::Fault::I3CRegDump, fault_buffer, nv::logger::FaultDataSize);
+    }
+
     auto& event = nv::ipc::Event::make(nv::ipc::EventId::TaskAliveStatus);
     auto  bits  = event.bits();
     auto  bit   = bits.value();

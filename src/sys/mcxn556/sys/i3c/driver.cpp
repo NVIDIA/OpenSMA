@@ -25,6 +25,7 @@
 #include "nv/logger/log.h"
 #include "nv/nv.h"
 #include "fsl_i3c_edma.h"
+#include "sys/common/common.h"
 #include "sys/smartdma/driver.h"
 
 namespace {
@@ -34,19 +35,20 @@ static void ibi_callback([[maybe_unused]] I3C_Type* base,
                          i3c_ibi_type_t             ibi_type,
                          i3c_ibi_state_t            ibi_state)
 {
-    auto& driver = *static_cast<nv::i3c::Driver*>(handle->userData);
+    auto&         driver  = *static_cast<nv::i3c::Driver*>(handle->userData);
+    const uint8_t port_id = static_cast<uint8_t>(I3C_GetInstance(base));
     if (ibi_state != kI3C_IbiReady) {
-        nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiState.unique_id,
+        nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiStateV2.unique_id,
                                          nv::logger::Level::Info,
-                                         {static_cast<uint8_t>(ibi_state)});
+                                         {port_id, static_cast<uint8_t>(ibi_state)});
         return;
     }
     switch (ibi_type) {
         case kI3C_IbiNormal: driver.on_ibi(static_cast<void*>(handle)); break;
         default:
-            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiType.unique_id,
+            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiTypeV2.unique_id,
                                              nv::logger::Level::Info,
-                                             {static_cast<uint8_t>(ibi_type)});
+                                             {port_id, static_cast<uint8_t>(ibi_type)});
             return;
     }
 }
@@ -82,9 +84,10 @@ static void i3c_callback(I3C_Type*                 base,
         case kStatus_I3C_Nak:
 #if 0
             // Only log when 5 retry failed case
-            logger::Logger::add_from_isr(logger::Event::I3CNack,
+            logger::Logger::add_from_isr(logger::Event::I3CNackV2,
                                          logger::Level::Info,
-                                         {static_cast<uint8_t>(handle->state)});
+                                         {static_cast<uint8_t>(I3C_GetInstance(base)),
+                                          static_cast<uint8_t>(handle->state)});
 #endif
             EDMA_AbortTransfer(handle->rxDmaHandle);
 
@@ -97,9 +100,10 @@ static void i3c_callback(I3C_Type*                 base,
         case kStatus_I3C_Timeout:
 #if 0
             // Only log when 5 retry failed case
-            logger::Logger::add_from_isr(logger::Event::I3CTimeout,
+            logger::Logger::add_from_isr(logger::Event::I3CTimeoutV2,
                                          logger::Level::Info,
-                                         {static_cast<uint8_t>(handle->state)});
+                                         {static_cast<uint8_t>(I3C_GetInstance(base)),
+                                          static_cast<uint8_t>(handle->state)});
 #endif
             EDMA_AbortTransfer(handle->rxDmaHandle);
 
@@ -115,11 +119,33 @@ static void i3c_callback(I3C_Type*                 base,
             driver.set_event(i3c::Driver::Event::Error);
             if (driver._error_log_count < i3c::Driver::ErrorLogThreshold) {
                 driver._error_log_count++;
+                const uint8_t           port_id = static_cast<uint8_t>(I3C_GetInstance(base));
+                const uint8_t           hstate  = static_cast<uint8_t>(handle->state);
+                const uint32_t          result_u32 = static_cast<uint32_t>(status);
+                const uint32_t          mstatus    = base->MSTATUS;
+                const logger::EventData err_data   = {
+                    port_id,
+                    hstate,
+                    static_cast<uint8_t>(result_u32 >> 0 & 0xFF),
+                    static_cast<uint8_t>(result_u32 >> 8 & 0xFF),
+                    static_cast<uint8_t>(result_u32 >> 16 & 0xFF),
+                    static_cast<uint8_t>(result_u32 >> 24 & 0xFF),
+                };
                 // coverity[cert_int31_c_violation] log raw value
-                logger::Logger::add_from_isr(
-                    logger::Event::I3CUnhandledError.unique_id,
-                    logger::Level::Info,
-                    logger::data_from_u32(static_cast<uint32_t>(status)));
+                logger::Logger::add_from_isr(logger::Event::I3CUnhandledErrorV2.unique_id,
+                                             logger::Level::Info,
+                                             err_data);
+                const logger::EventData mstatus_data = {
+                    port_id,
+                    hstate,
+                    static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                    static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                    static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                    static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+                };
+                logger::Logger::add_from_isr(logger::Event::I3CUnhandledErrorMStatus.unique_id,
+                                             logger::Level::Info,
+                                             mstatus_data);
             }
     }
 }
@@ -182,9 +208,12 @@ void nv::i3c::Driver::init()
     if (_is_init) {
         return;
     }
-    const i3c_master_edma_callback_t Callback = {
-        .slave2Master = nullptr, .ibiCallback = ibi_callback, .transferComplete = i3c_callback};
+    IRQn_Type const                  kI3cIrqs[] = I3C_IRQS;
+    const i3c_master_edma_callback_t Callback   = {
+          .slave2Master = nullptr, .ibiCallback = ibi_callback, .transferComplete = i3c_callback};
+    const auto instance = I3C_GetInstance(_base);
     I3C_MasterInit(_base, &_master_config, Clock);
+    NVIC_SetPriority(kI3cIrqs[instance], nv::ipc::I3CInterruptPriority);
     // coverity[cert_exp60_cpp_violation] waive this until I have a good solution
     I3C_MasterTransferCreateHandleEDMA(
         _base, &_i3c_m_handle, &Callback, this, &_rx_edma_handle, &_tx_edma_handle);
@@ -220,7 +249,12 @@ bool nv::i3c::Driver::reset_daa(bool ping)
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to reset daa %d\n", result);
         if (!ping) {
-            logger::info(logger::Event::I3CFailedToResetDaa, logger::data_from_u32(result));
+            logger::info(logger::Event::I3CFailedToResetDaaV2,
+                         {static_cast<uint8_t>(_port),
+                          static_cast<uint8_t>(result >> 0 & 0xFF),
+                          static_cast<uint8_t>(result >> 8 & 0xFF),
+                          static_cast<uint8_t>(result >> 16 & 0xFF),
+                          static_cast<uint8_t>(result >> 24 & 0xFF)});
         }
         return false;
     }
@@ -249,13 +283,14 @@ bool nv::i3c::Driver::enec()
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
         const logger::EventData data = {
+            static_cast<uint8_t>(_port),
             CccRstdaa,
             static_cast<uint8_t>(result >> 0 & 0xFF),
             static_cast<uint8_t>(result >> 8 & 0xFF),
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV2, data);
 
         auto status = to_driver_status(static_cast<uint32_t>(result));
         if (status != Status::Success) {
@@ -285,13 +320,14 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
     if (result != kStatus_Success) {
         I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
         const logger::EventData data = {
+            static_cast<uint8_t>(_port),
             CccGetStatus,
             static_cast<uint8_t>(result >> 0 & 0xFF),
             static_cast<uint8_t>(result >> 8 & 0xFF),
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV2, data);
         auto driver_status = to_driver_status(static_cast<uint32_t>(result));
         if (driver_status != Status::Success) {
             const auto& task = *static_cast<nv::i3c::Task*>(_task);
@@ -311,13 +347,14 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
         const logger::EventData data = {
+            static_cast<uint8_t>(_port),
             CccGetStatus,
             static_cast<uint8_t>(result >> 0 & 0xFF),
             static_cast<uint8_t>(result >> 8 & 0xFF),
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV2, data);
         auto driver_status = to_driver_status(static_cast<uint32_t>(result));
         if (driver_status != Status::Success) {
             const auto& task = *static_cast<nv::i3c::Task*>(_task);
@@ -339,7 +376,12 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to process daa %d\n", result);
-        logger::info(logger::Event::I3CFailedToProcessDaa, logger::data_from_u32(result));
+        logger::info(logger::Event::I3CFailedToProcessDaaV2,
+                     {static_cast<uint8_t>(_port),
+                      static_cast<uint8_t>(result >> 0 & 0xFF),
+                      static_cast<uint8_t>(result >> 8 & 0xFF),
+                      static_cast<uint8_t>(result >> 16 & 0xFF),
+                      static_cast<uint8_t>(result >> 24 & 0xFF)});
         return false;
     }
     /// list I3C devices
@@ -352,11 +394,13 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
                  list[index].vendorID,
                  list[index].partNumber,
                  list[index].dynamicAddr);
-        nv::logger::info(nv::logger::Event::I3CSetAddr,
-                         {static_cast<uint8_t>(list[index].dynamicAddr)});
+        nv::logger::info(
+            nv::logger::Event::I3CSetAddrV2,
+            {static_cast<uint8_t>(_port), static_cast<uint8_t>(list[index].dynamicAddr)});
     }
     if (count != address_list.size() && _is_gpu == false) {
-        logger::info(logger::Event::I3CDaaMismatch, {count, address_list.size()});
+        logger::info(logger::Event::I3CDaaMismatchV2,
+                     {static_cast<uint8_t>(_port), count, address_list.size()});
         return false;
     }
     return true;
@@ -378,7 +422,17 @@ bool nv::i3c::Driver::write(uint8_t address, std::span<uint8_t> buffer)
     if (status != Status::Success) {
         if (_error_log_count < ErrorLogThreshold) {
             _error_log_count++;
-            nv::logger::info(nv::logger::Event::I3CWriteFail, {static_cast<uint8_t>(status)});
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(status),
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CWriteFailV2, data);
         }
 
         task.record_error(static_cast<uint8_t>(status));
@@ -401,7 +455,17 @@ bool nv::i3c::Driver::read(uint8_t address, std::span<uint8_t> buffer, uint8_t& 
     if (status != Status::Success) {
         if (_error_log_count < ErrorLogThreshold) {
             _error_log_count++;
-            nv::logger::info(nv::logger::Event::I3CReadFail, {static_cast<uint8_t>(status)});
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(status),
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CReadFailV2, data);
         }
         task.record_error(static_cast<uint8_t>(status));
     }
@@ -515,8 +579,21 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write(uint8_t address, std::span<uint8_t
     result = to_status(status);
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CWriteFail,
-                         {static_cast<uint8_t>(result), address});
+        if (_i2c_error_log_count < ErrorLogThreshold) {
+            _i2c_error_log_count++;
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(result),
+                address,
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CI2CWriteFailV2, data);
+        }
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
     }
@@ -539,8 +616,21 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_read(uint8_t address, std::span<uint8_t>
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CReadFail,
-                         {static_cast<uint8_t>(result), address});
+        if (_i2c_error_log_count < ErrorLogThreshold) {
+            _i2c_error_log_count++;
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(result),
+                address,
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CI2CReadFailV2, data);
+        }
 
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
@@ -567,8 +657,21 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write_read(uint8_t            address,
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CWriteFail,
-                         {static_cast<uint8_t>(result), address});
+        if (_i2c_error_log_count < ErrorLogThreshold) {
+            _i2c_error_log_count++;
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(result),
+                address,
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CI2CWriteFailV2, data);
+        }
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
         return result;
@@ -583,8 +686,21 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write_read(uint8_t            address,
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CReadFail,
-                         {static_cast<uint8_t>(result), address});
+        if (_i2c_error_log_count < ErrorLogThreshold) {
+            _i2c_error_log_count++;
+            const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+            const nv::logger::EventData data    = {
+                static_cast<uint8_t>(_port),
+                static_cast<uint8_t>(result),
+                address,
+                static_cast<uint8_t>(_i3c_m_handle.state),
+                static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+            };
+            nv::logger::info(nv::logger::Event::I3CI2CReadFailV2, data);
+        }
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
         return result;

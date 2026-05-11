@@ -281,6 +281,15 @@ get_security_version(const ParsingFwType InputParseingFwType)
     return (image_manifest_check->firmware_version) & SvnMask;
 }
 
+std::expected<uint8_t, ParsingErrorCode> get_build_type(const ParsingFwType InputParseingFwType)
+{
+    auto nv_header_check = get_nv_header(InputParseingFwType);
+    if (!nv_header_check.has_value()) {
+        return std::unexpected<ParsingErrorCode>(nv_header_check.error());
+    }
+    return nv_header_check->build_mode;
+}
+
 std::expected<FirmwareVersionT, ParsingErrorCode>
 get_firmware_version(const ParsingFwType InputParseingFwType)
 {
@@ -441,6 +450,16 @@ get_security_version(const ParsingFwType InputParseingFwType)
     }
     return container_header.fuse_version;
 }
+
+std::expected<uint8_t, ParsingErrorCode> get_build_type(const ParsingFwType InputParseingFwType)
+{
+    auto nv_header_check = get_nv_header(InputParseingFwType);
+    if (!nv_header_check.has_value()) {
+        return std::unexpected<ParsingErrorCode>(nv_header_check.error());
+    }
+    return nv_header_check->build_mode;
+}
+
 std::expected<uint32_t, ParsingErrorCode>
 get_image_signing_key_version(const ParsingFwType InputParseingFwType)
 {

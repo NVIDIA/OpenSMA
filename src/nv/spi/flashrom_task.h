@@ -35,6 +35,7 @@ public:
         nv::ipc::TaskId          task_id;
         std::string_view         task_name;
         nv::spi::Flexcomm        flexcomm_id;
+        sys::spi::EdmaDriver*    edma_driver;
         gpio::GpioPort           cs_port_id;
         gpio::GpioPin            cs_pin_id;
         gpio::GpioPort           cs1_port_id;
@@ -44,6 +45,7 @@ public:
         Config(nv::ipc::TaskId          task_id_,
                std::string_view         task_name_,
                nv::spi::Flexcomm        flexcomm_id_,
+               sys::spi::EdmaDriver*    edma_driver_,
                gpio::GpioPort           cs_port_id_,
                gpio::GpioPin            cs_pin_id_,
                gpio::GpioPort           cs1_port_id_,
@@ -52,6 +54,7 @@ public:
         : task_id(task_id_)
         , task_name(task_name_)
         , flexcomm_id(flexcomm_id_)
+        , edma_driver(edma_driver_)
         , cs_port_id(cs_port_id_)
         , cs_pin_id(cs_pin_id_)
         , cs1_port_id(cs1_port_id_)
@@ -70,7 +73,6 @@ public:
 private:
     nv::ipc::BootedEventBits _boot_event;
 
-    sys::spi::EdmaDriver _edmaDriver;
-    Flashrom             _flashrom;
+    Flashrom _flashrom;
 };
 }  // namespace nv::spi

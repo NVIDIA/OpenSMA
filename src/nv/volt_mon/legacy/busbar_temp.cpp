@@ -22,7 +22,7 @@
 
 #include "nv/gpio/common.h"
 
-#include "busbar_temp.h"
+#include "nv/volt_mon/busbar_temp.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/nv.h"
 

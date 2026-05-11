@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "volt_mon.h"
+#include "nv/volt_mon/volt_mon.h"
 
 #include NV_IPC_CONFIG_H
-#include "adc.h"
-#include "busbar_temp.h"
-#include "leak_detect.h"
-#include "mcu_internal_temp.h"
-#include "pgood_volt.h"
+#include "nv/volt_mon/adc.h"
+#include "nv/volt_mon/busbar_temp.h"
+#include "nv/volt_mon/leak_detect.h"
+#include "nv/volt_mon/mcu_internal_temp.h"
+#include "nv/volt_mon/pgood_volt.h"
 
 using namespace nv::ipc::voltage_monitor_config;
 

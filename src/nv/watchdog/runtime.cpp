@@ -25,6 +25,7 @@
 #include "nv/i2c/task.h"
 #include "nv/i3c/task.h"
 #include "nv/mctp/driver.h"
+#include "nv/ssif/task.h"
 #include "boot.h"
 using namespace nv::watchdog;
 void Runtime::start_task_status_query([[maybe_unused]] ipc::Timer& id)
@@ -101,6 +102,11 @@ void Runtime::query_task_status(TaskMonitorIndex index)
         case TaskMonitorIndex::I3c0:
         case TaskMonitorIndex::I3c1: {
             i3c::Task::wdt_notify(index);
+        } break;
+        case TaskMonitorIndex::Ssif: {
+            if constexpr (nv::lstp::EnableIpmi) {
+                ssif::Task::wdt_notify();
+            }
         } break;
 
         default: break;

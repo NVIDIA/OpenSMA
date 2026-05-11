@@ -29,7 +29,7 @@
 
 #include "nv/gpio/common.h"
 
-#include "leak_detect.h"
+#include "nv/volt_mon/leak_detect.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/nv.h"
 

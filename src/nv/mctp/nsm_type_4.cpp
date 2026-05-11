@@ -109,7 +109,7 @@ Ccode appendRecord_firmware_version(TelemetryRecordArray& devDiagTelemetryArray)
 Ccode appendRecord_build_type(TelemetryRecordArray& devDiagTelemetryArray)
 {
     uint8_t build_type = 0;
-    (void)Nsm::fill_build_type(build_type);
+    (void)Nsm::fill_build_type(Nsm::get_active_slot(), build_type);
     if (false == devDiagTelemetryArray.addRecordNvU8(DIAG_BUILD_INFORMATION, build_type)) {
         return Ccode::ErrorInvalidLength;
     }

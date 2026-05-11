@@ -34,7 +34,7 @@ static void ibi_callback([[maybe_unused]] I3C_Type* base,
 {
     auto& driver = *static_cast<nv::i3c::Driver*>(handle->userData);
     if (ibi_state != kI3C_IbiReady) {
-        nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiState.unique_id,
+        nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiStateV1.unique_id,
                                          nv::logger::Level::Info,
                                          {static_cast<uint8_t>(ibi_state)});
         return;
@@ -42,7 +42,7 @@ static void ibi_callback([[maybe_unused]] I3C_Type* base,
     switch (ibi_type) {
         case kI3C_IbiNormal: driver.on_ibi(static_cast<void*>(handle)); break;
         default:
-            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiType.unique_id,
+            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiTypeV1.unique_id,
                                              nv::logger::Level::Info,
                                              {static_cast<uint8_t>(ibi_type)});
             return;
@@ -80,7 +80,7 @@ static void i3c_callback(I3C_Type*                 base,
         case kStatus_I3C_Nak:
 #if 0
             // Only log when 5 retry failed case
-            logger::Logger::add_from_isr(logger::Event::I3CNack,
+            logger::Logger::add_from_isr(logger::Event::I3CNackV1,
                                          logger::Level::Info,
                                          {static_cast<uint8_t>(handle->state)});
 #endif
@@ -95,7 +95,7 @@ static void i3c_callback(I3C_Type*                 base,
         case kStatus_I3C_Timeout:
 #if 0
             // Only log when 5 retry failed case
-            logger::Logger::add_from_isr(logger::Event::I3CTimeout,
+            logger::Logger::add_from_isr(logger::Event::I3CTimeoutV1,
                                          logger::Level::Info,
                                          {static_cast<uint8_t>(handle->state)});
 #endif
@@ -115,7 +115,7 @@ static void i3c_callback(I3C_Type*                 base,
                 driver._error_log_count++;
                 // coverity[cert_int31_c_violation] log raw value
                 logger::Logger::add_from_isr(
-                    logger::Event::I3CUnhandledError.unique_id,
+                    logger::Event::I3CUnhandledErrorV1.unique_id,
                     logger::Level::Info,
                     logger::data_from_u32(static_cast<uint32_t>(status)));
             }
@@ -215,7 +215,7 @@ bool nv::i3c::Driver::reset_daa(bool ping)
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to reset daa %d\n", result);
         if (!ping) {
-            logger::info(logger::Event::I3CFailedToResetDaa, logger::data_from_u32(result));
+            logger::info(logger::Event::I3CFailedToResetDaaV1, logger::data_from_u32(result));
         }
         return false;
     }
@@ -250,7 +250,7 @@ bool nv::i3c::Driver::enec()
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV1, data);
 
         auto status = to_driver_status(static_cast<uint32_t>(result));
         if (status != Status::Success) {
@@ -286,7 +286,7 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV1, data);
         auto driver_status = to_driver_status(static_cast<uint32_t>(result));
         if (driver_status != Status::Success) {
             const auto& task = *static_cast<nv::i3c::Task*>(_task);
@@ -312,7 +312,7 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
             static_cast<uint8_t>(result >> 16 & 0xFF),
             static_cast<uint8_t>(result >> 24 & 0xFF),
         };
-        logger::info(logger::Event::I3CCccError, data);
+        logger::info(logger::Event::I3CCccErrorV1, data);
         auto driver_status = to_driver_status(static_cast<uint32_t>(result));
         if (driver_status != Status::Success) {
             const auto& task = *static_cast<nv::i3c::Task*>(_task);
@@ -334,7 +334,7 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to process daa %d\n", result);
-        logger::info(logger::Event::I3CFailedToProcessDaa, logger::data_from_u32(result));
+        logger::info(logger::Event::I3CFailedToProcessDaaV1, logger::data_from_u32(result));
         return false;
     }
     /// list I3C devices
@@ -347,7 +347,7 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
                  list[index].vendorID,
                  list[index].partNumber,
                  list[index].dynamicAddr);
-        nv::logger::info(nv::logger::Event::I3CSetAddr,
+        nv::logger::info(nv::logger::Event::I3CSetAddrV1,
                          {static_cast<uint8_t>(list[index].dynamicAddr)});
     }
     return true;
@@ -369,7 +369,7 @@ bool nv::i3c::Driver::write(uint8_t address, std::span<uint8_t> buffer)
     if (status != Status::Success) {
         if (_error_log_count < ErrorLogThreshold) {
             _error_log_count++;
-            nv::logger::info(nv::logger::Event::I3CWriteFail, {static_cast<uint8_t>(status)});
+            nv::logger::info(nv::logger::Event::I3CWriteFailV1, {static_cast<uint8_t>(status)});
         }
 
         task.record_error(static_cast<uint8_t>(status));
@@ -392,7 +392,7 @@ bool nv::i3c::Driver::read(uint8_t address, std::span<uint8_t> buffer, uint8_t& 
     if (status != Status::Success) {
         if (_error_log_count < ErrorLogThreshold) {
             _error_log_count++;
-            nv::logger::info(nv::logger::Event::I3CReadFail, {static_cast<uint8_t>(status)});
+            nv::logger::info(nv::logger::Event::I3CReadFailV1, {static_cast<uint8_t>(status)});
         }
         task.record_error(static_cast<uint8_t>(status));
     }
@@ -492,7 +492,7 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write(uint8_t address, std::span<uint8_t
     result = to_status(status);
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CWriteFail,
+        nv::logger::info(nv::logger::Event::I3CI2CWriteFailV1,
                          {static_cast<uint8_t>(result), address});
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
@@ -516,7 +516,7 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_read(uint8_t address, std::span<uint8_t>
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CReadFail,
+        nv::logger::info(nv::logger::Event::I3CI2CReadFailV1,
                          {static_cast<uint8_t>(result), address});
 
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
@@ -544,7 +544,7 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write_read(uint8_t            address,
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CWriteFail,
+        nv::logger::info(nv::logger::Event::I3CI2CWriteFailV1,
                          {static_cast<uint8_t>(result), address});
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));
@@ -560,7 +560,7 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c_write_read(uint8_t            address,
     taskEXIT_CRITICAL();
     if (result != nv::i2c::I2cStatus::Ok) {
         i2c_stop();
-        nv::logger::info(nv::logger::Event::I3CI2CReadFail,
+        nv::logger::info(nv::logger::Event::I3CI2CReadFailV1,
                          {static_cast<uint8_t>(result), address});
         const auto& task = *static_cast<nv::i3c::Task*>(_task);
         task.record_error((static_cast<uint8_t>(to_driver_status(result))));

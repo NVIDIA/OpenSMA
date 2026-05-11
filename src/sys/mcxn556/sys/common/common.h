@@ -18,8 +18,20 @@
 
 #pragma once
 #include <cstdint>
+#include <FreeRTOSConfig.h>
 
 namespace nv::ipc {
+
+constexpr uint8_t UsbDeviceInterruptPriority = 3;
+
+// Bug-5947030: During workloads that involve a large number of USB and I3C interrupts (eg. PLDM
+// updates) if the I3C interrupt service time is high, long-T bit issue (Bug-5726655) might
+// resurface. Allow I3C interrupts to pre-empt USB interrupts to avoid this issue.
+constexpr uint8_t I3CInterruptPriority = UsbDeviceInterruptPriority - 1;
+
+static_assert(UsbDeviceInterruptPriority >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY
+                  && I3CInterruptPriority >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+              "Priority cannot be set higher than the FreeRTOS maximum for this platform");
 
 enum class CoreId : uint8_t
 {

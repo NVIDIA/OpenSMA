@@ -160,6 +160,15 @@ Task::Task()
                     // if transmission is successful, disable LstpTxBit in wait_bits.
                     wait_bits = disable_bit(wait_bits, LstpTxBit);
                 }
+                else {
+                    // Transmission failed. Re-set
+                    // LstpTxBit if more items are pending so the
+                    // queue eventually drains once USB attaches.
+                    auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
+                    if (queue.size() != 0) {
+                        (void)_event.set(EventBits::LstpTxBit);
+                    }
+                }
             }
 
             /* LstpTxDoneBit */
@@ -248,9 +257,10 @@ void Task::mctp_receive()
     auto offset = 0U;
 
     // handle multi packet in single usb packet
-    while (offset < BufferSize) {
+    while (offset + sizeof(MctpPacket::usb_hdr) <= BufferSize) {
         auto& usb_pkt = from(mctp_rx_buffer, offset);
         if (usb_pkt.usb_hdr.dmtf_id != UsbDmtfId
+            || usb_pkt.usb_hdr.length < sizeof(MctpPacket::usb_hdr)
             || usb_pkt.usb_hdr.length > sizeof(MctpPacket)) {
             break;
         }
@@ -363,6 +373,9 @@ uint8_t Task::lstp_transmit()
         auto result = _driver.write_spi(lstp_tx_buffer.begin(), tx_len);
         if (result != 0) {
             logger::error(logger::Event::UsbLstpWriteError, {static_cast<uint8_t>(result)});
+            // Propagate the failure so the caller does NOT mask LstpTxBit out of
+            // wait_bits.
+            return result;
         }
     }
     return 0;
@@ -372,10 +385,12 @@ void Task::lstp_receive()
 {
     if constexpr (nv::ipc::EnableLstp) {
         if constexpr (nv::lstp::EnableSpi) {
+            // For backward compatibility with Flashrom NV_SMA_SPI
+            // Flashrom always uses channel ID = 0 for CONFIG command
             auto spiRxHdr = nv::spi::FlashromMsgHdr_from(lstp_rx_buffer);
-            if ((spiRxHdr->cmdCode & nv::spi::Flashrom::CMD_CODE_MASK)
-                == nv::spi::FlashromCmdCode::SPI_CMD_CONFIG) {
-                // For backward compatibility with Flashrom NV_SMA_SPI
+            if ((spiRxHdr->channelId == 0)
+                && (spiRxHdr->cmdCode & nv::spi::Flashrom::CMD_CODE_MASK)
+                       == nv::spi::FlashromCmdCode::SPI_CMD_CONFIG) {
                 recover_lstp_endpoint();
                 clear_usb_lstp_queue();
             }

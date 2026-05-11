@@ -50,8 +50,7 @@ void FlashromTask::entrypoint(void* params)
 FlashromTask::FlashromTask(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _boot_event(config.boot_event)
-, _edmaDriver()
-, _flashrom(_edmaDriver)
+, _flashrom(*config.edma_driver)
 {
     _flashrom.bind(config.flexcomm_id,
                    nv::ipc::EventId::Spi0EdmaDriverEvent,

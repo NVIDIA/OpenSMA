@@ -20,6 +20,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <optional>
 
 #include "nv/flash/flash.h"
 #include "nv/flash/task.h"
@@ -37,7 +38,7 @@
 #include "nv/ipchandler/ipchandler.h"
 #include "sys/flash/flash_config.h"
 #include "nv/fw_parser/fw_parser_ap.h"
-#include "nv/ap_operation/ap_operation.h"
+#include "nv/vrot/interface/interface.h"
 
 using namespace nv::mctp;
 using namespace std::chrono_literals;
@@ -84,6 +85,20 @@ void send_authenticate_ap_firmware_result<nv::ipc::TaskId::Pldm>(
 
 }  // namespace nv::spdm::crypto
 namespace nv::pldm {
+
+namespace {
+
+constexpr auto ApComponentIdList = make_component_id_list(nv::vrot::ApList);
+
+constexpr std::optional<nv::vrot::ApInfo> find_ap_info(NvU16 component_id)
+{
+    return nv::vrot::find_ap_by_component_id(component_id, nv::vrot::ApList);
+}
+
+static_assert(nv::vrot::ApList.size() < NV_PLDM_MAX_COMPONENT_SIZE,
+              "ApList size should be less than 3");
+
+}  // namespace
 
 extern "C" {
 void send_pldm_msg_to_mctp(NvU8* data,
@@ -186,31 +201,39 @@ void pldm_write(NvU16                                          comp_id,
         }
         err = NV_PLDM_RET_SUCCUSS;
     }
-    else if (comp_id == COMP_CPLD && component_id_in_fw_info_list(comp_id, FwInfoList)) {
-        // TODO: support other component id
-        if (offset == 0) {
-            nv::ap_operation::pldm_update_ap_fw_prepare();
-        }
-        // Only write the actual valid data size, not the entire buffer
-        // to avoid writing residual data from previous transfers
-        const std::span<const uint8_t> valid_data(buffer.data(), size);
-        auto status = nv::ap_operation::write_data_to_ap(offset, valid_data);
-
-        if (status != nv::ap_operation::ApOperationErrorCode::Success) {
-            nv::info("ap fw write fail %d\n", status);
-            nv::logger::info(nv::logger::Event::PldmWriteFailAp,
-                             {static_cast<uint8_t>(status)});
+    else {
+        const auto ap_info = find_ap_info(comp_id);
+        if (!ap_info) {
+            nv::info("pldm_write: invalid component id 0x%x\n", comp_id);
             err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
             return;
         }
-        err = NV_PLDM_RET_SUCCUSS;
-    }
-    else if (comp_id == COMP_HPDO && component_id_in_fw_info_list(comp_id, FwInfoList)) {
-        // TODO: support HPDO write
-        nv::info("pldm_write: HPDO write not supported yet\n");
-    }
-    else {
-        nv::info("pldm_write: invalid component id 0x%x\n", comp_id);
+
+        if constexpr (nv::vrot::ApList.size() > 0) {
+            if (offset == 0) {
+                auto prepare_status = nv::vrot::fw_update_prepare(*ap_info);
+                if (prepare_status != nv::vrot::ApOpErrCode::Success) {
+                    nv::info("ap fw prepare fail %d\n", prepare_status);
+                    nv::logger::info(nv::logger::Event::PldmWriteFailAp,
+                                     {static_cast<uint8_t>(prepare_status)});
+                    err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
+                    return;
+                }
+            }
+            // Only write the actual valid data size, not the entire buffer
+            // to avoid writing residual data from previous transfers
+            const std::span<const uint8_t> valid_data(buffer.data(), size);
+            auto status = nv::vrot::fw_update_write(*ap_info, offset, valid_data);
+
+            if (status != nv::vrot::ApOpErrCode::Success) {
+                nv::info("ap fw write fail %d\n", status);
+                nv::logger::info(nv::logger::Event::PldmWriteFailAp,
+                                 {static_cast<uint8_t>(status)});
+                err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
+                return;
+            }
+            err = NV_PLDM_RET_SUCCUSS;
+        }
     }
 }
 
@@ -275,9 +298,7 @@ void pldm_update_pds(NvU16 component_id, NvU8 status, NvU16& err)
         Driver::mctp_send_cmd(Driver::CmdCode::RotStateInfoChange);
     }
     else {
-        NvU8 is_valid = 0;
-        get_fw_info_from_list(component_id, is_valid, FwInfoList);
-        if (is_valid) {
+        if (const auto ap = find_ap_info(component_id)) {
             flash::Data update_state{};
             if (status == static_cast<flash::Data>(PldmApFwStatus::Update_In_Progress)) {
                 update_state = static_cast<flash::Data>(
@@ -458,13 +479,13 @@ void get_fw_info(NvU16  input_component_id,
         pldm_get_update_state_pds(fw_state);
     }
     else {
-        const FwInfo fw_info = get_fw_info_from_list(input_component_id, is_valid, FwInfoList);
-        if (is_valid) {
-            output_component_id = fw_info.component_id;
-            fw_size             = fw_info.fw_size;
-            fw_offset           = fw_info.fw_offset;
-            ap_sku_id           = fw_info.ap_sku_id;
-            build_mode          = fw_info.build_mode;
+        if (const auto ap = find_ap_info(input_component_id)) {
+            is_valid            = true;
+            output_component_id = ap->component_id;
+            fw_size             = ap->fw_size;
+            fw_offset           = ap->fw_offset;
+            ap_sku_id           = ap->ap_sku_id;
+            build_mode          = ap->build_mode;
             pldm_get_update_state_pds(fw_state);
         }
     }
@@ -576,9 +597,7 @@ void parse_header(NvU16     component_id,
     }
     else {
         // check if comp id valid
-        NvU8 is_valid = 0;
-        get_fw_info_from_list(component_id, is_valid, FwInfoList);
-        if (!is_valid) {
+        if (!find_ap_info(component_id)) {
             return;
         }
         // fw version: 4 bytes
@@ -661,7 +680,11 @@ void request_authentication(NvU16 comp_id, NvU32& auth_request_id)
         }
     }
     else {
-        // TODO: support other component id
+        auto ap = find_ap_info(comp_id);
+        if (!ap) {
+            nv::info("request_authentication: no AP info for component id 0x%x\n", comp_id);
+            return;
+        }
         auto status = nv::spdm::crypto::authenticate_ap_firmware(
             nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
         if (status != nv::spdm::crypto::CryptoStatus::Success) {
@@ -699,14 +722,17 @@ void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc)
 
 void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc)
 {
-    if (comp_id == COMP_HPDO && component_id_in_fw_info_list(comp_id, FwInfoList)) {
-        nv::info("pldm: bypass auth for comp id 0x%x\n", comp_id);
-        verify_cc = NV_PLDM_VERIFY_CC_SUCCESS;
+    auto ap = find_ap_info(comp_id);
+    if (!ap) {
+        nv::info("get_ap_authentication_result: no AP info for component id 0x%x\n", comp_id);
+        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
         return;
     }
     nv::logger::info(nv::logger::Event::PldmAuthInactiveCryptoStatus, {result});
-    nv::ap_operation::pldm_update_ap_fw_callback(
-        static_cast<spdm::crypto::CryptoStatus>(result));
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        nv::vrot::fw_update_callback(ap.value(),
+                                     static_cast<spdm::crypto::CryptoStatus>(result));
+    }
     switch (result) {
         case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::Success):
             verify_cc = NV_PLDM_VERIFY_CC_SUCCESS;
@@ -734,12 +760,12 @@ void print_msg(NvU32 data)
 void get_arr_comp_id_len(NvU32& arrlen)
 {
     // coverity[cert_int31_c_violation] - valid cast
-    arrlen = static_cast<NvU32>(AllApComponentId.size());
+    arrlen = static_cast<NvU32>(ApComponentIdList.size());
 }
 
 const NvU16* get_arr_comp_id_address()
 {
-    return AllApComponentId.data();
+    return ApComponentIdList.data();
 }
 
 NvU8 get_write_fail_retry(NvU16 comp_id)
@@ -749,10 +775,7 @@ NvU8 get_write_fail_retry(NvU16 comp_id)
         // if write fail at offset within 8KB, will not re-erase
         return 0;
     }
-    // check if comp id valid
-    NvU8 is_valid = 0;
-    get_fw_info_from_list(comp_id, is_valid, FwInfoList);
-    if (is_valid) {
+    if (find_ap_info(comp_id)) {
         // cpld do not support retry since it only support chip erase
         return 0;
     }

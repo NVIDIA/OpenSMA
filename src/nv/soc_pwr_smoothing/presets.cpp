@@ -81,28 +81,28 @@ static constexpr std::array<ParameterConstraints,
          // PID gains - reasonable ranges to prevent instability
             {nv::mctp::RackPwrSmoothParams::EdppPrimaryKp, -1000.0f, 1000.0f},
          {nv::mctp::RackPwrSmoothParams::EdppPrimaryKi, -100.0f, 100.0f},
-         {nv::mctp::RackPwrSmoothParams::EdppPrimaryKd, -1000.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::EdppPrimaryKd, -10000.0f, 10000.0f},
          {nv::mctp::RackPwrSmoothParams::EdppLowSocResidencyThreshold, 0.0f, 100.0f},
 
          // EDPP Residency PID (Secondary)
             {nv::mctp::RackPwrSmoothParams::EdppResidencyTargetSecondary, 0.0f, 100.0f},
          {nv::mctp::RackPwrSmoothParams::EdppSecondaryKp, -1000.0f, 1000.0f},
          {nv::mctp::RackPwrSmoothParams::EdppSecondaryKi, -100.0f, 100.0f},
-         {nv::mctp::RackPwrSmoothParams::EdppSecondaryKd, -1000.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::EdppSecondaryKd, -10000.0f, 10000.0f},
 
          // ISINK Critical PID (Primary)
             {nv::mctp::RackPwrSmoothParams::IsinkSoCTargetPrimary, 0.0f, 100.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkSoCCriticalHigh, 0.0f, 100.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKp, -1000.0f, 1000.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKi, -100.0f, 100.0f},
-         {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKd, -1000.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::IsinkPrimaryKd, -10000.0f, 10000.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkHighSoCResidencyThreshold, 0.0f, 100.0f},
 
          // ISINK Residency PID (Secondary)
             {nv::mctp::RackPwrSmoothParams::IskinkResidencyTargetSecondary, 0.0f, 100.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKp, -1000.0f, 1000.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKi, -100.0f, 100.0f},
-         {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKd, -1000.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::IsinkSecondaryKd, -10000.0f, 10000.0f},
 
          {nv::mctp::RackPwrSmoothParams::EdppResidencyEwmaTau, 1.0f, 60.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkResidencyEwmaTau, 1.0f, 60.0f},
@@ -113,6 +113,11 @@ static constexpr std::array<ParameterConstraints,
          {nv::mctp::RackPwrSmoothParams::IsinkIntegralMin, -2000000.0f, 2000000.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkIntegralMax, -2000000.0f, 2000000.0f},
          {nv::mctp::RackPwrSmoothParams::IsinkOutputMax, 0.0f, 100.0f},
+
+         {nv::mctp::RackPwrSmoothParams::EdppPrimaryPidDtDivisor, 1.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::EdppSecondaryPidDtDivisor, 1.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::IsinkPrimaryPidDtDivisor, 1.0f, 1000.0f},
+         {nv::mctp::RackPwrSmoothParams::IsinkSecondaryPidDtDivisor, 1.0f, 1000.0f},
          }
 };
 
@@ -149,6 +154,12 @@ bool validate_parameter(nv::mctp::RackPwrSmoothParams param_id, uint32_t raw_val
         if (c.id != param_id) {
             continue;
         }
+        if (param_id == RackPwrSmoothParams::EdppPrimaryPidDtDivisor
+            || param_id == RackPwrSmoothParams::EdppSecondaryPidDtDivisor
+            || param_id == RackPwrSmoothParams::IsinkPrimaryPidDtDivisor
+            || param_id == RackPwrSmoothParams::IsinkSecondaryPidDtDivisor) {
+            return raw_value >= MIN_DT_SCALER && raw_value <= MAX_DT_SCALER;
+        }
         if (param_id == RackPwrSmoothParams::EdppResidencyEwmaTau
             || param_id == RackPwrSmoothParams::IsinkResidencyEwmaTau) {
             const auto float_val = std::bit_cast<float>(raw_value);
@@ -174,41 +185,45 @@ bool validate_parameter(nv::mctp::RackPwrSmoothParams param_id, uint32_t raw_val
 
 namespace {
 
-// Byte offsets into RuntimeCfg for each tuning param (0-21). Params 0-19 are SFXP22_10;
-// params 20-21 are float (stored as uint32_t bit pattern).
-// Params 0/1 and 10/11 share the same field (critical_pid.target).
+// Byte offsets into RuntimeCfg for each tuning param (0-31). Params 0-19, 22-27 are SFXP22_10;
+// params 20-21 are float (stored as uint32_t bit pattern); 28-31 are uint32_t PID dt divisors
+//  1-1000.  Params 0/1 and 10/11 share the same field (critical_pid.target).
 constexpr std::array<size_t, static_cast<size_t>(RackPwrSmoothParams::MaxTuningParams)>
     kTuningParamOffset{
         {
          offsetof(RuntimeCfg,
          edpp_offset_policy.critical_pid.target),  // 0 EdppSoCTargetPrimary
-            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.target),          // 1
-            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.kp),              // 2
-            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.ki),              // 3
-            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.kd),              // 4
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_threshold),          // 5
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.target),         // 6
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.kp),             // 7
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.ki),             // 8
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.kd),             // 9
-            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.target),         // 10
-            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.target),         // 11
-            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.kp),             // 12
-            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.ki),             // 13
-            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.kd),             // 14
-            offsetof(RuntimeCfg, isink_offset_policy.residency_threshold),         // 15
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.target),        // 16
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.kp),            // 17
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.ki),            // 18
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.kd),            // 19
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_sma.ewma_tau),       // 20
-            offsetof(RuntimeCfg, isink_offset_policy.residency_sma.ewma_tau),      // 21
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.integral_min),   // 22
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.integral_max),   // 23
-            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.output_max),     // 24
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.integral_min),  // 25
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.integral_max),  // 26
-            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.output_max),    // 27
+            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.target),            // 1
+            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.kp),                // 2
+            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.ki),                // 3
+            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.kd),                // 4
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_threshold),            // 5
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.target),           // 6
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.kp),               // 7
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.ki),               // 8
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.kd),               // 9
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.target),           // 10
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.target),           // 11
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.kp),               // 12
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.ki),               // 13
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.kd),               // 14
+            offsetof(RuntimeCfg, isink_offset_policy.residency_threshold),           // 15
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.target),          // 16
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.kp),              // 17
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.ki),              // 18
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.kd),              // 19
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_sma.ewma_tau),         // 20
+            offsetof(RuntimeCfg, isink_offset_policy.residency_sma.ewma_tau),        // 21
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.integral_min),     // 22
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.integral_max),     // 23
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.output_max),       // 24
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.integral_min),    // 25
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.integral_max),    // 26
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.output_max),      // 27
+            offsetof(RuntimeCfg, edpp_offset_policy.critical_pid.pid_dt_divisor),    // 28
+            offsetof(RuntimeCfg, edpp_offset_policy.residency_pid.pid_dt_divisor),   // 29
+            offsetof(RuntimeCfg, isink_offset_policy.critical_pid.pid_dt_divisor),   // 30
+            offsetof(RuntimeCfg, isink_offset_policy.residency_pid.pid_dt_divisor),  // 31
         }
 };
 

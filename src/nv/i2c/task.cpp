@@ -53,7 +53,6 @@ extern void             project_stop_polling_timers();
 using namespace nv::i2c;
 
 namespace {
-
 // Can be evaluated at compile time when given a constexpr client,
 // but is also fine for normal runtime use.
 constexpr bool is_target_client(nv::mctp::Client client)
@@ -136,9 +135,9 @@ Task::Task(Config config) noexcept
                                   std::chrono::microseconds(i2c::SmbusCacheRefreshMs),
                                   refresh_smbus_cache);
     }
-    else if (_port == i2c::Port::Zero && ipc::SensorUpdateMs) {
+    else if (_port == i2c::Port::Zero && ipc::SmbSensorUpdateMs) {
         _timer = ipc::Timer::make(nv::ipc::TimerId::SmbSensor,
-                                  std::chrono::microseconds(ipc::SensorUpdateMs),
+                                  std::chrono::microseconds(ipc::SmbSensorUpdateMs),
                                   update_sensor);
     }
     else if constexpr (nv::ipc::EnableEepromBridge) {
@@ -160,6 +159,17 @@ Task::Task(Config config) noexcept
                                                  RepeatedStartTimeoutMs,
                                                  repeated_start_timeout,
                                                  false);
+    }
+
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if constexpr (nv::i2c::I2CTargetTimeoutCheckIntervalMs > 0) {
+            if (nv::i2c::I2cTargetTimeoutTimerClient == config.client) {
+                _target_timeout_timer = ipc::Timer::make(
+                    nv::ipc::TimerId::I2CTargetTimeoutCheck,
+                    std::chrono::milliseconds(nv::i2c::I2CTargetTimeoutCheckIntervalMs),
+                    check_target_timeout);
+            }
+        }
     }
 }
 
@@ -415,6 +425,14 @@ void Task::start()
         _timer.start();
     }
 
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if constexpr (nv::i2c::I2CTargetTimeoutCheckIntervalMs > 0) {
+            if (nv::i2c::I2cTargetTimeoutTimerClient == _client) {
+                _target_timeout_timer.start();
+            }
+        }
+    }
+
     // Initialize EEPROM cache directly for downstream EEPROM port
     if constexpr (nv::ipc::EnableEepromBridge) {
         if (_port == nv::ipc::EepromDstPort) {
@@ -448,6 +466,7 @@ void Task::start()
             case RequestType::CheckApStatus         : handle_ap_status(APStatus::Querying); break;
             case RequestType::I2cLoopbackTest       : handle_i2c_loopback_test(); break;
             case RequestType::EepromUpdate          : handle_eeprom_update(); break;
+            case RequestType::CheckTargetTimeout    : handle_check_target_timeout(); break;
         }
     }
 }
@@ -487,11 +506,22 @@ void Task::handle_i2c_loopback_test()
     // Execute I2C loopback test for this port
     // This is called from the I2C task context
     constexpr int MaxPort = 9;
+    // Loopback test watchdog reset timeout
+    constexpr uint32_t LoopbackWatchdogResetMs = 30000;
     // Stop I2C polling to avoid collisions with the loopback test
     stop_polling_timers();
+    if constexpr (nv::ipc::EnableRuntimeWdt) {
+        nv::watchdog::Runtime::update_timeout(LoopbackWatchdogResetMs);
+    }
     for (int i = 0; i <= MaxPort; i++) {
         sys::i2c::LoopbackDriver loopback_driver(static_cast<nv::i2c::Port>(i));
         loopback_driver.start_test();
+    }
+    if constexpr (nv::ipc::EnableRuntimeWdt) {
+        nv::watchdog::Runtime::update_timeout(nv::ipc::RuntimeWatchdogResetMs);
+        nv::logger::info(nv::logger::Event::I2cLoopbackWdtUpdate,
+                         nv::logger::data_from_two_u32(LoopbackWatchdogResetMs,
+                                                       nv::ipc::RuntimeWatchdogResetMs));
     }
     loopback_result.IsRunning = 0;
 }
@@ -1036,12 +1066,13 @@ bool Task::process_rx_packet(std::span<uint8_t> buffer,
     constexpr uint8_t I2cEnd      = 0x77;
     /// check PEC
     uint8_t length = 0;
-    if (buffer[0] >= 1) {
-        constexpr uint8_t ByteMask = 0xFF;
-        length                     = static_cast<uint8_t>((buffer[0] - 1U) & ByteMask);
+    if (buffer[0] < 1 || buffer[0] >= buffer.size()) {
+        return false;
     }
-    auto payload = buffer.subspan(1, length);
-    auto pec     = buffer[buffer[0]];
+    constexpr uint8_t ByteMask = 0xFF;
+    length                     = static_cast<uint8_t>((buffer[0] - 1U) & ByteMask);
+    auto payload               = buffer.subspan(1, length);
+    auto pec                   = buffer[buffer[0]];
     if (crc8(payload) != pec) {
         nv::info("pec is invalid\n");
         return false;
@@ -1512,6 +1543,40 @@ void Task::request_i2c_loopback_test()
     const Task::Request request{.type = RequestType::I2cLoopbackTest};
     auto item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
     (void)nv::ipc::Queue::make(nv::ipc::QueueId::I2c0).send(item, std::chrono::seconds(0));
+}
+
+void Task::check_target_timeout([[maybe_unused]] nv::ipc::Timer& timer)
+{
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if constexpr (nv::i2c::I2CTargetTimeoutCheckIntervalMs > 0) {
+            using namespace nv::ipc;
+            using namespace std::chrono_literals;
+            if (timer.id() != TimerId::I2CTargetTimeoutCheck) {
+                return;
+            }
+            const Request request{.type = RequestType::CheckTargetTimeout};
+            for (const auto client : nv::i2c::I2CTargetTimeoutCheckClients) {
+                const auto queue_id = client_to_i2c_queue_id(client);
+                if (queue_id == QueueId::End) {
+                    continue;
+                }
+                auto item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
+                auto queue_status = Queue::make(queue_id).send(item, 0s);
+                if (queue_status != Queue::Status::Ok) {
+                    /// drop event because task is busy
+                }
+            }
+        }
+    }
+}
+
+void Task::handle_check_target_timeout()
+{
+    if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
+        if constexpr (nv::i2c::I2CTargetTimeoutCheckIntervalMs > 0) {
+            _driver.check_target_timeout(is_target_client(_client));
+        }
+    }
 }
 
 void Task::check_ap_status(nv::ipc::Timer& timer)

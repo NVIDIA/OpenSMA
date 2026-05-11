@@ -20,8 +20,8 @@ include etc/plugins/sign-request.mk
 
 REMOTE      ?= 0
 PI_PATH     ?= /tmp
-SSH_HOST    := pi@mcu-devkit-tw-$(shell printf "%02d" $(REMOTE))
-CMD_FLASH   := blhost -u /dev/hidraw0 receive-sb-file $(PI_PATH)/$(notdir $(UBS_TARGET_SB))
+SSH_HOST    := pi@mcu-556-tw-$(shell printf "%02d" $(REMOTE))
+CMD_FLASH   := blhost -t 5000 -u 0x0955,0xcf1d receive-sb-file $(PI_PATH)/$(notdir $(UBS_TARGET_SB))
 SSH         := sshpass -p labuser ssh -o StrictHostKeyChecking=no
 RSYNC       := sshpass -p labuser rsync -e "ssh -o StrictHostKeyChecking=no"
 

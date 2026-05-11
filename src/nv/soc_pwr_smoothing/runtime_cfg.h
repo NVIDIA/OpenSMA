@@ -54,53 +54,57 @@ struct RuntimeCfg
             .enabled = false,
             .residency_pid =
                 {
-                                .target       = to_sfxp22_10(2),
-                                .kp           = to_sfxp22_10(-0.3),
-                                .ki           = to_sfxp22_10(-0.005),
-                                .kd           = to_sfxp22_10(0),
-                                .integral_min = to_sfxp22_10(-2000),
-                                .integral_max = to_sfxp22_10(2000),
-                                .output_min   = to_sfxp22_10(0),
-                                .output_max   = to_sfxp22_10(80),
+                                .target         = to_sfxp22_10(2),
+                                .kp             = to_sfxp22_10(-0.4),
+                                .ki             = to_sfxp22_10(-0.001),
+                                .kd             = to_sfxp22_10(0),
+                                .integral_min   = to_sfxp22_10(-1000000),
+                                .integral_max   = to_sfxp22_10(10),
+                                .output_min     = to_sfxp22_10(0),
+                                .output_max     = to_sfxp22_10(100),
+                                .pid_dt_divisor = 150,
                                 },
             .critical_pid =
                 {
-                                .target       = to_sfxp22_10(70),
-                                .kp           = to_sfxp22_10(-100.0 / 20.0),
-                                .ki           = to_sfxp22_10(0),
-                                .kd           = to_sfxp22_10(0),
-                                .integral_min = to_sfxp22_10(0),
-                                .integral_max = to_sfxp22_10(100),
-                                .output_min   = to_sfxp22_10(0),
-                                .output_max   = to_sfxp22_10(100),
+                                .target         = to_sfxp22_10(80),
+                                .kp             = to_sfxp22_10(-180.0 / 20.0),
+                                .ki             = to_sfxp22_10(0),
+                                .kd             = to_sfxp22_10(0),
+                                .integral_min   = to_sfxp22_10(-1000000),
+                                .integral_max   = to_sfxp22_10(1000000),
+                                .output_min     = to_sfxp22_10(0),
+                                .output_max     = to_sfxp22_10(100),
+                                .pid_dt_divisor = 150,
                                 },
-            .residency_threshold = to_sfxp22_10(70)
+            .residency_threshold = to_sfxp22_10(75)
     };
     OffsetPolicy::RuntimeCfg edpp_offset_policy{
         .enabled = false,
         .residency_pid =
             {
-                            .target       = to_sfxp22_10(2),
-                            .kp           = to_sfxp22_10(-0.3),
-                            .ki           = to_sfxp22_10(-0.005),
-                            .kd           = to_sfxp22_10(0),
-                            .integral_min = to_sfxp22_10(-2000),
-                            .integral_max = to_sfxp22_10(2000),
-                            .output_min   = to_sfxp22_10(0),
-                            .output_max   = to_sfxp22_10(80),
+                            .target         = to_sfxp22_10(2),
+                            .kp             = to_sfxp22_10(-0.4),
+                            .ki             = to_sfxp22_10(-0.001),
+                            .kd             = to_sfxp22_10(0),
+                            .integral_min   = to_sfxp22_10(-1000000),
+                            .integral_max   = to_sfxp22_10(10),
+                            .output_min     = to_sfxp22_10(0),
+                            .output_max     = to_sfxp22_10(100),
+                            .pid_dt_divisor = 150,
                             },
         .critical_pid =
             {
-                            .target       = to_sfxp22_10(30),
-                            .kp           = to_sfxp22_10(100.0 / 20.0),
-                            .ki           = to_sfxp22_10(0),
-                            .kd           = to_sfxp22_10(0),
-                            .integral_min = to_sfxp22_10(0),
-                            .integral_max = to_sfxp22_10(100),
-                            .output_min   = to_sfxp22_10(0),
-                            .output_max   = to_sfxp22_10(100),
+                            .target         = to_sfxp22_10(20),
+                            .kp             = to_sfxp22_10(180.0 / 20.0),
+                            .ki             = to_sfxp22_10(0),
+                            .kd             = to_sfxp22_10(0),
+                            .integral_min   = to_sfxp22_10(-1000000),
+                            .integral_max   = to_sfxp22_10(1000000),
+                            .output_min     = to_sfxp22_10(0),
+                            .output_max     = to_sfxp22_10(100),
+                            .pid_dt_divisor = 150,
                             },
-        .residency_threshold = to_sfxp22_10(30)
+        .residency_threshold = to_sfxp22_10(25)
     };
 
     // Override parameters (test hooks for debugging/validation)

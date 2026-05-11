@@ -45,6 +45,13 @@
 namespace nv::debugtoken {
 
 using namespace nv::spdm::crypto;
+
+namespace {
+
+constexpr bool HasCpldAp = nv::vrot::has_ap_type(nv::vrot::ApType::Cpld, nv::vrot::ApList);
+
+}  // namespace
+
 // clang-format off
 constexpr std::array<
     uint8_t, static_cast<uint8_t>(nv::debugtoken::HashSize::Mcu384Pubkey)> token_pubkey_der = {
@@ -855,7 +862,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     logger::info(logger::Event::DtInstallSuccess);
 
     // Set MCU_UNLOCK_EN bit for CpldDebug token with CpldUnlockEn subtype
-    if constexpr (nv::pldm::ApNum > 0) {
+    if constexpr (HasCpldAp) {
         if ((extracted_token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0) {
             const uint32_t cpld_subtypes = extracted_subtype_bitmaps.at(
                 DebugTokenBitPosCpldDebug);
@@ -912,7 +919,7 @@ TokenErrorCode erase_installed_dbg_token_tlv()
 
     // Clear MCU_UNLOCK_EN bit only if the erased token was CpldDebug type
     // This must succeed for CpldDebug token erase to be considered complete
-    if constexpr (nv::pldm::ApNum > 0) {
+    if constexpr (HasCpldAp) {
         if ((cached_token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0) {
             auto lock_status = nv::ap_operation::modify_cpld_debug_status(false);
             if (lock_status != nv::ap_operation::ApOperationErrorCode::Success) {
@@ -1055,8 +1062,8 @@ TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token
 
 void sync_cpld_debug_token_on_boot()
 {
-    // Only sync if AP is present
-    if constexpr (nv::pldm::ApNum == 0) {
+    // Only sync if a CPLD AP is present.
+    if constexpr (!HasCpldAp) {
         return;
     }
 

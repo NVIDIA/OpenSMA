@@ -131,11 +131,15 @@ Status read_eeprom_bytes(nv::i2c::Port      port,
                                                std::span(buffer.data() + written, chunk));
 
         if (status != nv::i2c::I2cStatus::Ok) {
-            nv::logger::error(nv::logger::Event::FruI2cError,
-                              {eeprom_addr,
-                               static_cast<uint8_t>(offset >> BANK_SHIFT_BITS),
-                               static_cast<uint8_t>(offset & BANK_OFFSET_MASK)});
-            return i2c_to_fru_status(status);
+            const Status fru_st  = i2c_to_fru_status(status);
+            const auto   log_evt = nv::logger::EventStructItem{
+                static_cast<nv::logger::EventId>(0x0F00u + static_cast<unsigned>(fru_st)),
+                nv::logger::Level::Error};
+            nv::logger::error_no_wait(log_evt,
+                                      {eeprom_addr,
+                                       static_cast<uint8_t>(offset >> BANK_SHIFT_BITS),
+                                       static_cast<uint8_t>(offset & BANK_OFFSET_MASK)});
+            return fru_st;
         }
 
         // Advance to next bank/offset region

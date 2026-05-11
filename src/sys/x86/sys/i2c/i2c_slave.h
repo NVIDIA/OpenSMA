@@ -21,6 +21,7 @@
 #include <array>
 #include <stddef.h>
 
+#include "nv/ctimer/ctimer.h"
 #include "nv/i2c/port.h"
 
 #include NV_IPC_CONFIG_H
@@ -75,6 +76,8 @@ public:
                          [[maybe_unused]] void* transfer,
                          [[maybe_unused]] void* user_data)
     {}
+
+    sys::ctimer::Ticks get_target_timeout_elapsed() { return 0; }
 
     void peripheral_recovery() {}
 };

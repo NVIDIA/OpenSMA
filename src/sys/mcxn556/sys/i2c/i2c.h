@@ -17,6 +17,7 @@
  */
 #pragma once
 #include <array>
+#include <atomic>
 #include <span>
 #include <fsl_lpi2c.h>
 
@@ -46,6 +47,7 @@ public:
     {
         I2cBuffer     buffer;
         void*         task;
+        Driver*       owner;
         bool          transmit;
         SlaveFunction function;
     };
@@ -56,9 +58,12 @@ public:
     bool write(std::span<uint8_t> data);
 
     void peripheral_recovery(bool enable_target);
+    void check_target_timeout(bool enable_target);
 
-    uint8_t            address();
-    static void        set_address(nv::i2c::Port port, uint8_t address);
+    uint8_t address();
+    /// Set slave match address on \p port. If \p sec_addr is non-zero, enable dual-address
+    /// match (e.g. primary + FRU).
+    static void        set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0);
     bool               get_status(uint8_t address);
     static IRQn_Type   get_irq(nv::i2c::Port port);
     nv::i2c::I2cStatus i2c_read(uint8_t            address,
@@ -100,6 +105,10 @@ private:
     target_callback_lookup(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
     static void
     target_callback_eeprom(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
+
+    void update_target_state_time_stamp(lpi2c_slave_transfer_event_t event);
+
+    std::atomic<uint32_t> _target_state_time_stamp{};
 };
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data);

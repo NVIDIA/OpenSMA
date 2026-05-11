@@ -60,6 +60,12 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
 
     auto type = get_packet_type(rx);
     if (type == PacketType::Request) {
+        if (rx.priv.packet_interface >= static_cast<uint16_t>(mctp::Client::UsEnd)) {
+            logger::error(nv::logger::Event::MctpInvalidInterfaceIndex,
+                          {static_cast<uint8_t>(rx.priv.packet_interface)});
+            fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+            return;
+        }
         switch (static_cast<SetEndpoint>(crx.data[0])) {
             case SetEndpoint::SetEidNormal:
             case SetEndpoint::SetEidForced:

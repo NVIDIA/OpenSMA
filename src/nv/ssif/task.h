@@ -24,6 +24,9 @@
 
 namespace nv::ssif {
 
+// Timeout for waiting on event bits
+static constexpr auto TaskEventWaitTimeout = nv::ipc::Event::Usecs(100000);
+
 class Task : public nv::ipc::Task
 {
 public:
@@ -55,7 +58,9 @@ public:
     static void entrypoint(void* params);
     static bool to_ssif(std::span<uint8_t>& msg);
     static void enable();
+    static void peripheral_recovery();
     static bool is_default_enabled();
+    static void wdt_notify();
 
     Task(Config config) noexcept;
     [[noreturn]] void start();

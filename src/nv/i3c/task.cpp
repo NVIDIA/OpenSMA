@@ -39,6 +39,12 @@
 
 using namespace nv::i3c;
 
+uint8_t __attribute__((weak))
+nv::i3c::initial_endpoint_status([[maybe_unused]] nv::mctp::Client client)
+{
+    return 1;
+}
+
 void Task::make(Config config)
 {
     constexpr auto StackSize = std::max(1024, int(configMINIMAL_STACK_SIZE));
@@ -158,7 +164,9 @@ nv::i3c::Task::Status nv::i3c::Task::wdt_notify(watchdog::TaskMonitorIndex taskI
     auto queue_status = Queue::make(queue_id).send(item, 0s);
     if (queue_status != Queue::Status::Ok) {
         nv::info("fail to put tx packet (%d)\n", queue_status);
-        logger::error_no_wait(logger::Event::I3CQueueDrop);
+        logger::error_no_wait(
+            logger::Event::I3CQueueDropV2,
+            {static_cast<uint8_t>(queue_id), static_cast<uint8_t>(queue_status)});
         return Task::Status::FailToPutTxPacket;
     }
     return Task::Status::Ok;
@@ -320,8 +328,11 @@ Task::Task(Config config) noexcept
                          {static_cast<uint8_t>(_client),
                           _platform_info.node_index,
                           _platform_info.module_id});
-        _timer = ipc::Timer::make(
-            config.timer_id, std::chrono::microseconds(ipc::SensorUpdateMs), update_sensor);
+        if (ipc::I3cSensorUpdateMs > 0) {
+            _timer = ipc::Timer::make(config.timer_id,
+                                      std::chrono::microseconds(ipc::I3cSensorUpdateMs),
+                                      update_sensor);
+        }
     }
     else {
         if (!ipc::UseI2cApStatusTimer && config.timer_id != ipc::TimerId::End) {
@@ -346,7 +357,7 @@ void Task::start()
         (void)nv::flash::Flash::set_data(item, _gpu_recovery_addr);
     }
     // In GPU case, MCU monitor IROT ERROR signal
-    if (!_is_gpu) {
+    if (!_is_gpu && initial_endpoint_status(_client) != 0U) {
         _driver.init();
         handle_init(init);
     }
@@ -404,11 +415,13 @@ void Task::on_ibi(uint8_t address, std::span<volatile uint8_t> data)
         std::copy(data.begin() + 1, data.end(), request.buffer.begin() + 1);
     }
     else {
-        nv::info("ibi does not support\n");
+        // nv::info("ibi does not support\n");
         constexpr uint8_t ByteMask = 0xFF;
-        logger::Logger::add_from_isr(logger::Event::I3CUnknownIBI.unique_id,
+        logger::Logger::add_from_isr(logger::Event::I3CUnknownIBIV2.unique_id,
                                      logger::Level::Info,
-                                     {static_cast<uint8_t>(data.size() & ByteMask), data[0]});
+                                     {static_cast<uint8_t>(_driver.port()),
+                                      static_cast<uint8_t>(data.size() & ByteMask),
+                                      data[0]});
         return;
     }
     auto item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
@@ -417,7 +430,9 @@ void Task::on_ibi(uint8_t address, std::span<volatile uint8_t> data)
         auto result = _queue.send_front_isr(item);
         if (result != Queue::Status::Ok) {
             logger::Logger::add_from_isr(
-                logger::Event::I3CIbiDrop.unique_id, logger::Level::Error, {});
+                logger::Event::I3CIbiDropV2.unique_id,
+                logger::Level::Error,
+                {static_cast<uint8_t>(_queue.id()), static_cast<uint8_t>(result)});
         }
     }
     else {
@@ -521,8 +536,16 @@ void Task::handle_rx(std::span<uint8_t> buffer)
     /// check PEC
     auto pec = nv::i2c::crc8(buffer.subspan(0, buffer.size() - 1));
     if (buffer.back() != pec && buffer.back() != IgnorePec) {
-        nv::logger::info(nv::logger::Event::I3CPecInvalid, {buffer.back()});
-        nv::info("PEC 0x%02x is invalid, drop RX\n", buffer.back());
+        nv::logger::info(nv::logger::Event::I3CPecInvalidV2,
+                         {static_cast<uint8_t>(_driver.port()),
+                          buffer.back(),
+                          pec,
+                          static_cast<uint8_t>(buffer.size() & UINT8_MAX),
+                          buffer[0],
+                          buffer[1],
+                          buffer[2],
+                          buffer[3]});
+        // nv::info("PEC 0x%02x is invalid, drop RX\n", buffer.back());
         return;
     }
     /// create internal MCTP packet
@@ -906,9 +929,10 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
     // 3.10.5.4.1 OOBHUB hardcode
     using namespace nv;
     using namespace std::chrono_literals;
+    const auto port = static_cast<uint8_t>(_driver.port());
     if (_gpu_recovery_addr == 0) {
-        logger::error_no_wait(logger::Event::I3COobReset,
-                              {static_cast<uint8_t>(GpuOobResetStatus::FailToEnable)});
+        logger::error_no_wait(logger::Event::I3COobResetV2,
+                              {port, static_cast<uint8_t>(GpuOobResetStatus::FailToEnable)});
         return false;
     }
     // send OCP recover command to enable I3C interface
@@ -918,15 +942,16 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
         delay(10ms);
         // enable interface mastering
         if (!_driver.ocp_enable_interface_mastering(ocp_addr)) {
-            logger::error_no_wait(logger::Event::I3COobReset,
-                                  {static_cast<uint8_t>(GpuOobResetStatus::FailToEnable)});
+            logger::error_no_wait(
+                logger::Event::I3COobResetV2,
+                {port, static_cast<uint8_t>(GpuOobResetStatus::FailToEnable)});
             continue;
         }
         delay(10ms);
         // query interface mastering
         if (!_driver.ocp_query_interface_mastering(ocp_addr, enable_interface)) {
-            logger::error_no_wait(logger::Event::I3COobReset,
-                                  {static_cast<uint8_t>(GpuOobResetStatus::FailToQuery)});
+            logger::error_no_wait(logger::Event::I3COobResetV2,
+                                  {port, static_cast<uint8_t>(GpuOobResetStatus::FailToQuery)});
         }
     }
     if (!enable_interface) {
@@ -935,8 +960,8 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
     delay(10ms);
     // configure interrupt
     if (!_driver.enec()) {
-        logger::error_no_wait(logger::Event::I3COobReset,
-                              {static_cast<uint8_t>(GpuOobResetStatus::FailToSetInt)});
+        logger::error_no_wait(logger::Event::I3COobResetV2,
+                              {port, static_cast<uint8_t>(GpuOobResetStatus::FailToSetInt)});
         return false;
     }
     delay(10ms);
@@ -950,8 +975,9 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
         delay(100ms);
     }
     if (!daa_result) {
-        logger::error_no_wait(logger::Event::I3COobReset,
-                              {static_cast<uint8_t>(GpuOobResetStatus::FailToAssignAddr)});
+        logger::error_no_wait(
+            logger::Event::I3COobResetV2,
+            {port, static_cast<uint8_t>(GpuOobResetStatus::FailToAssignAddr)});
         return false;
     }
     delay(10ms);
@@ -960,14 +986,14 @@ bool Task::handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr)
     bool              i3c   = false;
     for (uint8_t i = 0; i < Retry; i++) {
         if (_driver.gpu_query_i3c_mode(therm_addr, i3c) && i3c) {
-            logger::info(logger::Event::I3COobReset,
-                         {static_cast<uint8_t>(GpuOobResetStatus::Enable)});
+            logger::info(logger::Event::I3COobResetV2,
+                         {port, static_cast<uint8_t>(GpuOobResetStatus::Enable)});
             return true;
         }
         delay(1ms);
     }
-    logger::error_no_wait(logger::Event::I3COobReset,
-                          {static_cast<uint8_t>(GpuOobResetStatus::GpuNotInI3cMode)});
+    logger::error_no_wait(logger::Event::I3COobResetV2,
+                          {port, static_cast<uint8_t>(GpuOobResetStatus::GpuNotInI3cMode)});
     return false;
 }
 

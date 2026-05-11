@@ -189,15 +189,19 @@ SpdmEngineSettingError SpdmEngineContext::spdm_engine_initialize()
         return SpdmEngineSettingError::SPDM_CONTEXT_INIT_FAILED;
     }
 
+    const auto
+        max_spdm_msg_size = pdk::spdm::platforms::res::library::get_receiver_buffer_size()
+                          - LIBSPDM_MCTP_TRANSPORT_HEADER_SIZE
+                          - LIBSPDM_MCTP_TRANSPORT_TAIL_SIZE;
+
     libspdm_register_device_io_func(
         spdm_context, send_data_from_spdm_responsder, receive_data_to_spdm_responsder);
-    libspdm_register_transport_layer_func(
-        spdm_context,
-        pdk::spdm::platforms::res::library::get_sender_buffer_size(),
-        LIBSPDM_MCTP_TRANSPORT_HEADER_SIZE,
-        LIBSPDM_MCTP_TRANSPORT_TAIL_SIZE,
-        libspdm_transport_mctp_encode_message,
-        libspdm_transport_mctp_decode_message);
+    libspdm_register_transport_layer_func(spdm_context,
+                                          max_spdm_msg_size,
+                                          LIBSPDM_MCTP_TRANSPORT_HEADER_SIZE,
+                                          LIBSPDM_MCTP_TRANSPORT_TAIL_SIZE,
+                                          libspdm_transport_mctp_encode_message,
+                                          libspdm_transport_mctp_decode_message);
 
     libspdm_register_device_buffer_func(
         spdm_context,

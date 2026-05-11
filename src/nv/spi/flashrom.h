@@ -79,7 +79,7 @@ public:
     constexpr static uint8_t SPI_CS2         = 0x80;
     constexpr static uint8_t SPI_CS3         = 0xC0;
 
-    sys::spi::EdmaDriver _driver;
+    sys::spi::EdmaDriver& _driver;
 
     Flashrom(sys::spi::EdmaDriver& driver);
 

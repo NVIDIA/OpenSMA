@@ -144,8 +144,8 @@ Ccode handle_get_rack_power_smoothing_param(NsmPktResp& ntx);
  * @brief Set Rack Power Smoothing Parameter (tuning params 0 .. MaxTuningParams-1)
  * @param[in] preset_id Preset to modify (1-3, 0 is read-only)
  * @param[in] param_id Parameter ID (see RackPwrSmoothParams)
- * @param[in] param_value SFXP22_10 for params 0-19; IEEE-754 bits as uint32_t for float params
- * 20-21
+ * @param[in] param_value SFXP22_10 for most tuning params; IEEE-754 bits as uint32_t for float
+ * params 20-21; plain integer 1-1000 for PID dt divisors 28-31 (see RackPwrSmoothParams)
  * @return Ccode::Success if handled successfully, Ccode::ErrorUnsupportedCmd if feature not
  * available, Ccode::ErrorInvalidData for invalid params
  */

@@ -201,6 +201,8 @@ void Driver::start(bool enable_target)
 
 void Driver::peripheral_recovery([[maybe_unused]] bool enable_target) {}
 
+void Driver::check_target_timeout([[maybe_unused]] bool enable_target) {}
+
 bool Driver::write(std::span<uint8_t> data)
 {
     std::copy(data.begin(), data.end(), _controller_context.buffer.begin());

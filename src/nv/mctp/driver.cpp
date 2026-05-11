@@ -118,7 +118,9 @@ void Driver::init()
     if (!ipc::DownStreamInfos.empty()) {
         for (auto& info : ipc::DownStreamInfos) {
             if (info.client == Client::DsI3c0 || info.client == Client::DsI3c1) {
-                i3c::Task::init_bus(info.client, true);
+                if (i3c::initial_endpoint_status(info.client) != 0U) {
+                    i3c::Task::init_bus(info.client, true);
+                }
             }
         }
     }

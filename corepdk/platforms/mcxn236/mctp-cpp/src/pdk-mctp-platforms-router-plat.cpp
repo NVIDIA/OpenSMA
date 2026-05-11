@@ -32,6 +32,10 @@ uint8_t get_cur_eid(const RoutingTable& routing_table, Packet::InterfaceType int
 
 void set_cur_eid(RoutingTable& routing_table, Packet::InterfaceType interface, uint8_t eid)
 {
+    if (interface >= static_cast<uint16_t>(Interface::UsEnd)) {
+        nv::logger::info(nv::logger::Event::MctpInvalidInterfaceIndex, {interface});
+        return;
+    }
     routing_table.ec.cur_eid.at(interface) = eid;
 }
 

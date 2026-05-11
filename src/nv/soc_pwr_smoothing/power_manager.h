@@ -47,6 +47,10 @@ public:
         uint16_t  last_adc_raw;        // Last raw SoC ADC code (calibration / readback)
         uint16_t  last_edpp_dac_raw;   // Last code written to EDPP offset DAC (shadow)
         uint16_t  last_isink_dac_raw;  // Last code written to ISINK offset DAC (shadow)
+        uint32_t  edp_primary_offset;
+        uint32_t  edp_secondary_offset;
+        uint32_t  isink_primary_offset;
+        uint32_t  isink_secondary_offset;
     };
 
     struct TelemetryAccumulators
@@ -106,7 +110,8 @@ inline void PowerManager::run_iteration()
     SFXP22_10 soc_voltage_V{};
     SFXP22_10 edpp_offset{};
     SFXP22_10 isink_offset{};
-    uint16_t  adc_raw{};
+
+    uint16_t adc_raw{};
 
     mcu_thermal_warn_dev.evaluate({.assert = public_connectors.therm_power_brake_applied});
     therm_brake_policy.evaluate(

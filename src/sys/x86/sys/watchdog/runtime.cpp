@@ -22,4 +22,6 @@ using namespace nv::watchdog;
 
 void Runtime::init(uint32_t reset_ms, bool enable_reset) {}
 
+void Runtime::update_timeout(uint32_t reset_ms) {}
+
 void Runtime::feed() {}

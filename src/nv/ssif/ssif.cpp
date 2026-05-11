@@ -77,6 +77,11 @@ void Ssif::start()
     _driver.start();
 }
 
+void Ssif::peripheral_recovery()
+{
+    _driver.peripheral_recovery();
+}
+
 std::span<uint8_t> Ssif::get_tx_buffer()
 {
     return {_buffer.data(), std::min(sizeof(Packet), _buffer.size())};

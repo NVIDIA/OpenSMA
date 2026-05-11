@@ -22,7 +22,7 @@ NVHEADER_SRC  := $(UBS_PATH_OUT)/nvheader.c
 NVHEADER      := libexec/tools/nvheader-gen.py
 
 $(NVHEADER_CFG): $(NVHEADER_TMPL)
-	@$(JQ) '.data.FwVersion = "$(FW_VERSION)" | .data.ApSkuId = "$(AP_SKU)" | .data.PciSubsystemDeviceId = "$(SSDID)"' $^ > $@
+	@$(JQ) '.data.FwVersion = "$(FW_VERSION)" | .data.ApSkuId = "$(AP_SKU)" | .data.PciSubsystemDeviceId = "$(SSDID)" | .data.BuildMode = $(GD_NV_BUILD_MODE)' $^ > $@
 
 $(NVHEADER_SRC): $(NVHEADER_CFG)
 	$(ubs-build) "HEADER" "$@"

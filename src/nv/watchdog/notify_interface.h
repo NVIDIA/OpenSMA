@@ -39,6 +39,7 @@ enum class TaskMonitorIndex : uint32_t
     Flash,
     Logger,
     Spdm,
+    Ssif,
     End
 };
 
