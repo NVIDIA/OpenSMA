@@ -26,6 +26,7 @@
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
 #include "nv/i2c/common.h"
+#include "nv/lstp/lstp_router.h"
 #include "nv/mctp/router.h"
 #include "nv/usb/mctp_router.h"
 
@@ -87,6 +88,13 @@ public:
                              ipc::Queue::Item& item,
                              i2c::I2cStatus    result);
 
+    /**
+     * @brief Forward LSTP data to Core1 via C2C
+     * @param data LSTP message data
+     * @return true on success
+     */
+    static bool to_usbLstp_proxy(std::span<uint8_t>& data);
+
     // Event bits for this task
     enum EventBits : uint32_t
     {
@@ -96,6 +104,7 @@ public:
         WdtBit                = (1U << 3),
         UpdateRoutingTableBit = (1U << 4),
         AcmRxBit              = (1U << 5),
+        LstpRxBit             = (1U << 6),
     };
 
     /**
@@ -176,6 +185,9 @@ private:
     // Routing table for MCTP bridging (type from usb::RoutingTable)
     static usb::RoutingTable _routing_table;
 
+    // LSTP router for Core0-owned channels forwarded by Core1 USB.
+    nv::lstp::LstpRouter _lstp_router;
+
     /**
      * @brief Main task loop
      */
@@ -242,6 +254,11 @@ bool to_usb_proxy_impl(ipchandler::Id    src_id,
                        uint16_t          read_length,
                        ipc::Queue::Item& item,
                        i2c::I2cStatus    result);
+
+/**
+ * @brief Forward LSTP response data to Core1 via C2C
+ */
+bool to_usbLstp_proxy_impl(std::span<uint8_t>& data);
 
 }  // namespace nv::usb_proxy
 

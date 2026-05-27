@@ -55,8 +55,8 @@ struct RuntimeCfg
             .residency_pid =
                 {
                                 .target         = to_sfxp22_10(2),
-                                .kp             = to_sfxp22_10(-0.4),
-                                .ki             = to_sfxp22_10(-0.001),
+                                .kp             = to_sfxp22_10(0.0),
+                                .ki             = to_sfxp22_10(0.0),
                                 .kd             = to_sfxp22_10(0),
                                 .integral_min   = to_sfxp22_10(-1000000),
                                 .integral_max   = to_sfxp22_10(10),
@@ -83,8 +83,8 @@ struct RuntimeCfg
         .residency_pid =
             {
                             .target         = to_sfxp22_10(2),
-                            .kp             = to_sfxp22_10(-0.4),
-                            .ki             = to_sfxp22_10(-0.001),
+                            .kp             = to_sfxp22_10(0.0),
+                            .ki             = to_sfxp22_10(0.0),
                             .kd             = to_sfxp22_10(0),
                             .integral_min   = to_sfxp22_10(-1000000),
                             .integral_max   = to_sfxp22_10(10),

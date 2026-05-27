@@ -96,7 +96,7 @@ public:
     // Send data via USB VCOM, returns true if busy
     static bool vcom_send(void* handle, uint8_t* data, uint32_t length);
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
     static usb_status_t
     usb_devicevcomcallback(class_handle_t handle, uint32_t event, void* param);
 

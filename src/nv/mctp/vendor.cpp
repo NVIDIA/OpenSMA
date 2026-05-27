@@ -422,20 +422,21 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
     vtx.data[0]         = vrx.data[0];
     vtx.data[1]         = ProgramSuccess;
 
-    if (rx.priv.packet_length < (sizeof(VendorPktReq) - sizeof(VendorPktReq::data))) {
+    constexpr uint32_t VendorReqHeaderSize = sizeof(VendorPktReq) - sizeof(VendorPktReq::data);
+    if (rx.priv.packet_length <= VendorReqHeaderSize) {
         fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
         return;
     }
 
-    // calculate the length of data that mctp actually receive
-    const uint32_t RxDataLength = rx.priv.packet_length
-                                - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
+    const uint32_t RxDataLength    = rx.priv.packet_length - VendorReqHeaderSize;
     const uint32_t InputCertlength = RxDataLength - 1;
+    if (InputCertlength > MaxCertSize) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
 
-    // copy the input cert data
-    const CertArray& input_cert_array = *std::bit_cast<CertArray*>(&vrx.data[1]);
-    // check the recieve certificate length and format is correct
-    if (!check_certificate_format_valid(input_cert_array, InputCertlength)) {
+    const auto input_cert_span = std::span<const uint8_t>(&vrx.data[1], InputCertlength);
+    if (!check_certificate_format_valid(input_cert_span, InputCertlength)) {
         vtx.data[1] = InvalidCertificate;
     }
 
@@ -465,7 +466,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 // recovery case
                 uint32_t       dda_ordinal_number_otp  = 0;
                 const uint32_t dda_ordinal_number_cert = parse_dda_ordinal_number(
-                    input_cert_array);
+                    input_cert_span);
                 constexpr uint32_t DdaOrdinalEfuseAddr = 31;
                 // check the dda ordinal number on the input cert is valid
                 if (dda_ordinal_number_cert == std::numeric_limits<uint32_t>::max()) {
@@ -494,9 +495,12 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 }
 
                 // verify the l3 by l2 cert
-                CertArray l2_cert_array{};
-                nv::spdm::cert::read_l2_cert(std::span<uint8_t>(l2_cert_array));
-                if (!validate_certificate_signature(l2_cert_array, input_cert_array)) {
+                CertArray      l2_cert_array{};
+                const uint16_t l2_cert_len = nv::spdm::cert::read_l2_cert(
+                    std::span<uint8_t>(l2_cert_array));
+                if (!validate_certificate_signature(
+                        std::span<const uint8_t>(l2_cert_array).first(l2_cert_len),
+                        input_cert_span)) {
                     vtx.data[1] = SignatureValidationFail;
                     break;
                 }
@@ -556,8 +560,10 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     vtx.data[1] = FlashEraseFail;
                     break;
                 }
-                if (!write_to_flash(L3CertVirAddr,
-                                    std::span<const uint8_t>(input_cert_array))) {
+                CertArray flash_write_buf{};
+                std::copy(
+                    input_cert_span.begin(), input_cert_span.end(), flash_write_buf.begin());
+                if (!write_to_flash(L3CertVirAddr, std::span<const uint8_t>(flash_write_buf))) {
                     vtx.data[1] = FlashWriteFail;
                     break;
                 }
@@ -635,17 +641,20 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 }
 
                 const uint32_t l4_dda_ordinal_number_cert = parse_dda_ordinal_number(
-                    input_cert_array);
+                    input_cert_span);
                 // verify the l4 by l3 cert
                 {  // for stack usage optimization
-                    CertArray l3_cert_array{};
-                    nv::spdm::cert::read_l3_cert(std::span<uint8_t>(l3_cert_array));
-                    if (l4_dda_ordinal_number_cert != parse_dda_ordinal_number(l3_cert_array)
+                    CertArray      l3_cert_array{};
+                    const uint16_t l3_cert_len = nv::spdm::cert::read_l3_cert(
+                        std::span<uint8_t>(l3_cert_array));
+                    const auto l3_cert_view = std::span<const uint8_t>(l3_cert_array)
+                                                  .first(l3_cert_len);
+                    if (l4_dda_ordinal_number_cert != parse_dda_ordinal_number(l3_cert_view)
                         || otp_dda_ordinal_number != l4_dda_ordinal_number_cert) {
                         vtx.data[1] = InvalidDdaOrdinalNumber;
                         break;
                     }
-                    if (!validate_certificate_signature(l3_cert_array, input_cert_array)) {
+                    if (!validate_certificate_signature(l3_cert_view, input_cert_span)) {
                         vtx.data[1] = SignatureValidationFail;
                         break;
                     }
@@ -653,10 +662,13 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
 
                 // verify the l5 by l4 cert
                 {  // for stack usage optimization
-                    CertArray l5_cert_array{};
-                    auto      l5_cert_array_span = std::span<uint8_t>(l5_cert_array);
-                    nv::spdm::cert::read_l5_cert(l5_cert_array_span);
-                    if (!validate_certificate_signature(input_cert_array, l5_cert_array)) {
+                    CertArray      l5_cert_array{};
+                    auto           l5_cert_array_span = std::span<uint8_t>(l5_cert_array);
+                    const uint16_t l5_cert_len        = nv::spdm::cert::read_l5_cert(
+                        l5_cert_array_span);
+                    if (!validate_certificate_signature(
+                            input_cert_span,
+                            std::span<const uint8_t>(l5_cert_array).first(l5_cert_len))) {
                         vtx.data[1] = L4verifyL5CertFail;
                         break;
                     }
@@ -683,13 +695,22 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     const bool isFmcV3 = fmc_numeric_version
                                        < nv::spdm::ik::FmcV4NumericThreshold;
 
+                    const size_t expected_template_size = isFmcV3
+                                                            ? sizeof(
+                                                                  nv::spdm::ik::DevIkTemplateV3)
+                                                            : sizeof(
+                                                                  nv::spdm::ik::DevIkTemplate);
+                    if (InputCertlength < expected_template_size) {
+                        vtx.data[1] = InvalidTemplate;
+                        break;
+                    }
                     nv::spdm::ik::TemplateComparisonError
                         comparison_result = nv::spdm::ik::TemplateComparisonError::Success;
                     if (isFmcV3) {
                         auto& template_generate_by_fw = *std::bit_cast<
                             nv::spdm::ik::DevIkTemplateV3*>(&l4_cert_array[0]);
                         const auto& template_from_input_data = *std::bit_cast<
-                            const nv::spdm::ik::DevIkTemplateV3*>(&input_cert_array[0]);
+                            const nv::spdm::ik::DevIkTemplateV3*>(input_cert_span.data());
                         template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
                         comparison_result = nv::spdm::ik::check_two_template_is_same(
                             template_generate_by_fw, template_from_input_data);
@@ -698,7 +719,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                         auto& template_generate_by_fw = *std::bit_cast<
                             nv::spdm::ik::DevIkTemplate*>(&l4_cert_array[0]);
                         const auto& template_from_input_data = *std::bit_cast<
-                            const nv::spdm::ik::DevIkTemplate*>(&input_cert_array[0]);
+                            const nv::spdm::ik::DevIkTemplate*>(input_cert_span.data());
                         template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
                         comparison_result = nv::spdm::ik::check_two_template_is_same(
                             template_generate_by_fw, template_from_input_data);
@@ -718,7 +739,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 // hrer is a little complex, firstly we need to find the acutually size of
                 // singature data without padding and write the signature back form the end to
                 // start.
-                Signature          l4sign = parse_signature(input_cert_array);
+                Signature          l4sign = parse_signature(input_cert_span);
                 std::span<uint8_t> l4_sign_r_data_without_padding_redundant_size;
                 {  // r value
                     // if have padding zero, the start offset should add 1
@@ -837,6 +858,10 @@ void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
         tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + 1;
     }
     else if (vtx.msg_version == 0x02) {
+        constexpr uint8_t OperationRead      = 1;
+        constexpr uint8_t OperationWrite     = 2;
+        constexpr uint8_t OperationReadForce = 3;
+
         auto operation    = vrx.data[0];
         auto gpio_port    = vrx.data[1];
         auto gpio_pin     = vrx.data[2];
@@ -844,7 +869,10 @@ void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
 
         // NOLINTNEXTLINE
         bool is_found = false;
-        if (!ipc::GpioSetup.empty()) {
+        if (operation == OperationReadForce) {
+            is_found = true;
+        }
+        else if (!ipc::GpioSetup.empty()) {
             for (auto& [port, pin] : ipc::GpioSetup) {
                 if (gpio_port == port && gpio_pin == pin) {
                     is_found = true;
@@ -857,33 +885,50 @@ void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
             return;
         }
         else {
-            if (operation == 1) {
-                uint8_t data{};
-                auto    gpio_status = gpio::Driver::read(gpio_port, gpio_pin, data);
-                if (gpio_status != gpio::Status::Ok) {
-                    vtx.completion_code = Ccode::ErrorGeneral;
-                    return;
-                }
-                vtx.data[0] = 0;
-                vtx.data[1] = data;
+            switch (operation) {
+                case OperationRead: {
+                    uint8_t data{};
+                    auto    gpio_status = gpio::Driver::read(gpio_port, gpio_pin, data);
+                    if (gpio_status != gpio::Status::Ok) {
+                        vtx.completion_code = Ccode::ErrorGeneral;
+                        return;
+                    }
+                    vtx.data[0] = 0;
+                    vtx.data[1] = data;
 
-                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + 1;
-            }
-            else if (operation == 2) {
-                auto gpio_status = gpio::Driver::write(gpio_port, gpio_pin, write_status);
-                if (gpio_status != gpio::Status::Ok) {
-                    vtx.completion_code = Ccode::ErrorGeneral;
-                    return;
+                    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + 1;
+                    break;
                 }
+                case OperationWrite: {
+                    auto gpio_status = gpio::Driver::write(gpio_port, gpio_pin, write_status);
+                    if (gpio_status != gpio::Status::Ok) {
+                        vtx.completion_code = Ccode::ErrorGeneral;
+                        return;
+                    }
 
-                vtx.data[0]           = 0;
-                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
-            }
-            else {
-                vtx.data[0]           = 1;
-                vtx.completion_code   = Ccode::ErrorInvalidData;
-                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
-                return;
+                    vtx.data[0]           = 0;
+                    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
+                    break;
+                }
+                case OperationReadForce: {
+                    uint8_t data{};
+                    auto    gpio_status = gpio::Driver::read_force(gpio_port, gpio_pin, data);
+                    if (gpio_status != gpio::Status::Ok) {
+                        vtx.completion_code = Ccode::ErrorGeneral;
+                        return;
+                    }
+                    vtx.data[0] = 0;
+                    vtx.data[1] = data;
+
+                    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + 1;
+                    break;
+                }
+                default: {
+                    vtx.data[0]           = 1;
+                    vtx.completion_code   = Ccode::ErrorInvalidData;
+                    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
+                    break;
+                }
             }
         }
     }

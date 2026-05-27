@@ -204,15 +204,16 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
             event.clear(UsbRxDoneBit);
 
             if constexpr (ipc::EnableNcsi) {
-                // Dual-core: drain UbridgeRx queue (data from usb_proxy task)
-                // Format: [2-byte length LE][data]
-                auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
-                ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
-                while (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
-                    uint16_t len = 0;
-                    std::memcpy(&len, rx_buf.data(), sizeof(len));
-                    if (len > 0 && len <= rx_buf.size() - 2) {
-                        tx(std::span<uint8_t>(rx_buf.data() + 2, len));
+                // Dual-core: dequeue at most ONE ACM packet per UART TX window.
+                if (!uart_impl.txongoing()) {
+                    auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
+                    ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
+                    if (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
+                        uint16_t len = 0;
+                        std::memcpy(&len, rx_buf.data(), sizeof(len));
+                        if (len > 0 && len <= rx_buf.size() - 2) {
+                            tx(std::span<uint8_t>(rx_buf.data() + 2, len));
+                        }
                     }
                 }
             }
@@ -229,11 +230,33 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
             event.clear(UartTxDoneBit);
 
             if constexpr (ipc::EnableNcsi) {
-                // Dual-core: notify Core1 so it can re-arm ACM receive
-                (void)sys::ipc::task::Mcmgr::trigger_event_force(
-                    nv::ipc::CoreId::Core1,
-                    nv::ipc::task::EventType::Communication,
-                    static_cast<uint16_t>(nv::ipc::task::CmdCode::InterCoreAcmTxDone));
+                // Dual-core: UART TX just completed. If UART is still busy, the
+                // UsbRxDoneBit handler above started a new TX in this same
+                // event-wait iteration; defer everything to the next UartTxDoneBit.
+                // Otherwise dequeue at most ONE packet from UbridgeRx and start
+                if (!uart_impl.txongoing()) {
+                    auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
+                    ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
+                    bool             started_next = false;
+                    if (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
+                        uint16_t len = 0;
+                        std::memcpy(&len, rx_buf.data(), sizeof(len));
+                        if (len > 0 && len <= rx_buf.size() - 2) {
+                            tx(std::span<uint8_t>(rx_buf.data() + 2, len));
+                            started_next = true;
+                        }
+                    }
+
+                    if (!started_next) {
+                        // Queue empty (or item had bad length) and UART idle ->
+                        // safe to re-arm Core1 for the next ACM packet.
+                        (void)sys::ipc::task::Mcmgr::trigger_event_force(
+                            nv::ipc::CoreId::Core1,
+                            nv::ipc::task::EventType::Communication,
+                            static_cast<uint16_t>(nv::ipc::task::CmdCode::InterCoreAcmTxDone));
+                    }
+                    // else: re-arm deferred to next UartTxDoneBit when current TX completes
+                }
             }
             else {
                 // Single-core: Re-arm USB RX to receive next packet
@@ -275,3 +298,18 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
 }
 
 }  // namespace nv::vruart
+
+// Fixed hooks consumed by sys::usb (no runtime callback registration)
+// Single-core only: in dual-core (NCSI_ENABLE=1), ACM data arrives via IPC UbridgeRx
+// queue from Core1 and nv_usb_vcom_rx is never called on Core0.
+#if !NCSI_ENABLE
+extern "C" uint8_t nv_usb_vcom_rx(uint8_t* data, uint32_t length)
+{
+    return nv::vruart::CdcBridge::usb_rx_callback(data, length);
+}
+
+extern "C" void nv_usb_vcom_close()
+{
+    nv::vruart::CdcBridge::flush_tx_queue();
+}
+#endif  // !NCSI_ENABLE

@@ -31,7 +31,9 @@ bool get_ap_metadata_data_from_flash(
         auth_status = ApFwParsingErrorCode::FlashAccessFail;
         return false;
     }
-    if (authenticate_data.ap_auth_result != nv::spdm::crypto::CryptoStatus::Success) {
+    if (authenticate_data.ap_auth_result != nv::spdm::crypto::CryptoStatus::Success
+        && authenticate_data.ap_auth_result
+               != nv::spdm::crypto::CryptoStatus::ApAuthInProgress) {
         auth_status = ApFwParsingErrorCode::AuthenticationFailed;
         return false;
     }

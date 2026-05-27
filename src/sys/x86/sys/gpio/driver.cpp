@@ -61,6 +61,12 @@ Status Driver::read(GpioPort port, GpioPin pin, uint8_t& data)
     return Status::Ok;
 }
 
+Status Driver::read_force(GpioPort port, GpioPin pin, uint8_t& data)
+{
+    data = 0;
+    return Status::Ok;
+}
+
 Status Driver::read_gpio_port(GpioPort port, uint32_t& gpioBitmap)
 {
     gpioBitmap = 0;

@@ -38,9 +38,10 @@ constexpr uint8_t MFR_MODEL = 0x9A;  // Manufacturer Model (Block Read, 4-8 byte
 // Device information structure for multi-device support
 struct IdentifiedDevice
 {
-    uint8_t    address;
-    DeviceType type;
-    uint8_t    variant_index;  // For HSC: 0=East, 1=West; For HSCC: device index
+    uint8_t                      address;
+    DeviceType                   type;
+    PowerSensorDirectFormatCoeff power_input_coeff;
+    uint8_t variant_index;  // For HSC: 0=East, 1=West; For HSCC: device index
     nv::mctp::Type3TemperatureSensors temp_sensor_id;   // NSM Type 3 Temperature sensor ID
     nv::mctp::Type3PowerSensors       power_sensor_id;  // NSM Type 3 Power sensor ID
     nv::mctp::T3Voltage               vout_sensor_id;   // NSM Type 3 Voltage Output sensor ID
@@ -184,6 +185,7 @@ private:
      */
     void add_hsc_device(uint8_t                           address,
                         DeviceType                        type,
+                        PowerSensorDirectFormatCoeff      power_input_coeff,
                         uint8_t                           variant_index,
                         nv::mctp::Type3TemperatureSensors temp_id,
                         nv::mctp::Type3PowerSensors       power_id,
@@ -192,6 +194,7 @@ private:
                         nv::mctp::PowerSensorFaults       alert_id);
     void add_hscc_device(uint8_t                           address,
                          DeviceType                        type,
+                         PowerSensorDirectFormatCoeff      power_input_coeff,
                          uint8_t                           index,
                          nv::mctp::Type3TemperatureSensors temp_id,
                          nv::mctp::Type3PowerSensors       power_id,

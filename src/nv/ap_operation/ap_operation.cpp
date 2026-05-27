@@ -171,7 +171,7 @@ ApOperationErrorCode secure_boot_ap_fw_authenticate_callback(
     }
 
     // Sync debug token status after AP FW is ready
-    nv::debugtoken::sync_cpld_debug_token_on_boot();
+    nv::debugtoken::sync_debug_token_features_on_boot();
 
     return ApOperationErrorCode::Success;
 }

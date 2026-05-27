@@ -87,8 +87,18 @@ public:
     static Status reset_all_event_bits() { return Status::Ok; }
     static Status set_spi_rx_event() { return Status::Ok; }
     static Status set_spi_tx_done_event() { return Status::Ok; }
-    static Status to_usbLstp(std::span<uint8_t>&) { return Status::Ok; }
-    static bool   is_lstp_device_configured() { return false; }
+    static bool   is_lstp_device_connected() { return true; }
+
+    static Status to_usbLstp(std::span<uint8_t>& data)
+    {
+        if constexpr (nv::ipc::EnableLstp) {
+            return usb_proxy::to_usbLstp_proxy_impl(data) ? Status::Ok : Status::QueueSendFail;
+        }
+        else {
+            (void)data;
+            return Status::Ok;
+        }
+    }
 
     static bool to_usb(nv::ipchandler::Id    src_id,
                        uint16_t              read_length,

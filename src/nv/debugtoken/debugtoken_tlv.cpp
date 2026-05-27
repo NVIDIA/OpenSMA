@@ -23,16 +23,9 @@
 
 #include "mbedtls/sha512.h"
 
-#include "config.h"
-#include "nv/ap_operation/ap_operation.h"
+#include "nv/vrot/interface/interface.h"
+#include NV_IPC_CONFIG_H
 
-#if __has_include("product_cpld_registers.h")
-#include "product_cpld_registers.h"
-#else
-#include "nv/i2c/dummy_cpld_registers.h"
-#endif
-
-#include "nv/i2c/lattice_driver.h"
 #include "nv/bootloader.h"
 #include "nv/common/build.h"
 #include "nv/debugtoken/debugtoken.h"
@@ -45,12 +38,6 @@
 namespace nv::debugtoken {
 
 using namespace nv::spdm::crypto;
-
-namespace {
-
-constexpr bool HasCpldAp = nv::vrot::has_ap_type(nv::vrot::ApType::Cpld, nv::vrot::ApList);
-
-}  // namespace
 
 // clang-format off
 constexpr std::array<
@@ -123,6 +110,65 @@ nv::flash::Key get_subtype_npds_key(uint32_t token_type)
     }
 }
 
+TokenErrorCode set_debug_token_npds_data(nv::flash::Key key, nv::flash::Data data)
+{
+    return nv::flash::Flash::set_data(key, data) == nv::flash::Status::Ok
+             ? TokenErrorCode::NoErrorCode
+             : TokenErrorCode::TokenStorageError;
+}
+
+TokenErrorCode
+save_debug_token_cache(uint32_t                                   token_type,
+                       const std::array<uint32_t, MaxTokenTypes>& subtype_bitmaps)
+{
+    constexpr std::array<uint32_t, MaxTokenTypes> subtype_token_types{
+        DebugTokenTypeDebugFw, DebugTokenTypeMcuDebug, DebugTokenTypeCpldDebug};
+
+    for (uint32_t i = 0; i < subtype_token_types.size(); i++) {
+        const auto npds_key = get_subtype_npds_key(subtype_token_types.at(i));
+        if (auto status = set_debug_token_npds_data(npds_key, subtype_bitmaps.at(i));
+            status != TokenErrorCode::NoErrorCode) {
+            return status;
+        }
+    }
+
+    return set_debug_token_npds_data(nv::flash::Key::NpdsDebugTokenAuthenticated, token_type);
+}
+
+TokenErrorCode clear_debug_token_cache()
+{
+    // Authenticated must be cleared first so a partial failure leaves the cache
+    // in the "no token" state (subtype residue is then unreachable).
+    constexpr std::array<nv::flash::Key, 4> cache_keys{
+        nv::flash::Key::NpdsDebugTokenAuthenticated,
+        nv::flash::Key::NpdsDebugTokenSubtypeDebugFw,
+        nv::flash::Key::NpdsDebugTokenSubtypeMcuDebug,
+        nv::flash::Key::NpdsDebugTokenSubtypeCpldDebug};
+
+    for (const auto key : cache_keys) {
+        if (auto status = set_debug_token_npds_data(key, 0);
+            status != TokenErrorCode::NoErrorCode) {
+            return status;
+        }
+    }
+    return TokenErrorCode::NoErrorCode;
+}
+
+[[maybe_unused]] bool
+has_token_feature_enabled(uint32_t                                   token_type,
+                          const std::array<uint32_t, MaxTokenTypes>& subtype_bitmaps,
+                          nv::vrot::DebugTokenFeature                feature)
+{
+    switch (feature) {
+        case nv::vrot::DebugTokenFeature::CpldUnlock:
+            return (token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0
+                && ((subtype_bitmaps.at(DebugTokenBitPosCpldDebug)
+                     & DebugTokenSubtypeCpldUnlockEn)
+                    != 0);
+    }
+    return false;
+}
+
 // Log failure with throttling
 void log_failure_throttled(logger::EventStructItem event, uint8_t error_code)
 {
@@ -144,6 +190,50 @@ void reset_log_throttle()
 {
     (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenFailCount, 0);
 }
+
+constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+
+enum class FeatureUpdateContext : uint8_t
+{
+    Install  = 0,
+    Erase    = 1,
+    BootSync = 2,
+};
+
+[[maybe_unused]] void log_feature_update_failure(FeatureUpdateContext        context,
+                                                 nv::vrot::DebugTokenFeature feature,
+                                                 bool                        enable,
+                                                 nv::vrot::ApOpErrCode       status)
+{
+    // Data bytes: context, feature, requested enable state, AP operation status.
+    logger::error_no_wait(logger::Event::DtFeatureUpdateFail,
+                          {static_cast<uint8_t>(context),
+                           static_cast<uint8_t>(feature),
+                           static_cast<uint8_t>(enable ? 1U : 0U),
+                           static_cast<uint8_t>(status)},
+                          logger::OutputDirection::Flash);
+}
+
+[[maybe_unused]] nv::vrot::ApOpErrCode
+set_debug_token_feature_on_supported_aps(nv::vrot::DebugTokenFeature feature, bool enable)
+{
+    auto first_error = nv::vrot::ApOpErrCode::Success;
+
+    if constexpr (HasVrotAp) {
+        for (const auto& ap : nv::vrot::ApList) {
+            const auto status = nv::vrot::set_debug_token_feature(ap, feature, enable);
+            if (status == nv::vrot::ApOpErrCode::NotSupported) {
+                continue;
+            }
+            if (status != nv::vrot::ApOpErrCode::Success
+                && first_error == nv::vrot::ApOpErrCode::Success) {
+                first_error = status;
+            }
+        }
+    }
+    return first_error;
+}
+
 }  // anonymous namespace
 
 // TLV index cache structure
@@ -592,19 +682,9 @@ TokenErrorCode check_debug_token_type_enabled(Type token_type)
         return auth_result;
     }
 
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenAuthenticated,
-                                     extracted_token_type);
-
-    // Save subtype bitmap for each token type
-    for (uint32_t i = 0; i < MaxTokenTypes; i++) {
-        const uint32_t token_type = (i == DebugTokenBitPosDebugFw)   ? DebugTokenTypeDebugFw
-                                  : (i == DebugTokenBitPosMcuDebug)  ? DebugTokenTypeMcuDebug
-                                  : (i == DebugTokenBitPosCpldDebug) ? DebugTokenTypeCpldDebug
-                                                                     : 0;
-        const auto     npds_key   = get_subtype_npds_key(token_type);
-        if (npds_key != nv::flash::Key::NpdsInvalid) {
-            (void)nv::flash::Flash::set_data(npds_key, extracted_subtype_bitmaps.at(i));
-        }
+    if (auto status = save_debug_token_cache(extracted_token_type, extracted_subtype_bitmaps);
+        status != TokenErrorCode::NoErrorCode) {
+        return status;
     }
 
     return TokenErrorCode::NoErrorCode;
@@ -614,6 +694,11 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
 {
     if (token_span.empty()) {
         return TokenErrorCode::TokenInternalError;
+    }
+
+    // Need a complete top-level TLV header before reading it.
+    if (token_span.size() < sizeof(TlvHeader)) {
+        return TokenErrorCode::TokenInvalidFormat;
     }
 
     // Verify TLV header first
@@ -629,15 +714,17 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return TokenErrorCode::TokenInvalidFormat;
     }
 
-    // Check if total token size exceeds flash sector size
-    const uint32_t total_token_size = sizeof(TlvHeader) + tlv_header.size;
-    if (total_token_size > FlashSectorSize) {
+    // Validate declared token length before parsing/authentication.
+    const uint32_t token_size = sizeof(TlvHeader) + tlv_header.size;
+    if (token_size > ReasonableSize || token_size > token_span.size()) {
         return TokenErrorCode::TokenInvalidFormat;
     }
+    const std::span<const uint8_t> token_subspan{token_span.data(),
+                                                 static_cast<size_t>(token_size)};
 
     // Build TLV index once for all lookups
     TlvIndexCache tlv_cache{};
-    if (!build_tlv_index(token_span, tlv_cache)) {
+    if (!build_tlv_index(token_subspan, tlv_cache)) {
         return TokenErrorCode::TokenInvalidFormat;
     }
 
@@ -660,7 +747,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         || entry.length != expected_magic.size()) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    if (memcmp(token_span.data() + entry.data_offset, expected_magic.data(), entry.length)
+    if (memcmp(token_subspan.data() + entry.data_offset, expected_magic.data(), entry.length)
         != 0) {
         return TokenErrorCode::TokenInvalidFormat;
     }
@@ -670,42 +757,42 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         || entry.length != nonce.size()) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(nonce.data(), token_span.data() + entry.data_offset, entry.length);
+    memcpy(nonce.data(), token_subspan.data() + entry.data_offset, entry.length);
 
     // Read device serial number
     if (!find_tlv_in_cache(tlv_cache, TlvType::DeviceSerialNumber, entry)
         || entry.length != serial_num.size()) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(serial_num.data(), token_span.data() + entry.data_offset, entry.length);
+    memcpy(serial_num.data(), token_subspan.data() + entry.data_offset, entry.length);
 
     // Read firmware version (4 bytes)
     if (!find_tlv_in_cache(tlv_cache, TlvType::FirmwareVersion, entry)
         || entry.length != mcufw_version.size()) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(mcufw_version.data(), token_span.data() + entry.data_offset, entry.length);
+    memcpy(mcufw_version.data(), token_subspan.data() + entry.data_offset, entry.length);
 
     // Read agent version (2 bytes)
     if (!find_tlv_in_cache(tlv_cache, TlvType::AgentVersion, entry)
         || entry.length != sizeof(agent_ver)) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(&agent_ver, token_span.data() + entry.data_offset, entry.length);
+    memcpy(&agent_ver, token_subspan.data() + entry.data_offset, entry.length);
 
     // Read lifecycle state (1 byte)
     if (!find_tlv_in_cache(tlv_cache, TlvType::LifecycleState, entry)
         || entry.length != sizeof(lifecycle_state)) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(&lifecycle_state, token_span.data() + entry.data_offset, entry.length);
+    memcpy(&lifecycle_state, token_subspan.data() + entry.data_offset, entry.length);
 
     // Read token type (4 bytes)
     if (!find_tlv_in_cache(tlv_cache, TlvType::TokenType, entry)
         || entry.length != sizeof(extracted_token_type)) {
         return TokenErrorCode::TokenInvalidFormat;
     }
-    memcpy(&extracted_token_type, token_span.data() + entry.data_offset, entry.length);
+    memcpy(&extracted_token_type, token_subspan.data() + entry.data_offset, entry.length);
 
     // Validate extracted token type (supports bitmask combinations)
     if (extracted_token_type == 0 || (extracted_token_type & ~DebugOptionsFlags) != 0) {
@@ -721,7 +808,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         for (uint32_t i = 0; i < num_pairs && i < MaxTokenTypeSubtypePairs; i++) {
             TokenTypeSubtypePair pair{};
             memcpy(&pair,
-                   token_span.data() + entry.data_offset + (i * TokenTypeSubtypePairSize),
+                   token_subspan.data() + entry.data_offset + (i * TokenTypeSubtypePairSize),
                    TokenTypeSubtypePairSize);
 
             // Validate subtype contains only valid bits for this token type
@@ -741,15 +828,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         }
     }
 
-    // Authenticate token using dev/prod public key
-    const uint32_t token_size = sizeof(TlvHeader) + tlv_header.size;
-    if (token_size > ReasonableSize) {
-        return TokenErrorCode::TokenInvalidFormat;
-    }
-
     // Use the same public key for both token types (dev/prod mode dependent)
-    const std::span<const uint8_t> token_subspan{token_span.data(),
-                                                 static_cast<size_t>(token_size)};
     const TokenErrorCode auth_result = auth_token_tlv(token_subspan, token_pubkey_der);
 
     if (auth_result != TokenErrorCode::NoErrorCode) {
@@ -813,6 +892,20 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return TokenErrorCode::TokenInternalError;
     }
 
+    if constexpr (HasVrotAp) {
+        constexpr auto Feature     = nv::vrot::DebugTokenFeature::CpldUnlock;
+        auto           lock_status = set_debug_token_feature_on_supported_aps(Feature, false);
+        if (lock_status != nv::vrot::ApOpErrCode::Success) {
+            log_feature_update_failure(
+                FeatureUpdateContext::Install, Feature, false, lock_status);
+            return TokenErrorCode::TokenStorageError;
+        }
+    }
+
+    if (auto status = clear_debug_token_cache(); status != TokenErrorCode::NoErrorCode) {
+        return status;
+    }
+
     // Erase the token area in SPI flash
     const auto token_address = get_token_flash_address();
     auto       flash_status  = flash::Flash::erase(token_address);
@@ -820,23 +913,20 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return TokenErrorCode::TokenStorageError;
     }
 
-    // Write complete token to flash in one operation
-    if (token_size > ReasonableSize || token_size > token_span.size()) {
-        return TokenErrorCode::TokenInvalidFormat;
-    }
-
     // Write token to flash with 16-byte alignment
     constexpr uint32_t PhraseSize = nv::flash::PhraseSize;  // Use system-defined alignment
 
     // Calculate aligned size and remaining bytes
-    const uint32_t aligned_size = (token_size / PhraseSize) * PhraseSize;
-    // Prevent unsigned integer wrap by ensuring aligned_size <= token_size
-    const uint32_t remaining_bytes = (aligned_size <= token_size) ? (token_size - aligned_size)
-                                                                  : 0;
+    const uint32_t aligned_size    = (token_size / PhraseSize) * PhraseSize;
+    const uint32_t remaining_bytes = token_size - aligned_size;
 
-    // First write: aligned portion (if any)
+    // First write: aligned portion (if any).
+    //
+    // From this point on, the prior token was already erased. Failure paths
+    // keep the system fail-closed by clearing cache, erasing partial token
+    // data, and leaving AP features locked.
     if (aligned_size > 0) {
-        const std::span<const uint8_t> aligned_chunk{token_span.data(),
+        const std::span<const uint8_t> aligned_chunk{token_subspan.data(),
                                                      static_cast<size_t>(aligned_size)};
         flash_status = flash::Flash::write(token_address, aligned_chunk);
         if (flash_status != flash::Status::Ok) {
@@ -848,7 +938,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     // Second write: remaining bytes with padding (if any)
     if (remaining_bytes > 0) {
         std::array<uint8_t, PhraseSize> padded_buffer = {};  // Zero-initialized
-        memcpy(padded_buffer.data(), token_span.data() + aligned_size, remaining_bytes);
+        memcpy(padded_buffer.data(), token_subspan.data() + aligned_size, remaining_bytes);
 
         const std::span<const uint8_t> padded_chunk{padded_buffer.data(),
                                                     static_cast<size_t>(PhraseSize)};
@@ -859,21 +949,25 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         }
     }
 
-    logger::info(logger::Event::DtInstallSuccess);
+    if (auto status = save_debug_token_cache(extracted_token_type, extracted_subtype_bitmaps);
+        status != TokenErrorCode::NoErrorCode) {
+        (void)clear_debug_token_cache();
+        (void)flash::Flash::erase(token_address);
+        return status;
+    }
 
-    // Set MCU_UNLOCK_EN bit for CpldDebug token with CpldUnlockEn subtype
-    if constexpr (HasCpldAp) {
-        if ((extracted_token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0) {
-            const uint32_t cpld_subtypes = extracted_subtype_bitmaps.at(
-                DebugTokenBitPosCpldDebug);
-
-            if ((cpld_subtypes & DebugTokenSubtypeCpldUnlockEn) != 0) {
-                auto unlock_status = nv::ap_operation::modify_cpld_debug_status(true);
-                if (unlock_status != nv::ap_operation::ApOperationErrorCode::Success) {
-                    nv::error("Failed to set CPLD unlock: status=%d\n", unlock_status);
-                    (void)flash::Flash::erase(token_address);
-                    return TokenErrorCode::TokenStorageError;
-                }
+    if constexpr (HasVrotAp) {
+        constexpr auto Feature = nv::vrot::DebugTokenFeature::CpldUnlock;
+        if (has_token_feature_enabled(
+                extracted_token_type, extracted_subtype_bitmaps, Feature)) {
+            auto unlock_status = set_debug_token_feature_on_supported_aps(Feature, true);
+            if (unlock_status != nv::vrot::ApOpErrCode::Success) {
+                log_feature_update_failure(
+                    FeatureUpdateContext::Install, Feature, true, unlock_status);
+                (void)set_debug_token_feature_on_supported_aps(Feature, false);
+                (void)clear_debug_token_cache();
+                (void)flash::Flash::erase(token_address);
+                return TokenErrorCode::TokenStorageError;
             }
         }
     }
@@ -881,67 +975,42 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     // Installation succeeded - reset failure counter
     reset_log_throttle();
 
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenAuthenticated,
-                                     extracted_token_type);
-
-    // Save subtype bitmap for each token type
-    for (uint32_t i = 0; i < MaxTokenTypes; i++) {
-        const uint32_t token_type = (i == DebugTokenBitPosDebugFw)   ? DebugTokenTypeDebugFw
-                                  : (i == DebugTokenBitPosMcuDebug)  ? DebugTokenTypeMcuDebug
-                                  : (i == DebugTokenBitPosCpldDebug) ? DebugTokenTypeCpldDebug
-                                                                     : 0;
-        const auto     npds_key   = get_subtype_npds_key(token_type);
-        if (npds_key != nv::flash::Key::NpdsInvalid) {
-            (void)nv::flash::Flash::set_data(npds_key, extracted_subtype_bitmaps.at(i));
-        }
-    }
+    logger::info(logger::Event::DtInstallSuccess);
 
     return TokenErrorCode::NoErrorCode;
 }
 
 TokenErrorCode erase_installed_dbg_token_tlv()
 {
-    // Check if TLV token exists in flash before erasing
-    if (is_dbg_token_tlv_in_flash()) {
-        auto flash_status = flash::Flash::erase(get_token_flash_address());
+    const bool token_installed = is_dbg_token_tlv_in_flash();
 
+    if constexpr (HasVrotAp) {
+        // Erasing the token store removes all debug-token capabilities. Lock supported
+        // platform features first so a stale NPDS cache cannot re-enable them after reboot.
+        constexpr auto Feature     = nv::vrot::DebugTokenFeature::CpldUnlock;
+        auto           lock_status = set_debug_token_feature_on_supported_aps(Feature, false);
+        if (lock_status != nv::vrot::ApOpErrCode::Success) {
+            log_feature_update_failure(
+                FeatureUpdateContext::Erase, Feature, false, lock_status);
+            return TokenErrorCode::TokenStorageError;
+        }
+    }
+
+    if (auto status = clear_debug_token_cache(); status != TokenErrorCode::NoErrorCode) {
+        return status;
+    }
+
+    if (token_installed) {
+        auto flash_status = flash::Flash::erase(get_token_flash_address());
         if (flash_status != flash::Status::Ok) {
             return TokenErrorCode::TokenStorageError;
         }
     }
 
-    logger::info(logger::Event::DtEraseSuccess);
-
-    // Check if the erased token was CpldDebug type before clearing cache
-    nv::flash::Data cached_token_type = 0;
-    (void)nv::flash::Flash::get_data(nv::flash::Key::NpdsDebugTokenAuthenticated,
-                                     cached_token_type);
-
-    // Clear MCU_UNLOCK_EN bit only if the erased token was CpldDebug type
-    // This must succeed for CpldDebug token erase to be considered complete
-    if constexpr (HasCpldAp) {
-        if ((cached_token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0) {
-            auto lock_status = nv::ap_operation::modify_cpld_debug_status(false);
-            if (lock_status != nv::ap_operation::ApOperationErrorCode::Success) {
-                nv::error("Failed to clear MCU_UNLOCK_EN bit: status=%d\n", lock_status);
-                return TokenErrorCode::TokenStorageError;
-            }
-        }
-    }
-
-    // Erase succeeded - reset failure counter
-    reset_log_throttle();
-
-    // Clear NPDS cache since token is erased
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenAuthenticated, 0);
-
-    // Clear all token subtype caches
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenSubtypeDebugFw, 0);
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenSubtypeMcuDebug, 0);
-    (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenSubtypeCpldDebug, 0);
-
     // Reset failure counter to allow fresh attempts
     reset_log_throttle();
+
+    logger::info(logger::Event::DtEraseSuccess);
 
     return TokenErrorCode::NoErrorCode;
 }
@@ -1060,29 +1129,37 @@ TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token
     return TokenErrorCode::NoErrorCode;
 }
 
-void sync_cpld_debug_token_on_boot()
+void sync_debug_token_features_on_boot()
 {
-    // Only sync if a CPLD AP is present.
-    if constexpr (!HasCpldAp) {
-        return;
-    }
+    if constexpr (HasVrotAp) {
+        constexpr auto Feature = nv::vrot::DebugTokenFeature::CpldUnlock;
 
-    // Clear MCU_UNLOCK_EN bit to secure AP at first
-    auto lock_status = nv::ap_operation::modify_cpld_debug_status(false);
+        for (const auto& ap : nv::vrot::ApList) {
+            auto lock_status = nv::vrot::set_debug_token_feature(ap, Feature, false);
+            if (lock_status == nv::vrot::ApOpErrCode::NotSupported) {
+                continue;
+            }
+            if (lock_status != nv::vrot::ApOpErrCode::Success) {
+                // Best-effort: log lock failure but still try unlock if the cached token
+                // authorizes it.
+                log_feature_update_failure(
+                    FeatureUpdateContext::BootSync, Feature, false, lock_status);
+            }
 
-    if (lock_status != nv::ap_operation::ApOperationErrorCode::Success) {
-        nv::error("Boot sync: Failed to clear MCU_UNLOCK_EN bit: status=%d\n", lock_status);
-    }
+            const bool unlock_enabled = nv::debugtoken::check_debug_token_type_enabled(
+                                            nv::debugtoken::Type::CpldDebug)
+                                         == nv::debugtoken::TokenErrorCode::NoErrorCode
+                                     && nv::debugtoken::is_debug_token_subtype_enabled_cached(
+                                            nv::debugtoken::Type::CpldDebug,
+                                            nv::debugtoken::DebugTokenSubtypeCpldUnlockEn);
 
-    // If CpldDebug token with CpldUnlockEn subtype is installed, set MCU_UNLOCK_EN bit
-    auto dt_status = nv::debugtoken::check_debug_token_subtype_enabled(
-        nv::debugtoken::Type::CpldDebug, nv::debugtoken::DebugTokenSubtypeCpldUnlockEn);
-
-    if (dt_status == nv::debugtoken::TokenErrorCode::NoErrorCode) {
-        auto unlock_status = nv::ap_operation::modify_cpld_debug_status(true);
-
-        if (unlock_status != nv::ap_operation::ApOperationErrorCode::Success) {
-            nv::error("Boot sync: Failed to set MCU_UNLOCK_EN bit: status=%d\n", unlock_status);
+            if (unlock_enabled) {
+                auto unlock_status = nv::vrot::set_debug_token_feature(ap, Feature, true);
+                if (unlock_status != nv::vrot::ApOpErrCode::Success) {
+                    log_feature_update_failure(
+                        FeatureUpdateContext::BootSync, Feature, true, unlock_status);
+                }
+            }
         }
     }
 }

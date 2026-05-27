@@ -23,6 +23,7 @@
 #include "config.h"
 
 #include "nv/i2c/emc1812.h"
+#include "nv/i2c/nct75.h"
 #include "nv/i2c/sensor.h"
 #include "nv/i2c/tmp1075.h"
 #include "nv/i2c/tmp461.h"
@@ -357,6 +358,14 @@ TelemetryValue read_i2c_temp_sensor(uint8_t sensorId)
             return static_cast<TelemetryValue>(temp);
         }
     }
+    else if (id == nv::i2c::SensorModel::Sensor_Nct75) {
+        nv::i2c::Nct75 nct75(i2cPort, i2cAddr);
+        int8_t         temp   = 0;
+        auto           status = nct75.read_temperature(temp);
+        if (status == nv::i2c::I2cStatus::Ok) {
+            return static_cast<TelemetryValue>(temp);
+        }
+    }
     // TODO: Support NCT 70 sensor driver
     else if (id == nv::i2c::SensorModel::Sensor_Nct70) {
         return TelemetryInvalid;
@@ -618,7 +627,17 @@ TelemetryValue getPowerTelemetry(const uint8_t sensorId)
     else {
         switch (sensorId) {
             case Type3PowerSensors::Power_Gpu1:
-            case Type3PowerSensors::Power_Gpu2:
+            case Type3PowerSensors::Power_Gpu2: {
+                auto cacheId = nv::telemetry::getTelemIdFromPowerSensorId(sensorId);
+                if (cacheId == nv::telemetry::TelemId::MaxItem) {
+                    return TelemetryInvalid;
+                }
+                nv::telemetry::Cache& telemetry = nv::telemetry::Cache::inst();
+                (void)telemetry.get_table();
+                // gets corresponding sensor id in Cache
+                telemetry_value = telemetry.get_cache(cacheId);
+                break;
+            }
             case Type3PowerSensors::PowerHsc:
             case Type3PowerSensors::PowerHsc_2:
             case Type3PowerSensors::PowerHsc_3:
@@ -1162,6 +1181,10 @@ void Nsm::on_plat_env_setThermalParameter(const Packet& rx, Packet& tx)
                 nv::i2c::Tmp1075 tmp1075(i2cPort, i2cAddr);
                 tmp1075.set_high_limit(static_cast<int8_t>(request.threshold));
             }
+            else if (id == nv::i2c::SensorModel::Sensor_Nct75) {
+                nv::i2c::Nct75 nct75(i2cPort, i2cAddr);
+                nct75.set_tos_limit(static_cast<int8_t>(request.threshold));
+            }
             else {
                 fill_error_packet(Ccode::ErrorGeneral, rx, tx);
                 return;
@@ -1282,6 +1305,10 @@ void Nsm::on_plat_env_getThermalParameter(const Packet& rx, Packet& tx)
             else if (id == nv::i2c::SensorModel::Sensor_Tmp1075) {
                 nv::i2c::Tmp1075 tmp1075(i2cPort, i2cAddr);
                 tmp1075.get_high_limit(threshold);
+            }
+            else if (id == nv::i2c::SensorModel::Sensor_Nct75) {
+                nv::i2c::Nct75 nct75(i2cPort, i2cAddr);
+                nct75.get_tos_limit(threshold);
             }
             else {
                 fill_error_packet(Ccode::ErrorGeneral, rx, tx);

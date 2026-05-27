@@ -172,8 +172,8 @@ private:
     // ========================================================================
 
     // Core power manager and preset manager (shared data for multicore access)
-    NV_SHARED_BSS static inline PowerManager  power_manager;
-    NV_SHARED_BSS static inline PresetManager preset_manager;
+    static PowerManager  power_manager;
+    static PresetManager preset_manager;
 
     // Timing and performance monitoring
     static inline uint32_t last_callback_time          = 0;

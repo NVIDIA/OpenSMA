@@ -48,7 +48,8 @@ enum class Key : uint32_t
     NpdsDebugTokenSubtypeMcuDebug,   ///< Subtype bitmap for MCU debug token
     NpdsDebugTokenSubtypeCpldDebug,  ///< Subtype bitmap for CPLD debug token
     NpdsDebugTokenFailCount,         ///< Debug token failure count for log throttling
-    NpdsAp0FwStatus,                 ///< AP FW status
+    NpdsAp0FwStatus,                 ///< AP0 FW status
+    NpdsAp1FwStatus,                 ///< AP1 FW status
     NpdsFmcNumericVersion,           ///< FMC numeric version (e.g. 3 for V3, 4 for V4)
     NpdsEnd,
     NpdsInvalid,
@@ -204,6 +205,22 @@ enum class Key : uint32_t
     PdsNcsiMacAddrLow,
     PdsNcsiMacAddrHigh,
     PdsSoCThermBrakeEnabled,
+    // Power smoothing voltage calibration (float32 as uint32_t; coeff_id 0-14)
+    PdsPwrSmoothCalib0,   ///< SOC_ADC_Q_A
+    PdsPwrSmoothCalib1,   ///< SOC_ADC_Q_B
+    PdsPwrSmoothCalib2,   ///< SOC_ADC_Q_C
+    PdsPwrSmoothCalib3,   ///< SOC_ADC_L_M
+    PdsPwrSmoothCalib4,   ///< SOC_ADC_L_C
+    PdsPwrSmoothCalib5,   ///< EDPP_DAC_Q_A
+    PdsPwrSmoothCalib6,   ///< EDPP_DAC_Q_B
+    PdsPwrSmoothCalib7,   ///< EDPP_DAC_Q_C
+    PdsPwrSmoothCalib8,   ///< EDPP_DAC_L_M
+    PdsPwrSmoothCalib9,   ///< EDPP_DAC_L_C
+    PdsPwrSmoothCalib10,  ///< ISINK_DAC_Q_A
+    PdsPwrSmoothCalib11,  ///< ISINK_DAC_Q_B
+    PdsPwrSmoothCalib12,  ///< ISINK_DAC_Q_C
+    PdsPwrSmoothCalib13,  ///< ISINK_DAC_L_M
+    PdsPwrSmoothCalib14,  ///< ISINK_DAC_L_C
     PdsEnd,
     PdsInvalid,
 };

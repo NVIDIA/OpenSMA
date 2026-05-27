@@ -50,11 +50,12 @@ constexpr float    TempOffsetB = 0.0f;      // b coefficient
 constexpr float    TempExpMult = 1000.0f;   // 10^(-R), where R=-3
 constexpr uint16_t TempMask    = 0x0FFF;    // 12-bit data mask
 
-// READ_PIN (0x97) - Input Power coefficients
-constexpr float    PowerSlopeM  = 1701.0f;   // m coefficient
-constexpr float    PowerOffsetB = -4000.0f;  // b coefficient
-constexpr float    PowerExpMult = 1000.0f;   // 10^(-R), where R=-3
-constexpr uint16_t PowerMask    = 0x0FFF;    // 12-bit data mask
+// READ_PIN (0x97) - Input Power coefficients for 1mOhm sense resistor, CL tied to VDD.
+constexpr float    PowerSlope1MOhmClVddM  = 1701.0f;   // m coefficient
+constexpr float    PowerOffset1MOhmClVddB = -4000.0f;  // b coefficient
+constexpr float    PowerExpMult           = 1000.0f;   // 10^(-R), where R=-3
+constexpr uint16_t PowerMask              = 0x0FFF;    // 12-bit data mask
+
 }  // namespace
 
 Lm5066i::Lm5066i(Port port, uint8_t address) : PowerSensor(port, address)
@@ -64,5 +65,6 @@ Lm5066i::Lm5066i(Port port, uint8_t address) : PowerSensor(port, address)
     _vin_coeff         = {VinSlopeM, VinOffsetB, VinExpMult, VinMask};
     _vout_coeff        = {VoutSlopeM, VoutOffsetB, VoutExpMult, VoutMask};
     _temp_coeff        = {TempSlopeM, TempOffsetB, TempExpMult, TempMask};
-    _power_input_coeff = {PowerSlopeM, PowerOffsetB, PowerExpMult, PowerMask};
+    _power_input_coeff = {
+        PowerSlope1MOhmClVddM, PowerOffset1MOhmClVddB, PowerExpMult, PowerMask};
 }

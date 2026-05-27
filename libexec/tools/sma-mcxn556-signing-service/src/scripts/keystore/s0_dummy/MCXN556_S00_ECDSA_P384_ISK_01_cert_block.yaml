@@ -1,0 +1,40 @@
+# ===========================  ahab Configuration template for mcxn556s, Revision: latest.  ============================
+
+# ======================================================================================================================
+#                                                 == General Options ==                                                 
+# ======================================================================================================================
+# -------------------------------------===== The chip family name [Required] =====--------------------------------------
+# Description: NXP chip family identifier.
+family: mcxn556s
+# -----------------------------------------===== MCU revision [Optional] =====------------------------------------------
+# Description: Revision of silicon. The 'latest' name, means most current revision.
+# Possible options: <a0, latest>
+revision: latest
+# ======================================================================================================================
+#                                   == Configuration of AHAB Container Certificate ==                                   
+#                                           Certificate container definition."                                          
+# ======================================================================================================================
+# ------------------------------------===== Certificate permissions [Required] =====------------------------------------
+# Description: Permissions used to indicate what a certificate can be used for
+permissions:
+  - container
+# ----------------------------------------===== Permission data [Optional] =====----------------------------------------
+# Description: (Optional) Complementary information for debug auth feature 96-bits
+permission_data: '0x00001111aaaabbbb22223333'
+# ------------------------------------------===== Device UUID [Optional] =====------------------------------------------
+# Description: Optional 128-bit IETF RFC4122 compliant non-sequential Universally Unique Identifier (UUID)
+uuid: '00000000000000000000000000000000'
+# -----------------------------------------===== Fuse version [Optional] =====------------------------------------------
+# Description: The value must be equal or greater than the version stored in fuses to allow loading this container.
+fuse_version: 1
+# -----------------------------------===== Certificate public key 0 [Required] =====------------------------------------
+# Description: Path to Public key 0 file.
+public_key_0: MCXN556_S00_ECDSA_P384_ISK_01_pub.pem
+# -------------------------------------------===== Signer 0 [Required] =====--------------------------------------------
+# Description: Signature provider configuration in format 'type=<identifier>;<key1>=<value1>;<key2>=<value2>' or the
+# private key 0 used for signing the certificate container.
+signer_0: type=file;file_path=MCXN556_S00_ECDSA_P384_ROTK_00_pvt.pem
+# ---------------------------------------===== Hash Algorithm 0 [Optional] =====----------------------------------------
+# Description: Hash algorithm used for SRK records. If not specified, default algorithm based on key type will be used.
+# Possible options: <default, sha256, sha384, sha512, sha3_256, sha3_384, sha3_512, shake_128_256, shake_256_512, sm3>
+hash_algorithm_0: default

@@ -70,6 +70,12 @@ constexpr bool is_target_client(nv::mctp::Client client)
     return false;
 }
 
+constexpr bool is_retryable(I2cStatus status)
+{
+    return status == I2cStatus::Busy || status == I2cStatus::Nak || status == I2cStatus::ArbLost
+        || status == I2cStatus::FifoError;
+}
+
 }  // namespace
 
 void Task::make(Config config)
@@ -459,7 +465,7 @@ void Task::start()
             case RequestType::MctpTx                : handle_tx(request.data, request.additional_info); break;
             case RequestType::UpdateSensor          : handle_update_sensor(request.data); break;
             case RequestType::MctpUpdateRoutingTable: handle_update_routing_table(); break;
-            case RequestType::MctpRxError           : handle_error(Error::TargetRxError); break;
+            case RequestType::MctpRxError           : handle_error(I2cStatus::TargetRxError); break;
             case RequestType::I2cRequest            : handle_i2c_request(request.data); break;
             case RequestType::I2cResponse           : handle_i2c_response(request.data); break;
             case RequestType::I2cRecovery           : handle_i2c_recovery(request.data); break;
@@ -742,32 +748,55 @@ void Task::handle_update_routing_table()
 I2cStatus Task::wait_for_i2c_completion()
 {
     using namespace std::chrono_literals;
-    auto event = _event.wait(CtrlWaitEvents, true, false, 500ms);
+    auto event = _event.wait(CtrlWaitEvents, true, false, 1000ms);
 
     switch (event.value()) {
-        case Task::Event::CtrlDone   : return I2cStatus::Ok;
-        case Task::Event::CtrlBusBusy: return I2cStatus::Busy;
-        case Task::Event::CtrlNak    : return I2cStatus::Nak;
-        case Task::Event::CtrlArbLost: return I2cStatus::ArbLost;
-        default                      : return I2cStatus::Error;
+        case Task::Event::CtrlDone         : return I2cStatus::Ok;
+        case Task::Event::CtrlBusBusy      : return I2cStatus::Busy;
+        case Task::Event::CtrlNak          : return I2cStatus::Nak;
+        case Task::Event::CtrlArbLost      : return I2cStatus::ArbLost;
+        case Task::Event::CtrlFifoError    : return I2cStatus::FifoError;
+        case Task::Event::CtrlBitError     : return I2cStatus::BitError;
+        case Task::Event::CtrlPinLowTimeout: return I2cStatus::PinLowTimeout;
+        case Task::Event::CtrlDmaError     : return I2cStatus::DmaError;
+        case Task::Event::CtrlTimeout      : return I2cStatus::Timeout;
+        case Task::Event::CtrlNoTransfer   : return I2cStatus::NoTransfer;
+        default                            : return I2cStatus::Error;
     }
     return I2cStatus::Error;
 }
 
-I2cStatus Task::i2c_read_recvlen_wrapper(uint8_t            address,
+I2cStatus Task::smbus_block_read_wrapper(uint8_t            address,
+                                         std::span<uint8_t> write_buffer,
                                          std::span<uint8_t> read_buffer,
                                          I2cFlags           flags,
                                          size_t&            read_len)
 {
-    // Getting FIFO error and immediate STOP on the data portion
-    // WAR: Fetch the max for SMBus Block Read (33 bytes) and trim the response (CP2112-like)
-    if (read_buffer.size() < MaxSMBusBlockReadLength) {
+    // WAR: Fetch the max for SMBus Block Read (33 bytes) until NACK
+    // Returns the actual length read in read_len for the caller to trim
+    const size_t extra_read_len = (flags & nv::i2c::I2cFlags::SmbusPec) ? 1U : 0U;
+    const size_t smbus_read_len = MaxSMBusBlockReadLength + extra_read_len;
+    if (read_buffer.size() < smbus_read_len) {
         nv::error("read buffer size is too small for SMBus Block Read\n");
         return I2cStatus::Error;
     }
 
-    auto item   = read_buffer.subspan(0, MaxSMBusBlockReadLength);
-    auto status = _driver.i2c_read(address, item, (flags & ~nv::i2c::I2cFlags::RecvLen));
+    if (write_buffer.size() > 0) {
+        auto status = _driver.i2c_write(address, write_buffer, nv::i2c::I2cFlags::NoStop);
+        if (status != I2cStatus::Ok) {
+            return status;
+        }
+
+        status = wait_for_i2c_completion();
+        _event.clear(CtrlWaitEvents);
+        if (status != I2cStatus::Ok) {
+            return status;
+        }
+    }
+
+    auto item   = read_buffer.subspan(0, smbus_read_len);
+    auto status = _driver.i2c_read(
+        address, item, (flags & ~(nv::i2c::I2cFlags::RecvLen | nv::i2c::I2cFlags::SmbusPec)));
     if (status != I2cStatus::Ok) {
         return status;
     }
@@ -779,7 +808,12 @@ I2cStatus Task::i2c_read_recvlen_wrapper(uint8_t            address,
     }
 
     if (status == I2cStatus::Ok) {
-        read_len = read_buffer[0] + 1;
+        read_len = read_buffer[0] + 1 + extra_read_len;
+    }
+
+    if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
+        && _repeated_start_timer.id() != ipc::TimerId::End) {
+        _repeated_start_timer.reset();
     }
 
     return status;
@@ -808,7 +842,8 @@ I2cStatus Task::i2c_cmd(uint8_t            address,
         _event.clear(CtrlWaitEvents);
 
         if (flags & nv::i2c::I2cFlags::RecvLen) {
-            return i2c_read_recvlen_wrapper(address, read_buffer, flags, read_len);
+            return smbus_block_read_wrapper(
+                address, write_buffer, read_buffer, flags, read_len);
         }
 
         //  If both write and read are requested, use write-read operation
@@ -973,6 +1008,10 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
     // Normal I2C transaction
     auto result = i2c_cmd(
         request.address, write_buffer_span, read_buffer_span, request.flags, ReadLength);
+
+    if (result != I2cStatus::Ok) {
+        handle_error(result);
+    }
 
     std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
 
@@ -1354,64 +1393,52 @@ bool Task::transmit(const I2cPacket& packet)
     /// add 3 byte for Address, CMD, count fields and add 1 byte for "PEC" field
     auto size   = packet.i2c_hdr.byte_cnt + 4U;
     auto buffer = std::span<uint8_t>(std::bit_cast<uint8_t*>(&packet), size);
-    auto error  = Error::Ok;
+    auto status = I2cStatus::Ok;
     _event.clear(CtrlWaitEvents);
     for (auto i = 0; i < Retry; i++) {
         if (!_driver.write(buffer)) {
             set_event(Task::Event::CtrlBusBusy);
         }
-        auto event = _event.wait(CtrlWaitEvents, true, false, 500ms);
-        if (event.value() & Task::Event::CtrlDone) {
-            error = Error::Ok;
+        // TODO driver hung, should we reset it?
+        status = wait_for_i2c_completion();
+        if (status == I2cStatus::Ok || !is_retryable(status)) {
             break;
         }
-        else if (event.value() & Task::Event::CtrlBusBusy) {
-            error = Error::CtrlBusBusy;
-            delay(10ms);
-        }
-        else if (event.value() & Task::Event::CtrlNak) {
-            error = Error::CtrlNak;
-            delay(10ms);
-        }
-        else if (event.value() & Task::Event::CtrlArbLost) {
-            error = Error::CtrlArbLost;
-            delay(10ms);
-        }
-        else if (event.value() & Task::Event::CtrlError) {
-            error = Error::CtrlError;
-            break;
-        }
-        else {
-            // TODO driver hung, should we reset it?
-            error = Error::CtrlTimeout;
-            break;
-        }
+        delay(10ms);
     }
-    if (error != Error::Ok) {
-        handle_error(error);
+    if (status != I2cStatus::Ok) {
+        handle_error(status);
     }
     perf_mon::Driver::log_pkt_meas(
-        0, static_cast<uint32_t>(buffer.size() & UINT8_MAX), false, error != Error::Ok);
+        0, static_cast<uint32_t>(buffer.size() & UINT8_MAX), false, status != I2cStatus::Ok);
 
-    return (error == Error::Ok);
+    return status == I2cStatus::Ok;
 }
 
-void Task::handle_error(Error reason)
+void Task::handle_error(I2cStatus status)
 {
+    if (status == I2cStatus::Ok) {
+        return;
+    }
+
     if constexpr (nv::i2c::EnableI2cPeripheralRecovery) {
-        if (reason == Error::CtrlBusBusy || reason == Error::CtrlArbLost) {
+        if (status == I2cStatus::Busy || status == I2cStatus::ArbLost) {
             _driver.peripheral_recovery(is_target_client(_client));
         }
+    }
+
+    if (status == I2cStatus::PinLowTimeout) {
+        nv::i2c::bus_recovery(_port);
     }
 
     const uint8_t ByteMask = 0xFF;
     // NOLINTNEXTLINE(misc-const-correctness)
     nv::logger::EventData data{static_cast<uint8_t>(static_cast<uint16_t>(_client) & ByteMask),
                                static_cast<uint8_t>(static_cast<uint16_t>(_client) >> 8U),
-                               static_cast<uint8_t>(reason)};
+                               static_cast<uint8_t>(status)};
     nv::logger::error(nv::logger::Event::I2CError, data);
 
-    nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(reason));
+    nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
 }
 
 bool Task::to_i2c(ipchandler::Id    src_id,

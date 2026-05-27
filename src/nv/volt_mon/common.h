@@ -22,6 +22,8 @@
 #include <array>
 #include <cstddef>
 
+#include "ntc_table.h"
+
 namespace nv::volt_mon {
 
 constexpr uint16_t AdcVolVref        = 3317;  // ADC reference voltage in mV
@@ -48,6 +50,10 @@ constexpr uint16_t MaxVol = AdcVolVref;
 constexpr uint16_t DefaultMinLeak   = 165;   // 0.165V
 constexpr uint16_t DefaultMaxLeak   = 1600;  // 1.600V
 constexpr uint16_t DefaultMaxNormal = 1850;  // 1.850V
+
+// Busbar temperature default trip point (NTC). NSM SetThermalParameter can
+// override this at runtime via BusbarTemp::set_thresholds().
+constexpr uint16_t DefaultBusbarHighTempAdc = ntc_temp_to_adc_value(105);
 
 using SensorId                     = uint8_t;
 constexpr SensorId SensorIdNotUsed = ~0;
@@ -224,6 +230,18 @@ enum class Sensor : uint8_t
     Invalid
 };
 
+constexpr std::array<uint8_t, 8> make_state_transition_log_data(uint8_t sensorIdx,
+                                                                State   lastState,
+                                                                State   currentState,
+                                                                Reading adcReading)
+{
+    return {sensorIdx,
+            static_cast<uint8_t>(lastState),
+            static_cast<uint8_t>(currentState),
+            static_cast<uint8_t>(adcReading & 0xFF),
+            static_cast<uint8_t>((adcReading >> 8) & 0xFF)};
+}
+
 /******************************************************************************************
  *                      Voltage Monitor Base Structure (Common ADC Fields)                *
  ******************************************************************************************/
@@ -369,8 +387,9 @@ enum class NsmEventType : uint8_t
 };
 
 // Scanning mode: Trigger 0 → CMD 1 (leak detect/busbar) → FIFO 0
-constexpr AdcTriggerSrc AdcCmdTriggerSrc     = AdcTriggerSrc::_0;
-constexpr AdcCommand    AdcCmdScanAllSensors = AdcCommand::_1;
+constexpr AdcTriggerSrc AdcCmdTriggerSrc      = AdcTriggerSrc::_0;
+constexpr AdcTriggerSrc AdcSamplingTriggerSrc = AdcTriggerSrc::_0;
+constexpr AdcCommand    AdcCmdScanAllSensors  = AdcCommand::_1;
 
 // Temperature sensor: Independent trigger configuration
 // - Trigger 1 → CMD 15 → END → FIFO 1 (on-demand, does not participate in cmd chain)

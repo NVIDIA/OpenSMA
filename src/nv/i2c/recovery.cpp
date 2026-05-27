@@ -18,6 +18,7 @@
 
 #include "recovery.h"
 #include "sys/mcxn236/sys/i2c/recovery.h"
+#include "nv/logger/log.h"
 
 namespace nv::i2c {
 
@@ -28,6 +29,8 @@ void quick_recovery(nv::i2c::Port port, uint8_t address)
 
 void bus_recovery(nv::i2c::Port port)
 {
-    sys::i2c::bus_recovery(port);
+    const auto status = sys::i2c::bus_recovery(port);
+    nv::logger::info(nv::logger::Event::I2CRecovery,
+                     {static_cast<uint8_t>(port), static_cast<uint8_t>(status)});
 }
 }  // namespace nv::i2c

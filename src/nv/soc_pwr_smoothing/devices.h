@@ -30,6 +30,14 @@
 
 namespace nv::soc_pwr_smoothing {
 
+enum class VirtualGpioSignal : uint8_t
+{
+    McuThermWarn,
+    SocPwrBrake,
+};
+
+void notify_virtual_gpio(VirtualGpioSignal signal, bool asserted) __attribute__((weak));
+
 template<uint32_t port, uint32_t pin, bool active_low = true>
 class GpioOutDev : public mpf::FuncBlock
 {
@@ -244,6 +252,28 @@ protected:
         // Convert from SFXP22_10 to SFXP32_0 (integer), then to uint32_t
         return static_cast<uint32_t>(sfxp22_10_to_sfxp32_0(dac_raw_fp));
     }
+};
+
+template<VirtualGpioSignal signal>
+class VirtualGpioDev : public mpf::FuncBlock
+{
+public:
+    struct Ports
+    {
+        mpf::port::In<bool> assert;  // True when asserted, false when deasserted
+    };
+
+    void evaluate(Ports ports)
+    {
+        if (ports.assert != _cached_state) {
+            if (notify_virtual_gpio != nullptr) {
+                notify_virtual_gpio(signal, _cached_state);
+            }
+        }
+    }
+
+private:
+    bool _cached_state{false};
 };
 
 }  // namespace nv::soc_pwr_smoothing

@@ -438,6 +438,8 @@ enum class NsmTypeFFCmdCode : uint8_t
                                            // before read
     GetPowerSmoothRawReadback = 0xA8,      // Last raw SoC ADC or EDPP/ISINK DAC code (see
                                            // PwrSmoothRawReadbackId)
+    SetSocCalibCoefficient = 0xA9,         // Write one voltage-calib float to PDS
+    GetSocCalibCoefficient = 0xAA,         // Read one voltage-calib float from PDS
 };
 
 enum class DeviceModeIndex : uint32_t

@@ -54,7 +54,7 @@ public:
 
     constexpr static auto EndpointStatusChangePeriod = std::chrono::milliseconds(
         nv::ipc::EndpointStatusChangePeriodMs);
-    constexpr static auto    EnumeratePeriod = 1s;
+    constexpr static auto    EnumeratePeriod = 3500ms;
     constexpr static uint8_t EndpointCount   = ipc::DownStreamNum;
 
     using Buffer               = std::array<uint8_t, Constants::BufferSize>;

@@ -1,0 +1,56 @@
+{
+    "Configs": [
+        {
+            "JobType": "SMA_MCXN556_DEBUG_S0",
+            "KeySets": [
+                {
+                    "KeyPrefix": "MCXN556_S00_ECDSA_P384",
+                    "KeyIndex": 0,
+                    "CustMkSk": "MCXN556_S00_AES_256_CUST_MK_SK",
+                    "Family": "mcxn556s"
+                }
+            ]
+        },
+        {
+            "JobType": "SMA_MCXN556_PROD_S0",
+            "KeySets": [
+                {
+                    "KeyPrefix": "MCXN556_S00_ECDSA_P384",
+                    "KeyIndex": 1,
+                    "CustMkSk": "MCXN556_S00_AES_256_CUST_MK_SK",
+                    "Family": "mcxn556s"
+                }
+            ]
+        },
+        {
+            "JobType": "SMA_MCXN556_PQC_DEBUG_S0",
+            "KeySets": [
+                {
+                    "KeyPrefix": "MCXN556_S00_ECDSA_P384",
+                    "PqcKeyPrefix": "MCXN556_S00_MLDSA_87",
+                    "KeyIndex": 0,
+                    "CustMkSk": "MCXN556_S00_AES_256_CUST_MK_SK",
+                    "Family": "mcxn556s"
+                }
+            ]
+        },
+        {
+            "JobType": "SMA_MCXN556_PQC_PROD_S0",
+            "KeySets": [
+                {
+                    "KeyPrefix": "MCXN556_S00_ECDSA_P384",
+                    "PqcKeyPrefix": "MCXN556_S00_MLDSA_87",
+                    "KeyIndex": 1,
+                    "CustMkSk": "MCXN556_S00_AES_256_CUST_MK_SK",
+                    "Family": "mcxn556s"
+                }
+            ]
+        }
+    ],
+    "Environment": {
+        "Dummy": {
+            "EnvType": "dummy",
+            "KeyDir": "keystore/s0_dummy"
+        }
+    }
+}

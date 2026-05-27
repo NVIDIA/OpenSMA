@@ -331,18 +331,20 @@ void LeakDetect::update_virtual_gpio(uint8_t     sensorId,
     // update internal virtual gpio state
     vrGpioState = state;
 
-    // update iox virtual gpio values
-    auto& _sensor = sensor.at(sensorId);
+    if constexpr (nv::ipc::EnableIoxEmulation) {
+        // update iox virtual gpio values
+        auto& _sensor = sensor.at(sensorId);
 
-    // LeakDetectSensor uses 2 pins for 2-bit state encoding
-    // Pin[0] = bit 0, Pin[1] = bit 1
-    const std::array<uint8_t, 2> ioxPinVals = get_alert_pin_vals(state);
+        // LeakDetectSensor uses 2 pins for 2-bit state encoding
+        // Pin[0] = bit 0, Pin[1] = bit 1
+        const std::array<uint8_t, 2> ioxPinVals = get_alert_pin_vals(state);
 
-    nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
-                                       nv::iox::Operation::Write,
-                                       _sensor.ioxPin,
-                                       ioxPinVals,
-                                       trigger_nsm_event);
+        nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
+                                           nv::iox::Operation::Write,
+                                           _sensor.ioxPin,
+                                           ioxPinVals,
+                                           trigger_nsm_event);
+    }
 }
 
 void LeakDetect::update_hardware_gpio(HwGpioState level)

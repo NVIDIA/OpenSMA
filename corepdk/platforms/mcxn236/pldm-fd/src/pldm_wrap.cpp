@@ -90,6 +90,9 @@ namespace {
 
 constexpr auto ApComponentIdList = make_component_id_list(nv::vrot::ApList);
 
+// Thin lookup helper: keeps `ApList` argument out of every call site and gives
+// the AP-branch helpers a single, readable name. Pure delegation to vrot's
+// constexpr finder — no caching, no per-AP-type dispatch.
 constexpr std::optional<nv::vrot::ApInfo> find_ap_info(NvU16 component_id)
 {
     return nv::vrot::find_ap_by_component_id(component_id, nv::vrot::ApList);
@@ -221,9 +224,32 @@ void pldm_write(NvU16                                          comp_id,
                 }
             }
             // Only write the actual valid data size, not the entire buffer
-            // to avoid writing residual data from previous transfers
+            // to avoid writing residual data from previous transfers.
             const std::span<const uint8_t> valid_data(buffer.data(), size);
-            auto status = nv::vrot::fw_update_write(*ap_info, offset, valid_data);
+
+            // PLDM streams the AP image as a single linear sequence starting
+            // at offset 0. The AP firmware layout puts the first
+            // sizeof(ApFwMetadata) bytes in the metadata region and the rest
+            // in the firmware-data region. Pick the matching region writer
+            // per chunk, splitting across the boundary if a chunk straddles.
+            constexpr auto MetadataSize = static_cast<NvU32>(
+                sizeof(nv::fw_parser::ap::ApFwMetadata));
+            auto cur_data   = valid_data;
+            auto cur_offset = offset;
+            auto status     = nv::vrot::ApOpErrCode::Success;
+            if (cur_offset < MetadataSize) {
+                const auto bytes_to_boundary = MetadataSize - cur_offset;
+                const auto split             = std::min(static_cast<NvU32>(cur_data.size()),
+                                            bytes_to_boundary);
+                status = nv::vrot::write_metadata(*ap_info, cur_offset, cur_data.first(split));
+                if (status == nv::vrot::ApOpErrCode::Success && split < cur_data.size()) {
+                    cur_data = cur_data.subspan(split);
+                    status   = nv::vrot::write_fw_data(*ap_info, 0, cur_data);
+                }
+            }
+            else {
+                status = nv::vrot::write_fw_data(*ap_info, cur_offset - MetadataSize, cur_data);
+            }
 
             if (status != nv::vrot::ApOpErrCode::Success) {
                 nv::info("ap fw write fail %d\n", status);
@@ -298,26 +324,38 @@ void pldm_update_pds(NvU16 component_id, NvU8 status, NvU16& err)
         Driver::mctp_send_cmd(Driver::CmdCode::RotStateInfoChange);
     }
     else {
-        if (const auto ap = find_ap_info(component_id)) {
-            flash::Data update_state{};
-            if (status == static_cast<flash::Data>(PldmApFwStatus::Update_In_Progress)) {
-                update_state = static_cast<flash::Data>(
-                    nv::fw_parser::ap::ApFwStatus::Update_In_Progress);
-            }
-            else if (status == static_cast<flash::Data>(PldmApFwStatus::Update_Complete)) {
-                update_state = static_cast<flash::Data>(
-                    nv::fw_parser::ap::ApFwStatus::Update_Complete);
-            }
-            else {
-                update_state = static_cast<flash::Data>(
-                    nv::fw_parser::ap::ApFwStatus::Update_Complete_But_Not_Activate);
-            }
+        if constexpr (nv::vrot::ApList.size() > 0) {
+            if (const auto ap = find_ap_info(component_id)) {
+                flash::Data update_state{};
+                if (status == static_cast<flash::Data>(PldmApFwStatus::Update_In_Progress)) {
+                    update_state = static_cast<flash::Data>(
+                        nv::fw_parser::ap::ApFwStatus::Update_In_Progress);
+                }
+                else if (status == static_cast<flash::Data>(PldmApFwStatus::Update_Complete)) {
+                    update_state = static_cast<flash::Data>(
+                        nv::fw_parser::ap::ApFwStatus::Update_Complete);
+                }
+                else {
+                    update_state = static_cast<flash::Data>(
+                        nv::fw_parser::ap::ApFwStatus::Update_Complete_But_Not_Activate);
+                }
 
-            auto flash_status = flash::Flash::set_data(flash::Key::NpdsAp0FwStatus,
-                                                       update_state);
-            if (flash_status != flash::Status::Ok) {
-                err = NV_PLDM_RET_BOOTFSM_LEDGER_PROGRAM_FAIL;
-                return;
+                auto status_key = flash::Key::NpdsInvalid;
+                switch (ap->id) {
+                    case nv::vrot::ApId::AP0: status_key = flash::Key::NpdsAp0FwStatus; break;
+                    case nv::vrot::ApId::AP1: status_key = flash::Key::NpdsAp1FwStatus; break;
+                    default                 : break;
+                }
+                if (status_key == flash::Key::NpdsInvalid) {
+                    err = NV_PLDM_RET_BOOTFSM_LEDGER_PROGRAM_FAIL;
+                    return;
+                }
+
+                auto flash_status = flash::Flash::set_data(status_key, update_state);
+                if (flash_status != flash::Status::Ok) {
+                    err = NV_PLDM_RET_BOOTFSM_LEDGER_PROGRAM_FAIL;
+                    return;
+                }
             }
         }
     }
@@ -479,14 +517,20 @@ void get_fw_info(NvU16  input_component_id,
         pldm_get_update_state_pds(fw_state);
     }
     else {
-        if (const auto ap = find_ap_info(input_component_id)) {
-            is_valid            = true;
-            output_component_id = ap->component_id;
-            fw_size             = ap->fw_size;
-            fw_offset           = ap->fw_offset;
-            ap_sku_id           = ap->ap_sku_id;
-            build_mode          = ap->build_mode;
-            pldm_get_update_state_pds(fw_state);
+        // Compile-time elide on empty ApList projects (no AP inventory to
+        // report).
+        if constexpr (nv::vrot::ApList.size() > 0) {
+            if (const auto ap = find_ap_info(input_component_id)) {
+                is_valid            = true;
+                output_component_id = ap->component_id;
+                fw_size             = ap->fw_size;
+                fw_offset           = ap->fw_offset;
+                ap_sku_id           = ap->ap_sku_id;
+                build_mode          = ap->build_mode;
+                // PDS update state is a single global flash key shared with
+                // the MCU branch (see pldm_get_update_state_pds above).
+                pldm_get_update_state_pds(fw_state);
+            }
         }
     }
 }
@@ -596,39 +640,53 @@ void parse_header(NvU16     component_id,
         }
     }
     else {
-        // check if comp id valid
+        // Compile-time elide on empty ApList projects (no AP to parse for).
+        if constexpr (nv::vrot::ApList.size() == 0) {
+            return;
+        }
         if (!find_ap_info(component_id)) {
             return;
         }
-        // fw version: 4 bytes
+        // AP firmware images all start with an `nv::fw_parser::ap::ApFwMetadata`,
+        // so the offsets of the PLDM-visible fields come straight from the struct
+        // — no per-AP magic numbers, no per-AP parser. Field bytes are copied via
+        // memcpy from the streaming chunk; on a little-endian target this matches
+        // the on-flash layout for both the packed `ApFwVersion` and the `uint32_t`
+        // SKU id.
+        using nv::fw_parser::ap::ApFwMetadata;
+        using nv::fw_parser::ap::ApFwVersion;
+        constexpr uint32_t ApFwVersionOffset = offsetof(ApFwMetadata, tbs_data.fw_version);
+        constexpr uint32_t ApSkuIdOffset     = offsetof(ApFwMetadata, tbs_data.ap_sku_id);
+
         if (is_in_range(cur_fw_offset,
                         transfer_size,
-                        NV_PLDM_CPLD_FW_VERSION_OFFSET,
-                        NV_PLDM_CPLD_FW_VERSION_OFFSET + 3)) {
-            metadata->major = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 3 - cur_fw_offset];
-            metadata->minor = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 2 - cur_fw_offset];
-            metadata->patch = data[NV_PLDM_CPLD_FW_VERSION_OFFSET + 1 - cur_fw_offset];
-            metadata->build = data[NV_PLDM_CPLD_FW_VERSION_OFFSET - cur_fw_offset];
-        }
-        // sku id: 4 bytes
-        if (is_in_range(cur_fw_offset,
-                        transfer_size,
-                        NV_PLDM_CPLD_SKU_ID_OFFSET,
-                        NV_PLDM_CPLD_SKU_ID_OFFSET + 3)) {
-            is_recv_all_metadata = 1;
-            metadata->ap_sku_id  = (NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET - cur_fw_offset]
-                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 1 - cur_fw_offset]
-                                   << OffsetFirstByte)
-                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 2 - cur_fw_offset]
-                                   << OffsetSecondByte)
-                                | ((NvU32)data[NV_PLDM_CPLD_SKU_ID_OFFSET + 3 - cur_fw_offset]
-                                   << OffsetThirdByte);
+                        ApFwVersionOffset,
+                        ApFwVersionOffset + sizeof(ApFwVersion) - 1)) {
+            ApFwVersion v{};
+            std::memcpy(&v, data + (ApFwVersionOffset - cur_fw_offset), sizeof(v));
+            metadata->major = v.major;
+            metadata->minor = v.minor;
+            metadata->patch = v.patch;
+            metadata->build = v.build;
         }
 
-        // check offset of all metadata when receive first download chunk
+        if (is_in_range(cur_fw_offset,
+                        transfer_size,
+                        ApSkuIdOffset,
+                        ApSkuIdOffset + sizeof(uint32_t) - 1)) {
+            uint32_t sku{};
+            std::memcpy(&sku, data + (ApSkuIdOffset - cur_fw_offset), sizeof(sku));
+            metadata->ap_sku_id = sku;
+            // ap_sku_id is the highest-offset AP-metadata field PLDM-FD cares
+            // about; once it has arrived, the FD can stop walking the metadata
+            // region.
+            is_recv_all_metadata = 1;
+        }
+
         if (cur_fw_offset == 0) {
-            check_offset_within_transfer_size(NV_PLDM_CPLD_FW_VERSION_OFFSET, 4, transfer_size);
-            check_offset_within_transfer_size(NV_PLDM_CPLD_SKU_ID_OFFSET, 4, transfer_size);
+            check_offset_within_transfer_size(
+                ApFwVersionOffset, sizeof(ApFwVersion), transfer_size);
+            check_offset_within_transfer_size(ApSkuIdOffset, sizeof(uint32_t), transfer_size);
         }
     }
 }
@@ -680,15 +738,15 @@ void request_authentication(NvU16 comp_id, NvU32& auth_request_id)
         }
     }
     else {
-        auto ap = find_ap_info(comp_id);
-        if (!ap) {
-            nv::info("request_authentication: no AP info for component id 0x%x\n", comp_id);
-            return;
-        }
-        auto status = nv::spdm::crypto::authenticate_ap_firmware(
-            nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-        if (status != nv::spdm::crypto::CryptoStatus::Success) {
-            // need error handling
+        if constexpr (nv::vrot::ApList.size() > 0) {
+            auto rc = nv::vrot::ap::request_authentication(comp_id);
+            if (rc == nv::vrot::ApOpErrCode::UnknownComponent) {
+                nv::info("request_authentication: no AP info for component id 0x%x\n", comp_id);
+                return;
+            }
+            if (rc != nv::vrot::ApOpErrCode::Success) {
+                // need error handling
+            }
         }
     }
 }
@@ -722,6 +780,13 @@ void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc)
 
 void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc)
 {
+    // Whole function is dead code on empty-ApList projects (no AP can ever
+    // send an authentication result to handle). Report ERROR for safety so
+    // any stray call from the FD doesn't silently leave verify_cc unset.
+    if constexpr (nv::vrot::ApList.size() == 0) {
+        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
+        return;
+    }
     auto ap = find_ap_info(comp_id);
     if (!ap) {
         nv::info("get_ap_authentication_result: no AP info for component id 0x%x\n", comp_id);
@@ -729,9 +794,12 @@ void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& ver
         return;
     }
     nv::logger::info(nv::logger::Event::PldmAuthInactiveCryptoStatus, {result});
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        nv::vrot::fw_update_callback(ap.value(),
-                                     static_cast<spdm::crypto::CryptoStatus>(result));
+    auto rc = nv::vrot::ap::fw_update_callback(comp_id,
+                                               static_cast<spdm::crypto::CryptoStatus>(result));
+    if (rc == nv::vrot::ApOpErrCode::UnknownComponent) {
+        nv::info("get_ap_authentication_result: no AP info for component id 0x%x\n", comp_id);
+        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
+        return;
     }
     switch (result) {
         case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::Success):
@@ -775,9 +843,8 @@ NvU8 get_write_fail_retry(NvU16 comp_id)
         // if write fail at offset within 8KB, will not re-erase
         return 0;
     }
-    if (find_ap_info(comp_id)) {
-        // cpld do not support retry since it only support chip erase
-        return 0;
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        return nv::vrot::ap::get_write_fail_retry(comp_id);
     }
     return 0;
 }

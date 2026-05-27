@@ -1,0 +1,2 @@
+ruamel.yaml==0.18.14
+spsdk==2.3.0

@@ -87,19 +87,36 @@
 #endif
 
 /*
- * Totals = MCTP + HID + LSTP + ECM
+ * CDC-ACM VCOM (when USB_CONFIG_UART_BRIDGE defined)
+ * CDC-ACM requires 2 interfaces (CIC control + DIC data) and 3 endpoints
+ * (CIC interrupt IN on EP4 + DIC bulk IN/OUT on EP5)
+ */
+#if ((defined(USB_CONFIG_UART_BRIDGE)) && (USB_CONFIG_UART_BRIDGE > 0U))                       \
+    || ((defined(USB_CONFIG_GPIO_MONITOR)) && (USB_CONFIG_GPIO_MONITOR > 0U))
+#define SYS_USB_VCOM_CLASS     (1U)
+#define SYS_USB_VCOM_INTERFACE (2U)
+#define SYS_USB_VCOM_ENDPOINTS (3U)
+#else
+#define SYS_USB_VCOM_CLASS     (0U)
+#define SYS_USB_VCOM_INTERFACE (0U)
+#define SYS_USB_VCOM_ENDPOINTS (0U)
+#endif
+
+/*
+ * Totals = MCTP + HID + LSTP + ECM + VCOM
  */
 #define SYS_USB_COMPOSITE_CLASS_COUNT                                                          \
-    (SYS_USB_MCTP_CLASS + SYS_USB_HID_CLASS + SYS_USB_LSTP_CLASS + SYS_USB_ECM_CLASS)
+    (SYS_USB_MCTP_CLASS + SYS_USB_HID_CLASS + SYS_USB_LSTP_CLASS + SYS_USB_ECM_CLASS           \
+     + SYS_USB_VCOM_CLASS)
 #define SYS_USB_COMPOSITE_INTERFACE_COUNT                                                      \
     (SYS_USB_MCTP_INTERFACE + SYS_USB_HID_INTERFACE + SYS_USB_LSTP_INTERFACE                   \
-     + SYS_USB_ECM_INTERFACE)
+     + SYS_USB_ECM_INTERFACE + SYS_USB_VCOM_INTERFACE)
 /* USB_DEVICE_CONFIG_ENDPOINTS must be > highest EP number used by EHCI driver.
  * MCTP alone uses EP1 IN + EP2 OUT, so the floor is 3 (EP0, EP1, EP2). */
 #ifndef USB_DEVICE_CONFIG_ENDPOINTS
 #define SYS_USB_ENDPOINTS_SUM                                                                  \
     (SYS_USB_MCTP_ENDPOINTS + SYS_USB_HID_ENDPOINTS + SYS_USB_LSTP_ENDPOINTS                   \
-     + SYS_USB_ECM_ENDPOINTS)
+     + SYS_USB_ECM_ENDPOINTS + SYS_USB_VCOM_ENDPOINTS)
 #if SYS_USB_ENDPOINTS_SUM < 3
 #define USB_DEVICE_CONFIG_ENDPOINTS (3U)
 #else

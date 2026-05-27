@@ -725,9 +725,11 @@ bool generate_l5_cert()
     }
 
     nv::spdm::certlib::CertArray l4_cert{};
-    auto                         l4_cert_span = std::span<uint8_t>(l4_cert);
-    nv::spdm::cert::read_l4_cert(l4_cert_span);
-    if (!nv::spdm::certlib::validate_certificate_signature(l4_cert, l5_cert_array)) {
+    auto                         l4_cert_span_w = std::span<uint8_t>(l4_cert);
+    const uint16_t               l4_cert_len    = nv::spdm::cert::read_l4_cert(l4_cert_span_w);
+    if (!nv::spdm::certlib::validate_certificate_signature(
+            std::span<const uint8_t>(l4_cert).first(l4_cert_len),
+            std::span<const uint8_t>(l5_cert_array))) {
         spdm_log_helper(nv::logger::Event::SpdmDevAkGenerateFail,
                         static_cast<uint8_t>(DevAkGenerateErrorCode::VerifySignatureFail));
         generate_chain_success = false;
@@ -815,7 +817,7 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
 
     // check the dda ordinal number of l3 cert in flash is the same on efuse
     const uint32_t DdaOrdinalNumberFlash = nv::spdm::certlib::parse_dda_ordinal_number(
-        l3_cert_array);
+        std::span<const uint8_t>(l3_cert_array).first(get_l3_cert_len()));
     if (dda_ordinal_number != DdaOrdinalNumberFlash) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberMismatch));
@@ -1100,7 +1102,8 @@ bool generate_l4_cert()
     if (!construct_l4_cert(dev_ik_helper, l4_cert_array)) {
         generate_chain_success = false;
     }
-    if (!nv::spdm::certlib::validate_certificate_signature(l3_cert_array, l4_cert_array)) {
+    if (!nv::spdm::certlib::validate_certificate_signature(
+            std::span<const uint8_t>(l3_cert_array), std::span<const uint8_t>(l4_cert_array))) {
         spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
                         static_cast<uint8_t>(DevIkGenerateErrorCode::VerifySignatureFail));
         generate_chain_success = false;
@@ -1481,14 +1484,17 @@ bool verify_l2_l3_cert()
                         static_cast<uint8_t>(L3CertGenerateErrorCode::L2CertNotExist));
         return false;
     }
-    read_l2_cert(std::span<uint8_t>(l2_cert));
+    const uint16_t l2_cert_len = read_l2_cert(std::span<uint8_t>(l2_cert));
     if (get_l3_cert_len() == 0) {
         spdm_log_helper(nv::logger::Event::SpdmL3CertGenerateFail,
                         static_cast<uint8_t>(L3CertGenerateErrorCode::L3CertNotExist));
         return false;
     }
-    read_l3_cert(std::span<uint8_t>(l3_cert));
-    if (nv::spdm::certlib::validate_certificate_signature(l2_cert, l3_cert) != true) {
+    const uint16_t l3_cert_len = read_l3_cert(std::span<uint8_t>(l3_cert));
+    if (nv::spdm::certlib::validate_certificate_signature(
+            std::span<const uint8_t>(l2_cert).first(l2_cert_len),
+            std::span<const uint8_t>(l3_cert).first(l3_cert_len))
+        != true) {
         spdm_log_helper(nv::logger::Event::SpdmL3CertGenerateFail,
                         static_cast<uint8_t>(L3CertGenerateErrorCode::VerifySignatureFail));
         return false;

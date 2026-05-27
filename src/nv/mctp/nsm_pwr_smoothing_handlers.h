@@ -219,4 +219,19 @@ Ccode handle_adc_calib_set_loopback_dac_code(uint16_t dac_code);
  */
 Ccode handle_get_power_smooth_raw_readback(uint8_t readback_id, NsmPktResp& ntx);
 
+/**
+ * @brief Write one voltage calibration coefficient to PDS (IEEE-754 float32 as uint32_t).
+ * @param coeff_id PwrSmoothVoltageCalibCoeffId (0-14)
+ * @param coefficient_value Float bit pattern (little-endian)
+ * @return Ccode::Success, ErrorInvalidData if coeff_id invalid, ErrorGeneral on PDS failure
+ */
+Ccode handle_set_soc_calib_coefficient(uint8_t coeff_id, uint32_t coefficient_value);
+
+/**
+ * @brief Read one voltage calibration coefficient from PDS.
+ * @param coeff_id PwrSmoothVoltageCalibCoeffId (0-14)
+ * @param[out] ntx Response with NsmTFFGetSocCalibCoefficientRes payload
+ */
+Ccode handle_get_soc_calib_coefficient(uint8_t coeff_id, NsmPktResp& ntx);
+
 }  // namespace nv::mctp::nsm_pwr_smoothing_handlers

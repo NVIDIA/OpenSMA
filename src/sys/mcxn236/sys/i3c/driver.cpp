@@ -125,13 +125,16 @@ static void i3c_callback(I3C_Type*                 base,
 }  // namespace
 
 nv::i3c::Driver::Driver(
-    Port port, Freq freq, bool is_gpu, void* task, nv::ipc::EventId event_id)
+    Port port, Freq freq, bool is_gpu, void* task, nv::ipc::EventId event_id, uint32_t clock)
 : sys::i3c::Driver()
 , _port(port)
 , _task(task)
 , _event(nv::ipc::Event::make(event_id))
 , _is_gpu(is_gpu)
 {
+    if (clock != 0) {
+        _clock = clock;
+    }
     I3C_MasterGetDefaultConfig(&_master_config);
     _master_config.baudRate_Hz.i2cBaud          = freq.i2c;
     _master_config.baudRate_Hz.i3cPushPullBaud  = freq.i3c_pp;
@@ -179,7 +182,7 @@ void nv::i3c::Driver::init()
     }
     const i3c_master_edma_callback_t Callback = {
         .slave2Master = nullptr, .ibiCallback = ibi_callback, .transferComplete = i3c_callback};
-    I3C_MasterInit(_base, &_master_config, Clock);
+    I3C_MasterInit(_base, &_master_config, _clock);
     // coverity[cert_exp60_cpp_violation] waive this until I have a good solution
     I3C_MasterTransferCreateHandleEDMA(
         _base, &_i3c_m_handle, &Callback, this, &_rx_edma_handle, &_tx_edma_handle);

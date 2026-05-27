@@ -35,7 +35,13 @@ enum class I2cStatus : uint8_t
     Nak,
     Timeout,
     ArbLost,
-    MutexError
+    MutexError,
+    FifoError,
+    BitError,
+    PinLowTimeout,
+    DmaError,
+    NoTransfer,
+    TargetRxError,
 };
 
 enum class I2cQueueError : uint8_t
@@ -61,7 +67,8 @@ enum I2cFlags : uint8_t
     QuickWrite = 1_bit,
     QuickRead  = 2_bit,
     RecvLen    = 3_bit,
-    AllFlags   = NoStop | QuickWrite | QuickRead | RecvLen,
+    SmbusPec   = 4_bit,
+    AllFlags   = NoStop | QuickWrite | QuickRead | RecvLen | SmbusPec,
 };
 inline constexpr I2cFlags operator|(I2cFlags a, I2cFlags b)
 {

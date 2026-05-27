@@ -43,6 +43,39 @@ __attribute__((weak)) void on_busbar_temp_state_changed() {}
 
 using namespace nv::ipc::voltage_monitor_config;
 
+/**
+ * @brief State-exit hysteresis dead band, in ADC counts (legacy ISR-driven path only).
+ *
+ * Why only legacy: this implementation is interrupt-driven — each HW compare
+ * window crossing fires an ADC ISR that logs unconditionally and re-evaluates
+ * the sensor state. Without a dead band, real temperature dithering near the
+ * trip point produces an unbounded ISR storm. The timer implementation polls
+ * at a fixed cadence and only acts on real transitions, so it does not need
+ * a software dead band.
+ *
+ * Sizing: at ~105°C the NTC divider slope is roughly 13 mV/°C, so 20 mV gives
+ * about a 1.5°C dead band — enough to absorb residual ADC noise without
+ * blunting the trip point. Matches the pattern used by leak_detect/pgood_volt.
+ */
+constexpr uint16_t  HysteresisMv = 20;
+constexpr Threshold Hysteresis   = nv::volt_mon::to_adc_value(HysteresisMv);
+
+namespace {
+bool are_thresholds_valid_adc(Threshold highTemp, Threshold lowTemp)
+{
+    constexpr auto adcMax = to_adc_value(MaxVol);
+
+    if (!(highTemp < lowTemp && lowTemp <= adcMax)) {
+        return false;
+    }
+
+    // Keep the high-temp and low-temp exit dead bands from overlapping:
+    // highTemp + Hysteresis < lowTemp - Hysteresis.
+    constexpr uint32_t MinGap = static_cast<uint32_t>(Hysteresis) * 2U + 1U;
+    return (static_cast<uint32_t>(lowTemp) - static_cast<uint32_t>(highTemp)) >= MinGap;
+}
+}  // namespace
+
 template<size_t... Indices>
 inline void busbar_temp_init_sensors(nv::volt_mon::BusBarTempSensor* sensors,
                                      std::index_sequence<Indices...> /*indices*/)
@@ -109,15 +142,43 @@ Status BusbarTemp::update_sensor_state(uint8_t sensorIdx, Reading adcReading)
 
     auto&      _sensor   = sensor.at(sensorIdx);
     const auto lastState = _sensor.state;
-    // NTC: Low ADC = High temp, High ADC = Low temp
-    if (adcReading < _sensor.busBarHighTemp) {
-        _sensor.state = State::HighTemp;  // ADC too low = temp too high
-    }
-    else if (adcReading < _sensor.busBarLowTemp) {
-        _sensor.state = State::Nominal;
-    }
-    else {
-        _sensor.state = State::LowTemp;  // ADC too high = temp too low (can't happen with NTC)
+
+    // NTC: Low ADC = High temp, High ADC = Low temp.
+    // Entry into HighTemp/LowTemp uses the raw thresholds; exit back to
+    // Nominal requires the reading to move past the threshold by `Hysteresis`
+    // ADC counts. Saturating arithmetic avoids uint16_t wrap when a threshold
+    // sits at the extreme of the ADC range.
+    const Reading highExit = (UINT16_MAX - _sensor.busBarHighTemp < Hysteresis)
+                               ? UINT16_MAX
+                               : static_cast<Reading>(_sensor.busBarHighTemp + Hysteresis);
+    const Reading lowExit  = (_sensor.busBarLowTemp < Hysteresis)
+                               ? Reading{0}
+                               : static_cast<Reading>(_sensor.busBarLowTemp - Hysteresis);
+
+    switch (lastState) {
+        case State::HighTemp:
+            if (adcReading >= highExit) {
+                _sensor.state = (adcReading >= _sensor.busBarLowTemp) ? State::LowTemp
+                                                                      : State::Nominal;
+            }
+            // else: stay HighTemp (inside dead band)
+            break;
+        case State::LowTemp:
+            if (adcReading < lowExit) {
+                _sensor.state = (adcReading < _sensor.busBarHighTemp) ? State::HighTemp
+                                                                      : State::Nominal;
+            }
+            // else: stay LowTemp (inside dead band)
+            break;
+        case State::Nominal:
+        default:
+            if (adcReading < _sensor.busBarHighTemp) {
+                _sensor.state = State::HighTemp;
+            }
+            else if (adcReading >= _sensor.busBarLowTemp) {
+                _sensor.state = State::LowTemp;
+            }
+            break;
     }
 
     const bool stateChanged = (_sensor.state != lastState);
@@ -148,18 +209,20 @@ void BusbarTemp::update_virtual_gpio(uint8_t     sensorIdx,
     // update internal virtual gpio state
     vrGpioState = state;
 
-    // update iox virtual gpio values
-    auto& _sensor = sensor.at(sensorIdx);
+    if constexpr (nv::ipc::EnableIoxEmulation) {
+        // update iox virtual gpio values
+        auto& _sensor = sensor.at(sensorIdx);
 
-    // BusBarTempSensor uses 1 pin: 0=nominal, 1=fault
-    const std::array<uint8_t, 1> ioxPinVals = {(state == VrGpioState::Nominal) ? uint8_t{0}
-                                                                               : uint8_t{1}};
+        // BusBarTempSensor uses 1 pin: 0=nominal, 1=fault
+        const std::array<uint8_t, 1> ioxPinVals = {
+            (state == VrGpioState::Nominal) ? uint8_t{0} : uint8_t{1}};
 
-    nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
-                                       nv::iox::Operation::Write,
-                                       _sensor.ioxPin,
-                                       ioxPinVals,
-                                       trigger_nsm_event);
+        nv::iox::Task::send_vrgpio_request(_sensor.ioxAddr,
+                                           nv::iox::Operation::Write,
+                                           _sensor.ioxPin,
+                                           ioxPinVals,
+                                           trigger_nsm_event);
+    }
 }
 
 // Public interface implementations
@@ -231,12 +294,10 @@ Status BusbarTemp::set_thresholds(uint8_t sensorIdx, const ThresholdBusbar& conf
         return Status::InvalidSensorId;
     }
 
-    /**
-     * simple check if the thresholds are valid
-     * NTC: busBarHighTemp (low ADC) < busBarLowTemp (high ADC)
-     */
-    if (!((config.busBarHighTemp < config.busBarLowTemp)
-          && (config.busBarLowTemp <= to_adc_value(MaxVol)))) {
+    const auto highTemp = nv::volt_mon::to_adc_value(config.busBarHighTemp);
+    const auto lowTemp  = nv::volt_mon::to_adc_value(config.busBarLowTemp);
+
+    if (!are_thresholds_valid_adc(highTemp, lowTemp)) {
         return Status::InvalidThreshold;
     }
 
@@ -250,8 +311,8 @@ Status BusbarTemp::set_thresholds(uint8_t sensorIdx, const ThresholdBusbar& conf
     /**
      * update threshold to sensor struct
      */
-    _sensor.busBarHighTemp = nv::volt_mon::to_adc_value(config.busBarHighTemp);
-    _sensor.busBarLowTemp  = nv::volt_mon::to_adc_value(config.busBarLowTemp);
+    _sensor.busBarHighTemp = highTemp;
+    _sensor.busBarLowTemp  = lowTemp;
 
     /**
      * update threshold to adc command
@@ -280,20 +341,30 @@ void BusbarTemp::get_sensor_threshold(uint8_t sensorIdx, uint16_t& thLow, uint16
     /** sensor id is guaranteed to be valid */
 
     const auto& _sensor = sensor.at(sensorIdx);
+
+    // Hysteresis is applied on the exit edge so the ADC hardware compare
+    // window matches the software state machine in update_sensor_state().
+    const Threshold highExit = (UINT16_MAX - _sensor.busBarHighTemp < Hysteresis)
+                                 ? UINT16_MAX
+                                 : static_cast<Threshold>(_sensor.busBarHighTemp + Hysteresis);
+    const Threshold lowExit  = (_sensor.busBarLowTemp < Hysteresis)
+                                 ? Threshold{0}
+                                 : static_cast<Threshold>(_sensor.busBarLowTemp - Hysteresis);
+
     switch (_sensor.state) {
         case State::HighTemp:
-            // ADC too low (temp too high), detect ADC rising back to Nominal
+            // ADC too low (temp too high), detect ADC rising past dead band back to Nominal
             thLow  = to_adc_value(MinVol);
-            thHigh = _sensor.busBarHighTemp;
+            thHigh = highExit;
             break;
         case State::Nominal:
-            // Normal range, detect crossing either threshold
+            // Normal range, detect crossing either raw threshold
             thLow  = _sensor.busBarHighTemp;
             thHigh = _sensor.busBarLowTemp;
             break;
         case State::LowTemp:
-            // ADC too high (temp too low), detect ADC falling back to Nominal
-            thLow  = _sensor.busBarLowTemp;
+            // ADC too high (temp too low), detect ADC falling past dead band back to Nominal
+            thLow  = lowExit;
             thHigh = to_adc_value(MaxVol);
             break;
         default:

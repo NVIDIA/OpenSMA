@@ -17,6 +17,7 @@
  */
 #include "nv/gpio/driver.h"
 
+#include <array>
 #include <FreeRTOSConfig.h>
 #include <portmacrocommon.h>
 
@@ -313,6 +314,61 @@ Status Driver::read(GpioPort port, GpioPin pin, uint8_t& data)
     data = static_cast<uint8_t>(ReadVal);
 
     // nv::info("pin:%d Read_val:%d\n", pin, ReadVal);
+
+    return Status::Ok;
+}
+
+Status Driver::read_force(GpioPort port, GpioPin pin, uint8_t& data)
+{
+    if (!is_pin_valid(port, pin)) {
+        nv::info("port %d Pin %d not valid\n", port, pin);
+        return Status::InvalidParam;
+    }
+
+    constexpr std::array gpio_clocks = {
+        kCLOCK_Gpio0, kCLOCK_Gpio1, kCLOCK_Gpio2, kCLOCK_Gpio3, kCLOCK_Gpio4, kCLOCK_None};
+    constexpr std::array port_clocks = {
+        kCLOCK_Port0, kCLOCK_Port1, kCLOCK_Port2, kCLOCK_Port3, kCLOCK_Port4};
+
+    if (port >= gpio_clocks.size() || port >= port_clocks.size()) {
+        return Status::Error;
+    }
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    CLOCK_EnableClock(gpio_clocks[port]);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    CLOCK_EnableClock(port_clocks[port]);
+
+    PORT_Type* port_inst = get_port_instance(port);
+    GPIO_Type* gpio_inst = get_gpio_instance(port);
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    const auto saved_pcr  = port_inst->PCR[pin];
+    const auto saved_pddr = gpio_inst->PDDR;
+
+    const port_pin_config_t gpio_input_cfg = {
+        .pullSelect          = static_cast<uint16_t>(kPORT_PullDisable),
+        .pullValueSelect     = static_cast<uint16_t>(kPORT_LowDriveStrength),
+        .slewRate            = static_cast<uint16_t>(kPORT_FastSlewRate),
+        .passiveFilterEnable = static_cast<uint16_t>(kPORT_PassiveFilterDisable),
+        .openDrainEnable     = static_cast<uint16_t>(kPORT_OpenDrainDisable),
+        .driveStrength       = static_cast<uint16_t>(kPORT_LowDriveStrength),
+        .mux                 = static_cast<uint16_t>(kPORT_MuxAlt0),
+        .inputBuffer         = static_cast<uint16_t>(kPORT_InputBufferEnable),
+        .invertInput         = static_cast<uint16_t>(kPORT_InputNormal),
+        .lockRegister        = static_cast<uint16_t>(kPORT_UnlockRegister),
+    };
+    PORT_SetPinConfig(port_inst, pin, &gpio_input_cfg);
+
+    gpio_inst->PDDR &= ~(1u << pin);
+
+    SDK_DelayAtLeastUs(5, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+    data = static_cast<uint8_t>(GPIO_PinRead(gpio_inst, pin));
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    port_inst->PCR[pin] = saved_pcr;
+    gpio_inst->PDDR     = saved_pddr;
 
     return Status::Ok;
 }

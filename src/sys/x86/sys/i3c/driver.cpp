@@ -23,7 +23,8 @@ nv::i3c::Driver::Driver([[maybe_unused]] Port             port,
                         [[maybe_unused]] Freq             freq,
                         [[maybe_unused]] bool             is_gpu,
                         [[maybe_unused]] void*            task,
-                        [[maybe_unused]] nv::ipc::EventId event_id)
+                        [[maybe_unused]] nv::ipc::EventId event_id,
+                        [[maybe_unused]] uint32_t         clock)
 : _port(port)
 , _event(nv::ipc::Event::make(event_id))
 {

@@ -206,6 +206,12 @@ void Pds::get_default_value(PdsDataArray& table)
         set_default(static_cast<Key>(k), 0);
     }
     set_default(Key::PdsSoCThermBrakeEnabled, 1);  // Enabled by default
+
+    for (auto k = static_cast<uint32_t>(Key::PdsPwrSmoothCalib0);
+         k <= static_cast<uint32_t>(Key::PdsPwrSmoothCalib14);
+         k++) {
+        set_default(static_cast<Key>(k), 0);  // 0.0f until factory write
+    }
 }
 
 void Pds::load_pds()

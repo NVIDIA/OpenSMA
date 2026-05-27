@@ -26,59 +26,121 @@
  * override the weak symbols from nsm_pwr_smoothing_handlers_weak.cpp.
  */
 
+#include <array>
 #include <cstring>
-#include "nv/logger/log.h"
-#include "nv/mctp/nsm_pwr_smoothing_handlers.h"
+
+#include "nv/flash/flash.h"
 #include "nv/mctp/nsm.h"
-#include "nv/mctp/nsm_type_ff.h"
+#include "nv/mctp/nsm_pwr_smoothing_handlers.h"
 #include "nv/soc_pwr_smoothing/soc_pwr_smoothing.h"
-#include "nv/soc_pwr_smoothing/presets.h"
-#include "nv/nv.h"
 
 namespace nv::mctp::nsm_pwr_smoothing_handlers {
+
+namespace {
+
+// Type-5 Get Device Mode response:
+//   NvU16 current_length, NvU16 pending_length (0 — changes apply immediately), then payload.
+constexpr uint16_t kDeviceModePendingLength = 0;
+
+void fill_device_mode_get_response(NsmPktResp& ntx,
+                                   const void* current_payload,
+                                   uint16_t    current_payload_size)
+{
+    memcpy(&ntx.data[0], &current_payload_size, sizeof(uint16_t));
+    memcpy(&ntx.data[2], &kDeviceModePendingLength, sizeof(uint16_t));
+    if (current_payload_size > 0) {
+        memcpy(&ntx.data[4], current_payload, current_payload_size);
+    }
+    ntx.data_size = (2U * sizeof(uint16_t)) + current_payload_size;
+}
+
+void fill_device_mode_get_u8(NsmPktResp& ntx, uint8_t value)
+{
+    fill_device_mode_get_response(ntx, &value, sizeof(value));
+}
+
+void fill_device_mode_get_float(NsmPktResp& ntx, float value)
+{
+    fill_device_mode_get_response(ntx, &value, sizeof(value));
+}
+
+enum class RackParamSlice : bool
+{
+    Tuning   = false,
+    TestHook = true,
+};
+
+Ccode get_rack_power_smoothing_params(NsmPktResp& ntx, RackParamSlice slice)
+{
+    using namespace nv::soc_pwr_smoothing;
+    using nv::mctp::RackPwrSmoothParams;
+
+    auto param_start = (slice == RackParamSlice::Tuning)
+                         ? 0U
+                         : static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart);
+    auto param_count = (slice == RackParamSlice::Tuning)
+                         ? static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams)
+                         : static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount)
+                               - param_start;
+
+    auto& response = *std::bit_cast<nv::mctp::NsmTFFGetRackPwrSmoothParamRes*>(&ntx.data[0]);
+
+    const uint8_t                     active_preset = PowerSmoothing::GetActivePresetId();
+    std::array<uint32_t, PARAM_COUNT> params{};
+    PowerSmoothing::GetPresetParameters(active_preset, params);
+
+    response.numParams       = param_count;
+    response.currentPresetId = active_preset;
+    response.resvd           = 0;
+
+    for (uint8_t i = 0; i < param_count; i++) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        response.paramArray[i] = params[param_start + i];
+    }
+
+    ntx.data_size = sizeof(response) + (sizeof(uint32_t) * response.numParams);
+    return Ccode::Success;
+}
+
+Ccode set_rack_power_smoothing_param(uint8_t        preset_id,
+                                     uint8_t        param_id,
+                                     uint32_t       param_value,
+                                     RackParamSlice slice)
+{
+    using nv::mctp::RackPwrSmoothParams;
+
+    if (slice == RackParamSlice::Tuning) {
+        if (param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams)) {
+            return Ccode::ErrorInvalidData;
+        }
+    }
+    else if (param_id < static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart)
+             || param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount)) {
+        return Ccode::ErrorInvalidData;
+    }
+
+    return nv::soc_pwr_smoothing::PowerSmoothing::SetParameter(preset_id, param_id, param_value)
+             ? Ccode::Success
+             : Ccode::ErrorGeneral;
+}
+
+}  // namespace
 
 // ============================================================================
 // Strong Type-5 Get handlers - actual implementations
 // ============================================================================
 
-// Response format per spec:
-//   NvU16: Current Device Mode length in Bytes
-//   NvU16: Pending Device Mode length in Bytes (0 if not available)
-//   Variable: Current Device Mode
-//   Variable: Pending Device Mode (omitted if pending_length = 0)
-// Since we apply changes immediately and persist them, pending_length is always 0.
-
 Ccode handle_get_max_ac_ramp_rate(NsmPktResp& ntx)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    const float    current_value  = PowerSmoothing::GetMaxACRampRate();
-    const uint16_t current_length = sizeof(float);
-    const uint16_t pending_length = 0;  // No pending changes different from current
-
-    // Write response: [current_length, pending_length, current_value]
-    memcpy(&ntx.data[0], &current_length, sizeof(uint16_t));
-    memcpy(&ntx.data[2], &pending_length, sizeof(uint16_t));
-    memcpy(&ntx.data[4], &current_value, sizeof(float));
-
-    ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(float);  // 8 bytes
+    fill_device_mode_get_float(ntx, nv::soc_pwr_smoothing::PowerSmoothing::GetMaxACRampRate());
     return Ccode::Success;
 }
 
 Ccode handle_get_soc_power_smooth_enabled(NsmPktResp& ntx)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    const auto     current_value = static_cast<uint8_t>(PowerSmoothing::GetOffsetPolicyState());
-    const uint16_t current_length = sizeof(uint8_t);
-    const uint16_t pending_length = 0;  // No pending changes different from current
-
-    // Write response: [current_length, pending_length, current_value]
-    memcpy(&ntx.data[0], &current_length, sizeof(uint16_t));
-    memcpy(&ntx.data[2], &pending_length, sizeof(uint16_t));
-    ntx.data[4] = current_value;
-
-    ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t);  // 5 bytes
+    auto enabled = static_cast<uint8_t>(
+        nv::soc_pwr_smoothing::PowerSmoothing::GetOffsetPolicyState());
+    fill_device_mode_get_u8(ntx, enabled);
     return Ccode::Success;
 }
 
@@ -86,19 +148,9 @@ Ccode handle_get_soc_power_smooth_current_preset(NsmPktResp& ntx)
 {
     using namespace nv::soc_pwr_smoothing;
 
-    const uint8_t  current_preset_index  = PowerSmoothing::GetActivePresetId();
-    const uint8_t  supported_preset_mask = PowerSmoothing::GetSupportedPresetBitmask();
-    const uint16_t current_length        = 2 * sizeof(uint8_t);  // preset index + bitmask
-    const uint16_t pending_length        = 0;  // No pending changes different from current
-
-    // Write response: [current_length, pending_length, current_preset_index,
-    // supported_preset_mask]
-    memcpy(&ntx.data[0], &current_length, sizeof(uint16_t));
-    memcpy(&ntx.data[2], &pending_length, sizeof(uint16_t));
-    ntx.data[4] = current_preset_index;
-    ntx.data[5] = supported_preset_mask;
-
-    ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + 2 * sizeof(uint8_t);  // 6 bytes
+    const std::array<uint8_t, 2> preset_payload{PowerSmoothing::GetActivePresetId(),
+                                                PowerSmoothing::GetSupportedPresetBitmask()};
+    fill_device_mode_get_response(ntx, preset_payload.data(), preset_payload.size());
     return Ccode::Success;
 }
 
@@ -106,17 +158,11 @@ Ccode handle_get_soc_power_brake_enabled(NsmPktResp& ntx)
 {
     using namespace nv::soc_pwr_smoothing;
 
-    const auto     brake_state    = PowerSmoothing::GetPowerBrakePolicyState();
-    const uint8_t  current_value  = (brake_state == PowerBrakeState::PowerBrakeEnabled) ? 1 : 0;
-    const uint16_t current_length = sizeof(uint8_t);
-    const uint16_t pending_length = 0;  // No pending changes different from current
-
-    // Write response: [current_length, pending_length, current_value]
-    memcpy(&ntx.data[0], &current_length, sizeof(uint16_t));
-    memcpy(&ntx.data[2], &pending_length, sizeof(uint16_t));
-    ntx.data[4] = current_value;
-
-    ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t);  // 5 bytes
+    auto enabled = (PowerSmoothing::GetPowerBrakePolicyState()
+                    == PowerBrakeState::PowerBrakeEnabled)
+                     ? 1U
+                     : 0U;
+    fill_device_mode_get_u8(ntx, enabled);
     return Ccode::Success;
 }
 
@@ -124,17 +170,11 @@ Ccode handle_get_soc_therm_brake_enabled(NsmPktResp& ntx)
 {
     using namespace nv::soc_pwr_smoothing;
 
-    const auto     brake_state    = PowerSmoothing::GetThermBrakePolicyState();
-    const uint8_t  current_value  = (brake_state == ThermBrakeState::ThermBrakeEnabled) ? 1 : 0;
-    const uint16_t current_length = sizeof(uint8_t);
-    const uint16_t pending_length = 0;  // No pending changes different from current
-
-    // Write response: [current_length, pending_length, current_value]
-    memcpy(&ntx.data[0], &current_length, sizeof(uint16_t));
-    memcpy(&ntx.data[2], &pending_length, sizeof(uint16_t));
-    ntx.data[4] = current_value;
-
-    ntx.data_size = sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t);  // 5 bytes
+    auto enabled = (PowerSmoothing::GetThermBrakePolicyState()
+                    == ThermBrakeState::ThermBrakeEnabled)
+                     ? 1U
+                     : 0U;
+    fill_device_mode_get_u8(ntx, enabled);
     return Ccode::Success;
 }
 
@@ -210,99 +250,28 @@ Ccode handle_set_soc_power_brake_enabled(bool enabled)
 
 Ccode handle_get_rack_power_smoothing_param(NsmPktResp& ntx)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    auto& response = *std::bit_cast<NsmTFFGetRackPwrSmoothParamRes*>(&ntx.data[0]);
-
-    // Get the currently active preset ID
-    const uint8_t active_preset = PowerSmoothing::GetActivePresetId();
-
-    // Get all parameters for the active preset
-    std::array<uint32_t, PARAM_COUNT> params{};
-    PowerSmoothing::GetPresetParameters(active_preset, params);
-
-    // Only return non-TestHook tuning parameters (0 .. MaxTuningParams-1)
-    // TestHook parameters (40-44) require TestHook command with debug token
-    const auto max_tuning = static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams);
-
-    response.numParams       = max_tuning;
-    response.currentPresetId = active_preset;
-    response.resvd           = 0;
-
-    for (uint8_t i = 0; i < max_tuning; i++) {
-        // Array indices map directly to param IDs 0 .. MaxTuningParams-1
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
-        response.paramArray[i] = params[i];
-    }
-
-    ntx.data_size = sizeof(response) + (sizeof(uint32_t) * response.numParams);
-    return Ccode::Success;
+    return get_rack_power_smoothing_params(ntx, RackParamSlice::Tuning);
 }
 
 Ccode handle_set_rack_power_smoothing_param(uint8_t  preset_id,
                                             uint8_t  param_id,
                                             uint32_t param_value)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    // Reject TestHook parameters (40-44) - they require TestHook command with debug token
-    // Also rejects reserved gap (indices >= MaxTuningParams that are not TestHook)
-    if (param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxTuningParams)) {
-        return Ccode::ErrorInvalidData;
-    }
-
-    // Call the SoC power smoothing API to update the parameter
-    return PowerSmoothing::SetParameter(preset_id, param_id, param_value) ? Ccode::Success
-                                                                          : Ccode::ErrorGeneral;
+    return set_rack_power_smoothing_param(
+        preset_id, param_id, param_value, RackParamSlice::Tuning);
 }
 
 Ccode handle_get_rack_power_smoothing_testhook(NsmPktResp& ntx)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    auto& response = *std::bit_cast<NsmTFFGetRackPwrSmoothParamRes*>(&ntx.data[0]);
-
-    // Get the currently active preset ID
-    const uint8_t active_preset = PowerSmoothing::GetActivePresetId();
-
-    // Get all parameters for the active preset
-    std::array<uint32_t, PARAM_COUNT> params{};
-    PowerSmoothing::GetPresetParameters(active_preset, params);
-
-    // Only return TestHook parameters (40-44)
-    const auto testhook_start = static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart);
-    const auto testhook_end   = static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount);
-    const auto testhook_count = testhook_end - testhook_start;
-
-    response.numParams       = testhook_count;  // 5 params (40-44)
-    response.currentPresetId = active_preset;
-    response.resvd           = 0;
-
-    for (uint8_t i = 0; i < testhook_count; i++) {
-        // Array indices 0.. map to param IDs TestHookParamsStart ..
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
-        response.paramArray[i] = params[testhook_start + i];
-    }
-
-    ntx.data_size = sizeof(response) + (sizeof(uint32_t) * response.numParams);
-    return Ccode::Success;
+    return get_rack_power_smoothing_params(ntx, RackParamSlice::TestHook);
 }
 
 Ccode handle_set_rack_power_smoothing_testhook(uint8_t  preset_id,
                                                uint8_t  param_id,
                                                uint32_t param_value)
 {
-    using namespace nv::soc_pwr_smoothing;
-
-    // Validate parameter ID is in TestHook range (40-44)
-    if (param_id < static_cast<uint8_t>(RackPwrSmoothParams::TestHookParamsStart)
-        || param_id >= static_cast<uint8_t>(RackPwrSmoothParams::MaxParamCount)) {
-        return Ccode::ErrorInvalidData;
-    }
-
-    // Call the SoC power smoothing API to update the parameter
-    return PowerSmoothing::SetParameter(preset_id, param_id, param_value) ? Ccode::Success
-                                                                          : Ccode::ErrorGeneral;
+    return set_rack_power_smoothing_param(
+        preset_id, param_id, param_value, RackParamSlice::TestHook);
 }
 
 Ccode handle_get_debug_telemetry(uint16_t telem_type, NsmPktResp& ntx)
@@ -376,148 +345,6 @@ Ccode handle_get_debug_telemetry(uint16_t telem_type, NsmPktResp& ntx)
 }
 
 // ============================================================================
-// Type-3 Debug Telemetry handlers - strong implementations
-// ============================================================================
-
-namespace {
-
-// Helper function to populate response header
-void populate_response_header(NsmPktResp& ntx, uint16_t data_size)
-{
-    auto& response         = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    response.resvd         = 0;
-    response.dataSizeBytes = data_size;
-    ntx.data_size          = sizeof(response) + data_size;
-}
-
-// Telemetry data size for history responses (timestamp + count + samples)
-constexpr uint16_t TelemetryHistoryDataSize = 112;  // 8 + 4 + 100
-
-}  // anonymous namespace
-
-Ccode handle_get_soc_telemetry_running_sum(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sum (8 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(
-        data_ptr + sizeof(uint64_t), &snapshot.soc_percent_filtered_sum, sizeof(uint64_t));
-
-    populate_response_header(ntx, 16);
-    return Ccode::Success;
-}
-
-Ccode handle_get_power_brake_running_sum(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sum (8 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.pwr_brake_time_ms, sizeof(uint64_t));
-
-    populate_response_header(ntx, 16);
-    return Ccode::Success;
-}
-
-Ccode handle_get_edpp_offset_running_sum(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sum (8 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.edpp_offset_sum, sizeof(uint64_t));
-
-    populate_response_header(ntx, 16);
-    return Ccode::Success;
-}
-
-Ccode handle_get_isink_offset_running_sum(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sum (8 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.isink_offset_sum, sizeof(uint64_t));
-
-    populate_response_header(ntx, 16);
-    return Ccode::Success;
-}
-
-Ccode handle_get_soc_recent_history(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_history_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sample_count (4 bytes) + samples (100 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.sample_count, sizeof(uint32_t));
-    std::memcpy(data_ptr + sizeof(uint64_t) + sizeof(uint32_t),
-                snapshot.soc_percent_filtered.data(),
-                snapshot.soc_percent_filtered.size());
-
-    populate_response_header(ntx, TelemetryHistoryDataSize);
-    return Ccode::Success;
-}
-
-Ccode handle_get_edpp_recent_history(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_history_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sample_count (4 bytes) + samples (100 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.sample_count, sizeof(uint32_t));
-    std::memcpy(data_ptr + sizeof(uint64_t) + sizeof(uint32_t),
-                snapshot.edpp_offset.data(),
-                snapshot.edpp_offset.size());
-
-    populate_response_header(ntx, TelemetryHistoryDataSize);
-    return Ccode::Success;
-}
-
-Ccode handle_get_isink_recent_history(NsmPktResp& ntx)
-{
-    using namespace nv::soc_pwr_smoothing;
-
-    auto     snapshot = PowerSmoothing::get_telemetry_history_snapshot();
-    auto&    response = *std::bit_cast<NsmTFFGetRackPwrSmoothTelemetryRes*>(&ntx.data[0]);
-    uint8_t* data_ptr = &response.telemetryData[0];
-
-    // Format: timestamp (8 bytes) + sample_count (4 bytes) + samples (100 bytes)
-    std::memcpy(data_ptr, &snapshot.timestamp_ms, sizeof(uint64_t));
-    std::memcpy(data_ptr + sizeof(uint64_t), &snapshot.sample_count, sizeof(uint32_t));
-    std::memcpy(data_ptr + sizeof(uint64_t) + sizeof(uint32_t),
-                snapshot.isink_offset.data(),
-                snapshot.isink_offset.size());
-
-    populate_response_header(ntx, TelemetryHistoryDataSize);
-    return Ccode::Success;
-}
-
-// ============================================================================
 // Strong Type-FF ADC Calibration handlers - actual implementations
 // ============================================================================
 
@@ -544,6 +371,50 @@ Ccode handle_adc_calib_set_loopback_dac_code(uint16_t dac_code)
     if (!nv::soc_pwr_smoothing::adc_calib_set_loopback_dac_code(dac_code)) {
         return Ccode::ErrorI2CError;
     }
+    return Ccode::Success;
+}
+
+namespace {
+
+nv::flash::Key pds_key_for_voltage_calib_coeff(uint8_t coeff_id)
+{
+    static_assert(static_cast<uint32_t>(nv::flash::Key::PdsPwrSmoothCalib14)
+                      - static_cast<uint32_t>(nv::flash::Key::PdsPwrSmoothCalib0)
+                  == static_cast<uint32_t>(PwrSmoothVoltageCalibCoeffId::MaxCount) - 1U);
+    return static_cast<nv::flash::Key>(static_cast<uint32_t>(nv::flash::Key::PdsPwrSmoothCalib0)
+                                       + coeff_id);
+}
+
+}  // namespace
+
+Ccode handle_set_soc_calib_coefficient(uint8_t coeff_id, uint32_t coefficient_value)
+{
+    if (coeff_id >= static_cast<uint8_t>(PwrSmoothVoltageCalibCoeffId::MaxCount)) {
+        return Ccode::ErrorInvalidData;
+    }
+
+    const auto key = pds_key_for_voltage_calib_coeff(coeff_id);
+    if (nv::flash::Flash::set_data(key, coefficient_value) != nv::flash::Status::Ok) {
+        return Ccode::ErrorGeneral;
+    }
+    return Ccode::Success;
+}
+
+Ccode handle_get_soc_calib_coefficient(uint8_t coeff_id, NsmPktResp& ntx)
+{
+    if (coeff_id >= static_cast<uint8_t>(PwrSmoothVoltageCalibCoeffId::MaxCount)) {
+        return Ccode::ErrorInvalidData;
+    }
+
+    const auto      key  = pds_key_for_voltage_calib_coeff(coeff_id);
+    nv::flash::Data data = 0;
+    if (nv::flash::Flash::get_data(key, data) != nv::flash::Status::Ok) {
+        return Ccode::ErrorGeneral;
+    }
+
+    auto& response             = *std::bit_cast<NsmTFFGetSocCalibCoefficientRes*>(&ntx.data[0]);
+    response.coefficient_value = data;
+    ntx.data_size              = sizeof(NsmTFFGetSocCalibCoefficientRes);
     return Ccode::Success;
 }
 

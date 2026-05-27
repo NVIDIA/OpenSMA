@@ -26,6 +26,7 @@ public:
     Status tx(std::span<uint8_t> data);
 
     bool ready() const;
+    bool txongoing() const { return false; }
 };
 
 }  // namespace sys::uart

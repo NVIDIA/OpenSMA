@@ -112,11 +112,15 @@ Signature Signature::from(std::span<const uint8_t>& buffer)
     return construct_signature;
 }
 
-bool check_certificate_format_valid(const CertArray& input_cert, uint32_t expected_cert_length)
+bool check_certificate_format_valid(std::span<const uint8_t> input_cert,
+                                    uint32_t                 expected_cert_length)
 {
+    constexpr size_t CertLengthFieldEnd = 4u;
+    if (input_cert.size() < CertLengthFieldEnd) {
+        return false;
+    }
     // the format not correct (should be 0x3082)
-    if (input_cert.at(0u) != certlib::SequenceToken
-        || input_cert.at(1u) != certlib::LengthToken) {
+    if (input_cert[0u] != certlib::SequenceToken || input_cert[1u] != certlib::LengthToken) {
         return false;
     }
     // for coverity, but this should not happen
@@ -135,7 +139,8 @@ bool check_certificate_format_valid(const CertArray& input_cert, uint32_t expect
     return true;
 };
 
-const std::array<uint8_t, Ecdsa384PublicKeySize> parse_ecdsa_p384_pubkey(const CertArray& cert)
+const std::array<uint8_t, Ecdsa384PublicKeySize>
+parse_ecdsa_p384_pubkey(std::span<const uint8_t> cert)
 {
     std::array<uint8_t, Ecdsa384PublicKeySize> ret_pub_key{};
     auto                                       find_it = std::find_end(cert.begin(),
@@ -150,6 +155,11 @@ const std::array<uint8_t, Ecdsa384PublicKeySize> parse_ecdsa_p384_pubkey(const C
                 + sizeof(SubjectPublicKeyInfo::SubjectPublicKey::bit_string)
                 + sizeof(SubjectPublicKeyInfo::SubjectPublicKey::unconpress_token));
 
+        if (offset_to_pubilc_key < 0
+            || static_cast<size_t>(offset_to_pubilc_key) + Ecdsa384PublicKeySize
+                   > cert.size()) {
+            return ret_pub_key;
+        }
         std::copy(cert.begin() + offset_to_pubilc_key,
                   cert.begin() + offset_to_pubilc_key + Ecdsa384PublicKeySize,
                   ret_pub_key.begin());
@@ -159,7 +169,7 @@ const std::array<uint8_t, Ecdsa384PublicKeySize> parse_ecdsa_p384_pubkey(const C
     return ret_pub_key;
 }
 
-Signature parse_signature(const CertArray& cert)
+Signature parse_signature(std::span<const uint8_t> cert)
 
 {
     auto find_it = std::find_end(cert.begin(),
@@ -176,21 +186,24 @@ Signature parse_signature(const CertArray& cert)
         if (offset_to_signature <= 0) {
             return Signature{};
         }
-        auto signature_span = (std::span<const uint8_t>(cert))
-                                  .subspan(static_cast<size_t>(offset_to_signature));
+        auto signature_span = cert.subspan(static_cast<size_t>(offset_to_signature));
         return Signature::from(signature_span);
     }
     // should not reach
     return Signature{};
 };
 
-bool validate_certificate_signature(const CertArray& preceding_cert,
-                                    const CertArray& current_cert)
+bool validate_certificate_signature(std::span<const uint8_t> preceding_cert,
+                                    std::span<const uint8_t> current_cert)
 {
     // mbedtls_ecdsa_verify
     using namespace nv;
     std::array<uint8_t, Sha384HashSize> current_cert_hash{};
-    const uint32_t                      StartOffsetOfCert = 4;
+    constexpr uint32_t                  StartOffsetOfCert  = 4;
+    constexpr size_t                    CertLengthFieldEnd = 8;
+    if (current_cert.size() < CertLengthFieldEnd) {
+        return false;
+    }
     // for coverity, but this should not happen
     static_assert(
         (std::numeric_limits<std::remove_reference_t<decltype(current_cert[6])>>::max() << 8U)
@@ -251,7 +264,7 @@ uint8_t hex_in_int_to_ascii(uint8_t input_char)
 }
 // NOLINTEND
 
-uint32_t parse_dda_ordinal_number(const CertArray& cert)
+uint32_t parse_dda_ordinal_number(std::span<const uint8_t> cert)
 {
     auto find_it = std::find_end(cert.begin(), cert.end(), DdaPatent.begin(), DdaPatent.end());
     if (find_it != cert.end()) {

@@ -34,6 +34,7 @@
 #include "sys/usb/usb.h"
 #include "nv/spi/task.h"
 #include "nv/usb/mctp_router.h"
+#include "nv/lstp/lstp_parser.h"
 
 #include "nv/watchdog/runtime.h"
 #include "nv/spi/flashrom_task.h"
@@ -352,7 +353,16 @@ void Task::hid_receive()
 uint8_t Task::lstp_transmit()
 {
     if constexpr (nv::ipc::EnableLstp) {
-        auto&              queue = ipc::Queue::make(ipc::QueueId::LstpTx);
+        auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
+
+        // Tolerate spurious LstpTxBit wakeups on an empty queue.
+        // Return non-zero so the caller does NOT mask LstpTxBit out of
+        // wait_bits (any real producer set that happens after this
+        // point will still wake us). Skip the log -- this is benign.
+        if (queue.size() == 0) {
+            return 1;
+        }
+
         std::span<uint8_t> item(lstp_tx_buffer.data(), nv::ipc::UsbLstpMsgSize);
 
         auto status = queue.recv(item, 100ms);
@@ -396,7 +406,17 @@ void Task::lstp_receive()
             }
         }
 
-        _lstp_router.receive(lstp_rx_buffer, lstp_rx_len);
+        std::span<uint8_t> item(lstp_rx_buffer.data(), lstp_rx_buffer.size());
+        auto               status = nv::lstp::LstpParser::validate_request(item, lstp_rx_len);
+
+        if (status == nv::lstp::LstpStatus::Success) {
+            status = _lstp_router.receive(item);
+        }
+
+        if (status != nv::lstp::LstpStatus::Success) {
+            nv::lstp::LstpRouter::send_error(item, status);
+        }
+
         auto error = _driver.enable_spi_rx();
         if (error) {
             logger::error(logger::Event::UsbLstpRecvError, {static_cast<uint8_t>(error)});

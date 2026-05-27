@@ -198,6 +198,16 @@ void Driver::controller_callback([[maybe_unused]] LPI2C_Type*            base,
         case kStatus_Success              : task->set_event(Task::Event::CtrlDone); break;
         case kStatus_LPI2C_Nak            : task->set_event(Task::Event::CtrlNak); break;
         case kStatus_LPI2C_ArbitrationLost: task->set_event(Task::Event::CtrlArbLost); break;
+        case kStatus_LPI2C_FifoError      : task->set_event(Task::Event::CtrlFifoError); break;
+        case kStatus_LPI2C_BitError       : task->set_event(Task::Event::CtrlBitError); break;
+        case kStatus_LPI2C_PinLowTimeout:
+            task->set_event(Task::Event::CtrlPinLowTimeout);
+            break;
+        case kStatus_LPI2C_DmaRequestFail: task->set_event(Task::Event::CtrlDmaError); break;
+        case kStatus_LPI2C_Timeout       : task->set_event(Task::Event::CtrlTimeout); break;
+        case kStatus_LPI2C_NoTransferInProgress:
+            task->set_event(Task::Event::CtrlNoTransfer);
+            break;
         default:
             /// TODO should we enable pin low detect?
             task->set_event(Task::Event::CtrlError);

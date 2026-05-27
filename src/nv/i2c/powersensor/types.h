@@ -58,6 +58,19 @@ enum class DeviceType : uint8_t
     MP29540
 };
 
+struct PowerSensorDirectFormatCoeff
+{
+    float    m        = 0.0f;
+    float    b        = 0.0f;
+    float    exp_mult = 0.0f;
+    uint16_t mask     = 0;
+};
+
+constexpr bool has_power_input_coeff(const PowerSensorDirectFormatCoeff& coeff)
+{
+    return coeff.m != 0.0f && coeff.exp_mult != 0.0f && coeff.mask != 0;
+}
+
 // Configuration for sensor list in config.h (used for device identification)
 struct PowerSensorListConfig
 {
@@ -70,6 +83,7 @@ struct PowerSensorListConfig
     nv::mctp::T3Voltage               vout_sensor_id;   // NSM Type 3 Voltage output sensor ID
     nv::mctp::T3Voltage               vin_sensor_id;    // NSM Type 3 Voltage input sensor ID
     nv::mctp::PowerSensorFaults       alert_sensor_id;  // NSM Type 3 Alert sensor ID
+    PowerSensorDirectFormatCoeff      power_input_coeff;
 };
 
 }  // namespace nv::i2c::power

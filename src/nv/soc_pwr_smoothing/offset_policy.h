@@ -42,7 +42,7 @@ public:
         static constexpr uint32_t dt_radix  = 31;
         static constexpr float    dt        = 100E-6;
 
-        static SFXP1_31 dt_fp_from_divisor(uint32_t n)
+        static constexpr SFXP1_31 dt_fp_from_divisor(uint32_t n)
         {
             if (n < 1U) {
                 n = 1U;
@@ -50,12 +50,10 @@ public:
             else if (n > 1000U) {
                 n = 1000U;
             }
-            // Runtime Q1.31 (same math as to_s32fxp<dt_radix>, which is consteval-only).
-            const long double val = static_cast<long double>(dt) / static_cast<long double>(n);
-            const long double multiplier   = static_cast<long double>(1ULL << dt_radix);
-            const long double result       = val * multiplier;
-            const long double round_offset = val >= 0.0L ? 0.5L : -0.5L;
-            return static_cast<SFXP1_31>(static_cast<int32_t>(result + round_offset));
+            constexpr uint64_t dt_denominator = 10000ULL;  // dt = 100us = 1 / 10000s
+            const uint64_t     denominator    = dt_denominator * n;
+            return static_cast<SFXP1_31>(((1ULL << dt_radix) + (denominator / 2U))
+                                         / denominator);
         }
 
         struct RuntimeCfg
@@ -69,6 +67,7 @@ public:
             SFXP22_10 output_min;
             SFXP22_10 output_max;
             uint32_t  pid_dt_divisor{100};  // 1-1000 via NSM; integral timestep scale dt / n
+            SFXP1_31  pid_dt_fp{dt_fp_from_divisor(pid_dt_divisor)};
         };
 
         PidController(const RuntimeCfg& cfg)
@@ -88,9 +87,9 @@ public:
 
             _last_output = (_cfg.kp * error) >> pid_radix;
 
-            const SFXP1_31  dt_fp        = dt_fp_from_divisor(_cfg.pid_dt_divisor);
             const SFXP22_10 new_integral = _integral
-                                         + (SFXP22_10)(((uint64_t)error * (uint64_t)dt_fp)
+                                         + (SFXP22_10)(((uint64_t)error
+                                                        * (uint64_t)_cfg.pid_dt_fp)
                                                        >> (uint64_t)(dt_radix - pid_radix));
             _integral     = std::clamp(new_integral, _cfg.integral_min, _cfg.integral_max);
             _last_output += (_cfg.ki * new_integral) >> pid_radix;
@@ -135,25 +134,39 @@ public:
     class ResidencySma
     {
     public:
-        struct RuntimeCfg
-        {
-            float ewma_tau{20.0f};  // seconds
-        };
-
-        explicit ResidencySma(const RuntimeCfg& cfg) : _cfg(cfg) { recompute_ewma_alpha(true); }
-
         static constexpr uint32_t precision            = 31;  // fractional bits in Q1.31
         static constexpr float    loop_sample_period_s = 100E-6f;
+
+        static constexpr SFXP1_31 ewma_alpha_from_tau(float ewma_tau)
+        {
+            const float N       = ewma_tau / loop_sample_period_s;
+            const float alpha_f = 2.0f / (1.0f + N);
+            return static_cast<SFXP1_31>(alpha_f * static_cast<float>(1U << precision));
+        }
+
+        static constexpr SFXP1_31 one_minus_ewma_alpha_from_tau(float ewma_tau)
+        {
+            return static_cast<SFXP1_31>((1U << precision) - ewma_alpha_from_tau(ewma_tau));
+        }
+
+        struct RuntimeCfg
+        {
+            float    ewma_tau{20.0f};  // seconds
+            SFXP1_31 ewma_alpha{ewma_alpha_from_tau(ewma_tau)};
+            SFXP1_31 one_minus_ewma_alpha{one_minus_ewma_alpha_from_tau(ewma_tau)};
+        };
+
+        explicit ResidencySma(const RuntimeCfg& cfg) : _cfg(cfg) {}
 
         // Returns smoothed residency as a percentage (SFXP22_10, 0–100%).
         SFXP22_10 evaluate(bool is_past_threshold)
         {
             const SFXP1_31 input_scaled = is_past_threshold ? (1U << precision) : 0U;
 
-            const SFXP1_31 new_ewma = (SFXP1_31)(((uint64_t)_ewma_alpha
+            const SFXP1_31 new_ewma = (SFXP1_31)(((uint64_t)_cfg.ewma_alpha
                                                   * (uint64_t)input_scaled)
                                                  >> (uint64_t)precision);
-            const SFXP1_31 old_ewma = (SFXP1_31)(((uint64_t)_one_minus_ewma_alpha
+            const SFXP1_31 old_ewma = (SFXP1_31)(((uint64_t)_cfg.one_minus_ewma_alpha
                                                   * (uint64_t)_ewma)
                                                  >> (uint64_t)precision);
             _ewma                   = new_ewma + old_ewma;
@@ -168,26 +181,10 @@ public:
         {
             _ewma      = 0;
             _residency = to_sfxp22_10(0);
-            recompute_ewma_alpha(false);
         }
 
     private:
-        void recompute_ewma_alpha(bool force)
-        {
-            if (!force && _cfg.ewma_tau == _tau_applied) {
-                return;
-            }
-            const float N         = _cfg.ewma_tau / loop_sample_period_s;
-            const float alpha_f   = 2.0f / (1.0f + N);
-            _ewma_alpha           = (SFXP1_31)(alpha_f * static_cast<float>(1U << precision));
-            _one_minus_ewma_alpha = (SFXP1_31)((1U << precision) - _ewma_alpha);
-            _tau_applied          = _cfg.ewma_tau;
-        }
-
         const RuntimeCfg& _cfg;
-        float             _tau_applied{0.0f};
-        SFXP1_31          _ewma_alpha{};
-        SFXP1_31          _one_minus_ewma_alpha{};
         SFXP1_31          _ewma{};
         SFXP22_10         _residency{};
     };

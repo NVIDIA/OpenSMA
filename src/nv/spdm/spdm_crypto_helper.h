@@ -83,7 +83,9 @@ enum class CryptoStatus : uint8_t
     FailApPublicKeyMismatch,
     FailApRollbackProtection,
     FailApImageSigningKeyRevoke,
-    FailUnknown,  // this FailUnknown should be the last value.
+    FailUnknown,       // this FailUnknown should be the last value.
+    ApAuthInProgress,  // full authentication is in progress
+    FailApNotFound,
     End,
 };
 

@@ -54,8 +54,10 @@ enum AppEvent : uint32_t
 };
 
 // Application event helper macros
-#define APP_EVENT_SET(event, bit)   ((event) |= (1U << (bit)))
-#define APP_EVENT_CLEAR(event, bit) ((event) &= ~(1U << (bit)))
+// Atomic against ISR/main races on Cortex-M33 via LDREX/STREX — no need to disable IRQs
+#define APP_EVENT_SET(event, bit) (void)__atomic_or_fetch(&event, 1U << bit, __ATOMIC_SEQ_CST)
+#define APP_EVENT_CLEAR(event, bit)                                                            \
+    (void)__atomic_and_fetch(&event, ~(1U << bit), __ATOMIC_SEQ_CST);
 #define APP_EVENT_CHECK(event, bit) ((event) & (1U << (bit)))
 
 // ECM NIC handle structure

@@ -38,6 +38,7 @@ struct usb_mctp_bufs
     USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
     uint8_t           tx_buffer[USB_MCTP_IN_BUFFER_LENGTH];
     volatile uint32_t rx_length;
+    volatile uint8_t  tx_busy;
 };
 
 #if USB_CONFIG_COMPOSITE
@@ -48,6 +49,7 @@ struct usb_hid_bufs
     USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
     uint8_t           tx_buffer[USB_HID_IN_BUFFER_LENGTH];
     volatile uint32_t rx_length;
+    volatile uint8_t  tx_busy;
 };
 #endif
 
@@ -65,15 +67,33 @@ struct usb_acm_bufs
 #endif
 
 #if USB_CONFIG_LSTP
+static_assert(nv::lstp::LstpNumChannels <= 32,
+              "Core1 LSTP supports up to 32 channels, extend tx_pending_mask");
+
+#define USB_SET_LSTP_TX_PENDING(bufs, channel_id) (bufs.tx_pending_mask |= (1U << channel_id))
+#define USB_CLEAR_LSTP_TX_PENDING(bufs, channel_id)                                            \
+    (bufs.tx_pending_mask &= ~(1U << channel_id))
+#define USB_IS_LSTP_TX_PENDING(bufs, channel_id) (bufs.tx_pending_mask & (1U << channel_id))
+
+#define USB_CLEAR_LSTP_TX_BUSY(bufs) (bufs.tx_busy_ch_id = nv::lstp::LstpNumChannels)
+#define USB_IS_LSTP_TX_BUSY(bufs)    (bufs.tx_busy_ch_id != nv::lstp::LstpNumChannels)
+
+struct usb_lstp_tx_bufs
+{
+    USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
+    uint8_t           buffer[USB_LSTP_IN_BUFFER_LENGTH];
+    volatile uint32_t length;
+};
+
 struct usb_lstp_bufs
 {
     USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
-    uint8_t rx_buffer[USB_LSTP_OUT_BUFFER_LENGTH];
-    USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
-    uint8_t           tx_buffer[USB_LSTP_IN_BUFFER_LENGTH];
+    uint8_t           rx_buffer[USB_LSTP_OUT_BUFFER_LENGTH];
     volatile uint32_t rx_length;
-    volatile uint8_t  tx_pending;
-    volatile uint32_t tx_length;
+    volatile uint32_t tx_pending_mask;
+    usb_lstp_tx_bufs  tx_buffers[nv::lstp::LstpNumChannels];
+    volatile uint8_t  tx_busy_ch_id;
+    uint8_t           tx_arb_cursor;
 };
 #endif
 

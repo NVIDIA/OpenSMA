@@ -139,6 +139,7 @@ public:
         nv::ipchandler::Id                        ipchandler_id;
         FruI2cInfo                                fru_i2c_info;
         sys::topology::TopologyInfo::PlatformInfo platform_info;
+        uint32_t                                  clock;
         Config(nv::ipc::TaskId          task_id_,
                const std::string_view&  task_name_,
                nv::mctp::Client         client_,
@@ -156,7 +157,8 @@ public:
                nv::ipchandler::Id       ipchandler_id_ = nv::ipchandler::Id::Unuse,
                FruI2cInfo               fru_i2c_info_  = FruI2cInfo{nv::i2c::Port::End, 0xFF},
                sys::topology::TopologyInfo::PlatformInfo platform_info_ =
-                   sys::topology::TopologyInfo::PlatformInfo{0, 0, 0, 0})
+                   sys::topology::TopologyInfo::PlatformInfo{0, 0, 0, 0},
+               uint32_t clock_ = 0)
         : task_id(task_id_)
         , task_name(task_name_)
         , client(client_)
@@ -174,6 +176,7 @@ public:
         , ipchandler_id(ipchandler_id_)
         , fru_i2c_info(fru_i2c_info_)
         , platform_info(platform_info_)
+        , clock(clock_)
         {}
     };
 

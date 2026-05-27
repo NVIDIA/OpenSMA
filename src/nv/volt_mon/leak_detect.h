@@ -27,6 +27,7 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
 #include <span>
@@ -36,12 +37,17 @@
 
 #include NV_IPC_CONFIG_H
 
+namespace nv::ipc {
+enum class TimerId;
+}
+
 namespace nv {
 
 // Forward declaration - only volt_mon::init() may call module init()
 namespace volt_mon {
 void init(bool, bool, bool, bool);
-}
+void init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
+}  // namespace volt_mon
 
 namespace leak_detect {
 
@@ -139,6 +145,16 @@ public:
     Status reset_sensor(uint8_t sensorId);
 
     /**
+     * @brief Process one ADC reading from the voltage monitor timer callback.
+     * @param sensorIdx Sensor index in the array
+     * @param adcReading ADC reading value
+     * @return Status::Ok if successful, error code otherwise
+     *
+     * @note Used by the timer-driven implementation only.
+     */
+    Status process_reading(uint8_t sensorIdx, Reading adcReading);
+
+    /**
      * @brief ADC interrupt callback
      * @param instance ADC instance that triggered interrupt
      * @param result ADC conversion result
@@ -153,6 +169,8 @@ public:
     std::array<uint8_t, 2> get_alert_pin_vals(VrGpioState state);
 
 private:
+    friend void nv::volt_mon::init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
+
     /**
      * @brief Initialize the leak detection system
      * @param enabled If false, skip initialization and mark as disabled
@@ -223,6 +241,7 @@ private:
      * @param state New state
      */
     void update_gpio_alert(uint8_t sensorId, State state, bool trigger_nsm_event);
+    void update_gpio_alert(uint8_t sensorId, State state);
 
     /**
      * @brief Update physical GPIO outputs based on aggregate sensor state.
@@ -241,6 +260,7 @@ private:
      * @param state New 2-bit state: 00=Nominal, 01=Leak, 10=Open Fault, 11=Short Fault
      */
     void update_virtual_gpio(uint8_t sensorId, VrGpioState state, bool trigger_nsm_event);
+    void update_virtual_gpio(uint8_t sensorId, VrGpioState state);
 
     /**
      * @brief Update hardware GPIO level

@@ -3644,18 +3644,20 @@ bool mctp::Nsm::get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value)
         return false;
     }
 
-    // Get port and pin from GpioSetup array
-    const auto& gpio_entry = nv::ipc::GpioSetup.at(gpio_index);
-    const auto  port       = std::get<0>(gpio_entry);
-    const auto  pin        = std::get<1>(gpio_entry);
-
     // Search through IoxConfigs to find the matching PinConfig
-    for (const auto& iox_config : nv::ipc::IoxConfigs) {
-        for (const auto& pin_config : iox_config.pinConfig) {
-            if (pin_config.port == port && pin_config.pin == pin) {
-                // Set pin_value based on GpioState and return true
-                pin_value = (pin_config.val == nv::gpio::GpioState::High) ? 1 : 0;
-                return true;
+    if constexpr (nv::ipc::EnableIoxEmulation) {
+        // Get port and pin from GpioSetup array
+        const auto& gpio_entry = nv::ipc::GpioSetup.at(gpio_index);
+        const auto  port       = std::get<0>(gpio_entry);
+        const auto  pin        = std::get<1>(gpio_entry);
+
+        for (const auto& iox_config : nv::ipc::IoxConfigs) {
+            for (const auto& pin_config : iox_config.pinConfig) {
+                if (pin_config.port == port && pin_config.pin == pin) {
+                    // Set pin_value based on GpioState and return true
+                    pin_value = (pin_config.val == nv::gpio::GpioState::High) ? 1 : 0;
+                    return true;
+                }
             }
         }
     }

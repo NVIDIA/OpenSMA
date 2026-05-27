@@ -72,6 +72,15 @@ public:
      */
     void pgood_volt_adc_isr(AdcInstance instance, const sys::adc::ADC::AdcConvResult& result);
 
+    /**
+     * @brief Process one ADC reading from the voltage monitor timer callback.
+     * @param instance ADC instance that produced the reading
+     * @param result ADC conversion result
+     *
+     * @note Used by the timer-driven implementation only.
+     */
+    void process_reading(AdcInstance instance, const sys::adc::ADC::AdcConvResult& result);
+
 private:
     /**
      * @brief Initialize the pgood voltage system
@@ -98,6 +107,7 @@ private:
                                  uint32_t   convValue,
                                  Threshold& thLow,
                                  Threshold& thHigh);
+    void update_sensor_state(uint8_t sensorIdx, Reading adcReading);
 };
 
 }  // namespace pgood_volt

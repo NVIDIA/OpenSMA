@@ -36,7 +36,7 @@
 #include "sys/usb/usb_device_spi.h"
 #include "mpu_syscall_numbers.h"
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
 #include "usb_device_cdc_acm.h"
 #endif
 
@@ -70,7 +70,7 @@ extern usb_device_class_struct_t g_UsbDeviceSpiConfig;
 #endif
 #endif
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
 extern usb_device_class_struct_t    g_UsbDeviceCdcVcomConfig;
 extern usb_device_endpoint_struct_t g_cdcVcomDicEndpoints[];
 #endif
@@ -87,7 +87,7 @@ namespace sys::usb {
 
 NV_SHARED_BSS usb_composite_struct_t g_UsbDevice;
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
 typedef struct _usb_cdc_acm_info
 {
     /**
@@ -616,7 +616,7 @@ NV_SHARED_DATA usb_device_class_config_struct_t g_UsbDeviceCompositeConfig[] = {
     },
 #endif
 #endif
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
     {
      Driver::usb_devicevcomcallback, /* VCOM class callback pointer */
  (class_handle_t) nullptr,        /* VCOM class handle */
@@ -681,7 +681,7 @@ NV_PRIVILEGED_FUNCTION uint8_t Driver::init(void* mctp_buffer0,
 #endif
 #endif
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
 #if defined(USB_CONFIG_MCTP)
         s_vcomHandle = g_UsbDeviceCompositeConfigList.config[1].classHandle;
 #endif
@@ -927,7 +927,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
                                            USB_MCTP_ENDPOINT_OUT,
                                            g_UsbDevice.mctp_buffer.at(g_UsbDevice.buffer_index),
                                            USB_MCTP_OUT_BUFFER_LENGTH);
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
                 // Initialize vcom endpoint with separate buffer
                 Driver::usb_vcomsetconfigure(s_vcomHandle, *temp8);
 #endif
@@ -982,7 +982,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
                     }
                 }
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
                 else if (interface == USB_CDC_VCOM_CIC_INTERFACE_INDEX) {
                     if (alternateSetting < USB_CDC_VCOM_CIC_INTERFACE_ALTERNATE_COUNT) {
                         g_UsbDevice
@@ -1070,7 +1070,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
             break;
 #endif
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
             // more case TO-BE-IMPLEMENTED
 #endif
 

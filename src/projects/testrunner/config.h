@@ -145,6 +145,7 @@ enum class TaskId
     Ubridge    = Privileged + 1,
     Flash      = Privileged + 2,
     Diag       = Privileged + 3,
+    GpioMon    = Privileged + 4,
     EndPrivileged,
     End   = EndPrivileged,
     Timer = End,
@@ -358,6 +359,7 @@ enum class EventId
     Lstp,
     UartBridgeEvent,
     Ssif,
+    GpioMonEvent,
     End
 };
 
@@ -383,6 +385,7 @@ enum class TimerId
     Ap2Status,
     Ap3Status,
     EepromUpdate,
+    GpioMonScan,
     EndpointStatusChangeStart,
     EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     I2CTargetTimeoutCheck,
@@ -477,7 +480,8 @@ enum BootedEventBits : uint32_t
     SocPwrSmoothing = nv::common::bit(10),
     Ssif            = nv::common::bit(11),
     Nhp             = nv::common::bit(12),
-    BootStatusMask  = (nv::common::bit(13) - 1),
+    GpioMon         = nv::common::bit(13),
+    BootStatusMask  = (nv::common::bit(14) - 1),
 };
 
 constexpr uint32_t WatchdogResetMs       = 2000;
@@ -641,10 +645,13 @@ constexpr bool Spi_Available = false;
 constexpr bool I2cTransparent = false;
 
 /******** ******** Iox Emulation Config Starts ******** ********/
-constexpr bool                                          EnableIoxEmulation = false;
-constexpr inline size_t                                 IoxNum             = 0;
-constexpr inline uint8_t                                IoxI2cBaseAddr     = 0x50;
-constexpr uint32_t                                      IoxFilterSeconds   = 0;
+constexpr bool                                          EnableIoxEmulation            = false;
+constexpr inline size_t                                 IoxNum                        = 0;
+constexpr inline uint8_t                                IoxI2cBaseAddr                = 0x50;
+constexpr uint32_t                                      IoxFilterSeconds              = 0;
+constexpr uint32_t                                      PWR_BRAKE_VR_OFFSET           = 2;
+constexpr uint32_t                                      PWR_BRAKE_SOC_ACTIVE_VR_PIN   = 6;
+constexpr uint32_t                                      PWR_BRAKE_THERM_ACTIVE_VR_PIN = 7;
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
@@ -1026,6 +1033,10 @@ constexpr uint32_t PwrBrakeGpioPin             = nv::ipc::MCU_PWR_BRAKE_L_PIN;
 constexpr uint32_t McuThermWarnPort            = nv::ipc::MCU_THERM_WARN_L_PORT;
 constexpr uint32_t McuThermWarnPin             = nv::ipc::MCU_THERM_WARN_L_PIN;
 constexpr float    OvrmMaxDacOutputV           = 2.2;
+constexpr uint8_t  McuThermWarnIoxAddr = nv::ipc::IoxI2cBaseAddr + nv::ipc::PWR_BRAKE_VR_OFFSET;
+constexpr uint8_t  McuThermWarnIoxPin  = nv::ipc::PWR_BRAKE_THERM_ACTIVE_VR_PIN;
+constexpr uint8_t  SocPwrBrakeIoxAddr  = nv::ipc::IoxI2cBaseAddr + nv::ipc::PWR_BRAKE_VR_OFFSET;
+constexpr uint8_t  SocPwrBrakeIoxPin   = nv::ipc::PWR_BRAKE_SOC_ACTIVE_VR_PIN;
 
 // SoC voltage measurement configuration
 constexpr float SocAdcRefVoltageV = 3.3;  // ADC reference voltage (V)

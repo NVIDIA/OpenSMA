@@ -82,15 +82,24 @@ public:
 
     enum Event : nv::ipc::Event::Bits
     {
-        CtrlDone    = 1_bit,
-        CtrlBusBusy = 2_bit,
-        CtrlNak     = 3_bit,
-        CtrlArbLost = 4_bit,
-        CtrlError   = 5_bit,
+        CtrlDone          = 1_bit,
+        CtrlBusBusy       = 2_bit,
+        CtrlNak           = 3_bit,
+        CtrlArbLost       = 4_bit,
+        CtrlError         = 5_bit,
+        CtrlTimeout       = 6_bit,
+        CtrlFifoError     = 7_bit,
+        CtrlBitError      = 8_bit,
+        CtrlPinLowTimeout = 9_bit,
+        CtrlDmaError      = 10_bit,
+        CtrlNoTransfer    = 11_bit,
     };
 
     static constexpr auto CtrlWaitEvents = Event::CtrlDone | Event::CtrlBusBusy | Event::CtrlNak
-                                         | Event::CtrlArbLost | Event::CtrlError;
+                                         | Event::CtrlArbLost | Event::CtrlError
+                                         | Event::CtrlTimeout | Event::CtrlFifoError
+                                         | Event::CtrlBitError | Event::CtrlPinLowTimeout
+                                         | Event::CtrlDmaError | Event::CtrlNoTransfer;
 
     enum class RequestType : uint16_t
     {
@@ -187,17 +196,6 @@ private:
         uint8_t          msg[MctpI2cpayload];
     };
 
-    enum class Error : uint8_t
-    {
-        Ok,
-        CtrlBusBusy,
-        CtrlNak,
-        CtrlArbLost,
-        CtrlError,
-        CtrlTimeout,
-        TargetRxError,
-    };
-
     enum class APStatus : uint8_t
     {
         Querying,
@@ -233,7 +231,7 @@ private:
     void handle_update_routing_table();
     void forward(nv::mctp::Packet& packet, uint8_t command_code);
     bool transmit(const I2cPacket& packet);
-    void handle_error(Error reason);
+    void handle_error(I2cStatus status);
     void set_tmp_sensor();
     void handle_i2c_request(std::span<uint8_t> buffer);
     bool handle_eeprom_cache_request(const I2cRequest&  request,
@@ -244,7 +242,8 @@ private:
     void handle_i2c_recovery(std::span<uint8_t> buffer);
     void handle_i2c_loopback_test();
 
-    I2cStatus i2c_read_recvlen_wrapper(uint8_t            address,
+    I2cStatus smbus_block_read_wrapper(uint8_t            address,
+                                       std::span<uint8_t> write_buffer,
                                        std::span<uint8_t> read_buffer,
                                        I2cFlags           flags,
                                        size_t&            read_len);

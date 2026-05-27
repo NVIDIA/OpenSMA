@@ -161,4 +161,16 @@ __attribute__((weak)) Ccode handle_get_power_smooth_raw_readback(
     return Ccode::ErrorUnsupportedCmd;  // Feature not available
 }
 
+__attribute__((weak)) Ccode handle_set_soc_calib_coefficient(
+    [[maybe_unused]] uint8_t coeff_id, [[maybe_unused]] uint32_t coefficient_value)
+{
+    return Ccode::ErrorUnsupportedCmd;  // Feature not available
+}
+
+__attribute__((weak)) Ccode handle_get_soc_calib_coefficient([[maybe_unused]] uint8_t coeff_id,
+                                                             [[maybe_unused]] NsmPktResp& ntx)
+{
+    return Ccode::ErrorUnsupportedCmd;  // Feature not available
+}
+
 }  // namespace nv::mctp::nsm_pwr_smoothing_handlers

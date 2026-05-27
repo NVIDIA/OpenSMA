@@ -272,7 +272,7 @@ if [[ "$SIGN_KEYSET" == "local"* ]]; then
     
     # Add UBS_DOCKER argument for mcxn556 platforms
     if [[ "$PLATFORM" == mcxn556* ]]; then
-        LOCAL_SIGN_CMD+=" UBS_DOCKER=gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs:556_latest"
+        LOCAL_SIGN_CMD+=" UBS_DOCKER=gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:0.0.1"
         echo "Assign UBS_DOCKER for mcxn556 platform local signing"
     fi
 

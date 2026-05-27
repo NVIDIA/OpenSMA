@@ -110,8 +110,22 @@ static struct usb_hid_bufs g_hid = {};
 static struct usb_acm_bufs g_acm = {};
 #endif /* USB_DEVICE_CONFIG_CDC_ACM */
 #if USB_CONFIG_LSTP
-static struct usb_lstp_bufs g_lstp = {};
+static struct usb_lstp_bufs g_lstp = {.tx_busy_ch_id = nv::lstp::LstpNumChannels};
 #endif /* USB_CONFIG_LSTP */
+
+static void clear_in_endpoint_busy(void)
+{
+    g_mctp.tx_busy = 0;
+#if USB_CONFIG_COMPOSITE
+    g_hid.tx_busy = 0;
+#endif
+#if USB_DEVICE_CONFIG_CDC_ACM
+    g_acm.tx_busy = 0;
+#endif
+#if USB_CONFIG_LSTP
+    USB_CLEAR_LSTP_TX_BUSY(g_lstp);
+#endif
+}
 
 struct usb_mctp_bufs* get_usb_mctp_bufs(void)
 {
@@ -263,6 +277,7 @@ usb_status_t USB_DeviceMctpInCallback(usb_device_handle                         
     (void)handle;
     (void)message;
     (void)callbackParam;
+    g_mctp.tx_busy = 0;
     return kStatus_USB_Success;
 }
 
@@ -296,6 +311,7 @@ usb_status_t USB_DeviceHidInCallback(usb_device_handle                          
     (void)handle;
     (void)message;
     (void)callbackParam;
+    g_hid.tx_busy = 0;
     return kStatus_USB_Success;
 }
 #endif /* USB_CONFIG_COMPOSITE */
@@ -328,6 +344,7 @@ usb_status_t USB_DeviceLstpInCallback(usb_device_handle                         
     (void)handle;
     (void)message;
     (void)callbackParam;
+    USB_CLEAR_LSTP_TX_BUSY(g_lstp);
     return kStatus_USB_Success;
 }
 #endif /* USB_CONFIG_LSTP */
@@ -399,6 +416,7 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void* 
             ecm.handle->configuration = 0U;
             ecm.handle->attachStatus  = 0U;
             ecm.handle->linkStatus    = 0U;
+            clear_in_endpoint_busy();
 
             if (ecm.appEvent) {
                 nv::ecm_bm::ecm_event_clear(*ecm.appEvent);
@@ -410,6 +428,7 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void* 
 #if (defined(USB_DEVICE_CONFIG_DETACH_ENABLE) && (USB_DEVICE_CONFIG_DETACH_ENABLE > 0U))
         case kUSB_DeviceEventDetach:
             ecm.handle->attachStatus = 0U;
+            clear_in_endpoint_busy();
             if (ecm.appEvent) {
                 nv::ecm_bm::ecm_event_clear(*ecm.appEvent);
             }
@@ -442,6 +461,7 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void* 
 
         case kUSB_DeviceEventSetConfiguration:
             ecm.handle->configuration = *reinterpret_cast<uint8_t*>(param);
+            clear_in_endpoint_busy();
 
             if (*reinterpret_cast<uint8_t*>(param) == USB_COMPOSITE_CONFIGURE_INDEX) {
                 // Initialize MCTP bulk endpoints with callbacks

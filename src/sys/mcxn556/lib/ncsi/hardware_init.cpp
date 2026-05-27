@@ -24,6 +24,8 @@
 #include "fsl_port.h"
 #include "fsl_spc.h"
 
+#include NV_IPC_CONFIG_H
+
 #include "eth_adapter.h"
 #include "hardware_init.h"
 #include "usb_device_config.h"
@@ -57,19 +59,26 @@
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-// ENET clock table
-extern const clock_ip_name_t s_enetClock[];
-
 // ENET_INTERRUPT_PRIORITY is defined in hardware_init.h
+
+namespace {
+
+constexpr uint16_t EnetTxDriveStrength = nv::ncsi::EnableEnetTxHighDrive
+                                           ? static_cast<uint16_t>(kPORT_HighDriveStrength)
+                                           : static_cast<uint16_t>(kPORT_LowDriveStrength);
+
+}  // namespace
 
 /*******************************************************************************
  * Variables
  ******************************************************************************/
 // Board ENET instance
+extern "C" {
 ENET_Type* BOARD_Enet = ENET0;
 
 // System clock for ENET (used by SDK)
 uint32_t BOARD_PhySysClock = 0U;
+}
 
 /*******************************************************************************
  * Code
@@ -88,8 +97,22 @@ static void ECM_InitEnetPins(void)
     /* Enable clock for PORT1 */
     CLOCK_EnableClock(kCLOCK_Port1);
 
-    /* Common pin config for ENET */
-    const port_pin_config_t enet_pin_config = {
+    /* TX pin config. Some boards need high drive for RMII clock/data rise/fall margin. */
+    const port_pin_config_t enet_tx_pin_config = {
+        .pullSelect          = kPORT_PullDisable,
+        .pullValueSelect     = kPORT_LowPullResistor,
+        .slewRate            = kPORT_FastSlewRate,
+        .passiveFilterEnable = kPORT_PassiveFilterDisable,
+        .openDrainEnable     = kPORT_OpenDrainDisable,
+        .driveStrength       = EnetTxDriveStrength,
+        .mux                 = kPORT_MuxAlt9, /* ENET function */
+        .inputBuffer         = kPORT_InputBufferEnable,
+        .invertInput         = kPORT_InputNormal,
+        .lockRegister        = kPORT_UnlockRegister,
+    };
+
+    /* RX pin config - drive strength is unused for input-only pins; left at Low. */
+    const port_pin_config_t enet_rx_pin_config = {
         .pullSelect          = kPORT_PullDisable,
         .pullValueSelect     = kPORT_LowPullResistor,
         .slewRate            = kPORT_FastSlewRate,
@@ -103,15 +126,15 @@ static void ECM_InitEnetPins(void)
     };
 
     /* RMII TX pins */
-    PORT_SetPinConfig(PORT1, 4U, &enet_pin_config); /* ENET0_TX_CLK */
-    PORT_SetPinConfig(PORT1, 5U, &enet_pin_config); /* ENET0_TXEN */
-    PORT_SetPinConfig(PORT1, 6U, &enet_pin_config); /* ENET0_TXD0 */
-    PORT_SetPinConfig(PORT1, 7U, &enet_pin_config); /* ENET0_TXD1 */
+    PORT_SetPinConfig(PORT1, 4U, &enet_tx_pin_config); /* ENET0_TX_CLK */
+    PORT_SetPinConfig(PORT1, 5U, &enet_tx_pin_config); /* ENET0_TXEN */
+    PORT_SetPinConfig(PORT1, 6U, &enet_tx_pin_config); /* ENET0_TXD0 */
+    PORT_SetPinConfig(PORT1, 7U, &enet_tx_pin_config); /* ENET0_TXD1 */
 
     /* RMII RX pins */
-    PORT_SetPinConfig(PORT1, 13U, &enet_pin_config); /* ENET0_RXDV */
-    PORT_SetPinConfig(PORT1, 14U, &enet_pin_config); /* ENET0_RXD0 */
-    PORT_SetPinConfig(PORT1, 15U, &enet_pin_config); /* ENET0_RXD1 */
+    PORT_SetPinConfig(PORT1, 13U, &enet_rx_pin_config); /* ENET0_RXDV */
+    PORT_SetPinConfig(PORT1, 14U, &enet_rx_pin_config); /* ENET0_RXD0 */
+    PORT_SetPinConfig(PORT1, 15U, &enet_rx_pin_config); /* ENET0_RXD1 */
 }
 
 /**
@@ -120,7 +143,7 @@ static void ECM_InitEnetPins(void)
  * PHY runs in default auto-negotiation mode (no MDIO control).
  * RMII pins are initialized, MDIO pins are skipped.
  */
-void ECM_InitEnetHardware(void)
+extern "C" void ECM_InitEnetHardware(void)
 {
     // Initialize ENET pins (RMII interface only, MDIO skipped)
     ECM_InitEnetPins();
@@ -159,31 +182,29 @@ void ECM_InitEnetHardware(void)
  * USB IRQ Handlers
  ******************************************************************************/
 // External USB device handle for ISR
+extern "C" {
 extern usb_device_handle g_ecm_device_handle;
+}
 
 #if defined(USB_DEVICE_CONFIG_EHCI) && (USB_DEVICE_CONFIG_EHCI > 0U)
-extern void USB_DeviceEhciIsrFunction(void* deviceHandle);
-void        USB1_HS_IRQHandler(void)
+extern "C" void USB1_HS_IRQHandler(void)
 {
     USB_DeviceEhciIsrFunction(g_ecm_device_handle);
 }
 #elif defined(USB_DEVICE_CONFIG_LPCIP3511HS) && (USB_DEVICE_CONFIG_LPCIP3511HS > 0U)
-extern void USB_DeviceLpcIp3511IsrFunction(void* deviceHandle);
-void        USB1_HS_IRQHandler(void)
+extern "C" void USB1_HS_IRQHandler(void)
 {
     USB_DeviceLpcIp3511IsrFunction(g_ecm_device_handle);
 }
 #endif
 
 #if defined(USB_DEVICE_CONFIG_KHCI) && (USB_DEVICE_CONFIG_KHCI > 0U)
-extern void USB_DeviceKhciIsrFunction(void* deviceHandle);
-void        USB0_FS_IRQHandler(void)
+extern "C" void USB0_FS_IRQHandler(void)
 {
     USB_DeviceKhciIsrFunction(g_ecm_device_handle);
 }
 #elif defined(USB_DEVICE_CONFIG_LPCIP3511FS) && (USB_DEVICE_CONFIG_LPCIP3511FS > 0U)
-extern void USB_DeviceLpcIp3511IsrFunction(void* deviceHandle);
-void        USB0_FS_IRQHandler(void)
+extern "C" void USB0_FS_IRQHandler(void)
 {
     USB_DeviceLpcIp3511IsrFunction(g_ecm_device_handle);
 }
@@ -193,9 +214,7 @@ void        USB0_FS_IRQHandler(void)
  * USB Device Task Function
  ******************************************************************************/
 #if defined(USB_DEVICE_CONFIG_USE_TASK) && (USB_DEVICE_CONFIG_USE_TASK > 0U)
-extern void USB_DeviceTaskFunction(void* deviceHandle);
-
-void USB_DeviceTaskFn(void* deviceHandle)
+extern "C" void USB_DeviceTaskFn(void* deviceHandle)
 {
     USB_DeviceTaskFunction(deviceHandle);
 }
@@ -204,7 +223,7 @@ void USB_DeviceTaskFn(void* deviceHandle)
 /*******************************************************************************
  * USB Device Clock Init
  ******************************************************************************/
-void USB_DeviceClockInit(void)
+extern "C" void USB_DeviceClockInit(void)
 {
 #if defined(USB_DEVICE_CONFIG_EHCI) && (USB_DEVICE_CONFIG_EHCI > 0U)
     usb_phy_config_struct_t phyConfig = {
@@ -270,7 +289,7 @@ void USB_DeviceClockInit(void)
 /*******************************************************************************
  * USB Device ISR Enable
  ******************************************************************************/
-void USB_DeviceIsrEnable(void)
+extern "C" void USB_DeviceIsrEnable(void)
 {
     uint8_t irqNumber;
 

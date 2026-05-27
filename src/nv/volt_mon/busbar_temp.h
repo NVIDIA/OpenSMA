@@ -85,6 +85,16 @@ public:
     Status get_thresholds(uint8_t sensorIdx, ThresholdBusbar& thConfig);
 
     /**
+     * @brief Process one ADC reading from the voltage monitor timer callback.
+     * @param sensorIdx Sensor index in the array
+     * @param adcReading ADC reading value
+     * @return Status::Ok if successful, error code otherwise
+     *
+     * @note Used by the timer-driven implementation only.
+     */
+    Status process_reading(uint8_t sensorIdx, Reading adcReading);
+
+    /**
      * @brief Get virtual GPIO state (2-bit state)
      * @return 2-bit state: 00=Nominal, 01=NotUsed, 10=NotUsed, 11=Abnormal
      */
@@ -161,6 +171,7 @@ private:
      * @param sensorId Sensor ID
      */
     void update_virtual_gpio(uint8_t sensorId, VrGpioState state, bool trigger_nsm_event);
+    void update_virtual_gpio(uint8_t sensorId, VrGpioState state);
 };
 
 }  // namespace busbar_temp

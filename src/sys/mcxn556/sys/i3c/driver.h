@@ -27,14 +27,14 @@ namespace sys::i3c {
 class Driver
 {
 protected:
-    constexpr static uint32_t Clock = 25000000UL;
-    I3C_Type*                 _base = nullptr;
-    i3c_master_config_t       _master_config;
-    i3c_master_edma_handle_t  _i3c_m_handle;
-    edma_handle_t             _tx_edma_handle;
-    edma_handle_t             _rx_edma_handle;
-    void                      i2c_stop();
-    nv::i2c::I2cStatus        to_status(status_t status);
+    uint32_t                 _clock = 25000000UL;
+    I3C_Type*                _base  = nullptr;
+    i3c_master_config_t      _master_config;
+    i3c_master_edma_handle_t _i3c_m_handle;
+    edma_handle_t            _tx_edma_handle;
+    edma_handle_t            _rx_edma_handle;
+    void                     i2c_stop();
+    nv::i2c::I2cStatus       to_status(status_t status);
 };
 
 }  // namespace sys::i3c

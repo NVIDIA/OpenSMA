@@ -24,7 +24,7 @@
 using namespace nv;
 using namespace ipc;
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
 /* cdc virtual com information */
 /* Define endpoint for communication class */
 NV_SHARED_DATA usb_device_endpoint_struct_t
@@ -103,7 +103,7 @@ NV_SHARED_DATA usb_device_class_struct_t g_UsbDeviceCdcVcomConfig = {
      + USB_DESCRIPTOR_LENGTH_ENDPOINT + USB_DESCRIPTOR_LENGTH_ENDPOINT)
 #else
 #define USB_DESCRIPTOR_LENGTH_VCOM (0U)
-#endif  // defined(USB_CONFIG_UART_BRIDGE)
+#endif  // USB_CONFIG_UART_BRIDGE || USB_CONFIG_GPIO_MONITOR
 
 /* MCTP class endpoint information */
 NV_SHARED_DATA usb_device_endpoint_struct_t
@@ -167,7 +167,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceDescriptor[] = {
                                                             Decimal (i.e., 2.10 is 210H).
                                                           */
 
-#if !defined(USB_CONFIG_UART_BRIDGE)
+#if !(defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR))
     USB_MCTP_GENERIC_CLASS,     // bDeviceClass: Device class (0 for each interface
                                 // defines class)
     USB_MCTP_GENERIC_SUBCLASS,  // bDeviceSubClass: Device subclass
@@ -268,7 +268,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_HIGH(HS_MCTP_CLASS_OUT_PACKET_SIZE),
     0x01,  // bInterval (1 frame)
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
     /* Interface Association Descriptor */
     /* Size of this descriptor in bytes */
     USB_IAD_DESC_SIZE,
@@ -850,7 +850,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_HIGH(HS_NV_SMA_SPI_CLASS_OUT_PACKET_SIZE),
     0x01,  // bInterval (1 frame)
 #endif
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
     /* Interface Association Descriptor */
     /* Size of this descriptor in bytes */
     USB_IAD_DESC_SIZE,
@@ -1131,7 +1131,7 @@ usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
                     USB_SHORT_TO_LITTLE_ENDIAN_ADDRESS(HS_MCTP_CLASS_OUT_PACKET_SIZE,
                                                        descriptorHead->endpoint.wMaxPacketSize);
                 }
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
                 // CDC VCOM Endpoints
                 else if ((USB_CDC_VCOM_CIC_INTERRUPT_IN_ENDPOINT
                           == (descriptorHead->endpoint.bEndpointAddress
@@ -1231,7 +1231,7 @@ usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
                     USB_SHORT_TO_LITTLE_ENDIAN_ADDRESS(FS_MCTP_CLASS_OUT_PACKET_SIZE,
                                                        descriptorHead->endpoint.wMaxPacketSize);
                 }
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
                 // CDC VCOM Endpoints
                 else if ((USB_CDC_VCOM_CIC_INTERRUPT_IN_ENDPOINT
                           == (descriptorHead->endpoint.bEndpointAddress
@@ -1327,7 +1327,7 @@ usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
         }
     }
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) || defined(USB_CONFIG_GPIO_MONITOR)
     for (int i = 0; i < USB_CDC_VCOM_CIC_ENDPOINT_COUNT; i++) {
         if (USB_SPEED_HIGH == speed) {
             g_cdcVcomCicEndpoints[i].maxPacketSize = HS_CDC_VCOM_INTERRUPT_IN_PACKET_SIZE;

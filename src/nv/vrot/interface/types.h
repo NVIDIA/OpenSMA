@@ -44,6 +44,12 @@ enum class ApOpErrCode : uint8_t
     Timeout,
     Busy,
     NotSupported,
+    // Returned by AP-by-component-id surface (`nv::vrot::ap::*`) when the
+    // caller-supplied PLDM `component_id` does not match any AP in the
+    // project's `ApList`. Distinct from `InvalidParam` so callers can
+    // distinguish "this AP is not configured for this project" (a legitimate
+    // outcome on AP-less projects) from real argument-validation failures.
+    UnknownComponent,
 };
 
 enum class DebugTokenFeature : uint8_t

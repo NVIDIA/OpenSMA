@@ -290,7 +290,7 @@ Task::Task(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _client(config.client)
 , _queue(nv::ipc::Queue::make(config.queue_id))
-, _driver(config.port_id, config.freq, config.is_gpu, this, config.event_id)
+, _driver(config.port_id, config.freq, config.is_gpu, this, config.event_id, config.clock)
 , _boot_event(config.boot_event)
 , _is_gpu(config.is_gpu)
 , _gpu_recovery_addr(config.gpu_recovery_addr)

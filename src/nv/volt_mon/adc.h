@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include "common.h"
+#include "nv/volt_mon/common.h"
 #include <atomic>
 #include "sys/adc/adc.h"
 #include <array>
@@ -116,6 +116,13 @@ public:
 
     static bool adc_isr_get_conv_result(AdcInstance                   adcId,
                                         sys::adc::ADC::AdcConvResult& result);
+
+    /*
+     * Timer-driven implementation API. These are defined by volt_mon/timer and are
+     * unused by the legacy ISR-driven implementation.
+     */
+    static void trigger_sampling(AdcInstance adcId);
+    static bool pop_result(AdcInstance adcId, sys::adc::ADC::AdcConvResult& result);
 
     static const char* to_float_string(uint16_t value);
 

@@ -66,7 +66,12 @@ public:
         uint32_t i3c_pp;
     };
 
-    Driver(Port port, Freq freq, bool is_gpu, void* task, nv::ipc::EventId event_id);
+    Driver(Port             port,
+           Freq             freq,
+           bool             is_gpu,
+           void*            task,
+           nv::ipc::EventId event_id,
+           uint32_t         clock = 0);
     constexpr Port port() const { return _port; }
     void           set_event(Event event);
     void           init();

@@ -69,6 +69,7 @@ void DeviceManager::identify_power_sensors()
             if (verified) {
                 add_hsc_device(sensor.address,
                                sensor.device_type,
+                               sensor.power_input_coeff,
                                hsc_row,
                                sensor.temp_sensor_id,
                                sensor.power_sensor_id,
@@ -103,6 +104,7 @@ void DeviceManager::identify_power_sensors()
             // Add to device list with NSM Type 3 sensor IDs, continue scanning (don't break)
             add_hscc_device(sensor.address,
                             sensor.device_type,
+                            sensor.power_input_coeff,
                             hscc_idx,
                             sensor.temp_sensor_id,
                             sensor.power_sensor_id,
@@ -218,6 +220,7 @@ DeviceManager::read_mfr_info(Port port, uint8_t address, uint32_t& mfr_id, uint6
 
 void DeviceManager::add_hsc_device(uint8_t                           address,
                                    DeviceType                        type,
+                                   PowerSensorDirectFormatCoeff      power_input_coeff,
                                    uint8_t                           variant_index,
                                    nv::mctp::Type3TemperatureSensors temp_id,
                                    nv::mctp::Type3PowerSensors       power_id,
@@ -226,8 +229,15 @@ void DeviceManager::add_hsc_device(uint8_t                           address,
                                    nv::mctp::PowerSensorFaults       alert_id)
 {
     if (hsc_count_ < MAX_HSC_DEVICES) {
-        hsc_devices_.at(hsc_count_) = IdentifiedDevice{
-            address, type, variant_index, temp_id, power_id, vout_id, vin_id, alert_id};
+        hsc_devices_.at(hsc_count_) = IdentifiedDevice{address,
+                                                       type,
+                                                       power_input_coeff,
+                                                       variant_index,
+                                                       temp_id,
+                                                       power_id,
+                                                       vout_id,
+                                                       vin_id,
+                                                       alert_id};
         hsc_count_++;
     }
     else {
@@ -237,6 +247,7 @@ void DeviceManager::add_hsc_device(uint8_t                           address,
 
 void DeviceManager::add_hscc_device(uint8_t                           address,
                                     DeviceType                        type,
+                                    PowerSensorDirectFormatCoeff      power_input_coeff,
                                     uint8_t                           index,
                                     nv::mctp::Type3TemperatureSensors temp_id,
                                     nv::mctp::Type3PowerSensors       power_id,
@@ -245,8 +256,15 @@ void DeviceManager::add_hscc_device(uint8_t                           address,
                                     nv::mctp::PowerSensorFaults       alert_id)
 {
     if (hscc_count_ < MAX_HSCC_DEVICES) {
-        hscc_devices_.at(hscc_count_) = IdentifiedDevice{
-            address, type, index, temp_id, power_id, vout_id, vin_id, alert_id};
+        hscc_devices_.at(hscc_count_) = IdentifiedDevice{address,
+                                                         type,
+                                                         power_input_coeff,
+                                                         index,
+                                                         temp_id,
+                                                         power_id,
+                                                         vout_id,
+                                                         vin_id,
+                                                         alert_id};
         hscc_count_++;
     }
     else {
@@ -402,6 +420,12 @@ I2cStatus DeviceManager::hsc_dispatch(uint8_t device_index, Func func) const
     switch (device.type) {
         case DeviceType::LM5066I: {
             Lm5066i sensor(POWER_SENSOR_PORT, device.address);
+            if (has_power_input_coeff(device.power_input_coeff)) {
+                sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                             device.power_input_coeff.b,
+                                             device.power_input_coeff.exp_mult,
+                                             device.power_input_coeff.mask);
+            }
             return func(sensor);
         }
         case DeviceType::MP5926: {

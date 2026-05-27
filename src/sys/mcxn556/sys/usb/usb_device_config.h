@@ -37,7 +37,11 @@
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)
 #endif
 #endif
-#if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)
+#if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)                           \
+    && defined(USB_CONFIG_GPIO_MONITOR) && (USB_CONFIG_GPIO_MONITOR > 0U)
+#error "Only one CDC-ACM VCOM owner can be enabled per build"
+#elif (defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U))                       \
+    || (defined(USB_CONFIG_GPIO_MONITOR) && (USB_CONFIG_GPIO_MONITOR > 0U))
 #ifndef USB_DEVICE_CONFIG_CDC_ACM
 #define USB_DEVICE_CONFIG_CDC_ACM (1U)
 #endif

@@ -24,7 +24,7 @@
             <file path="board/pin_mux.h" update_enabled="true"/>
          </generated_project_files>
          <pins_profile>
-            <processor_version>25.09.0</processor_version>
+            <processor_version>26.03.20</processor_version>
             <pin_labels>
                <pin_label pin_num="T8" pin_signal="PIO4_15/WUU0_IN21/TRIG_OUT4/USB1_VBUS_DIG/CT4_MAT3/FLEXIO0_D23/ADC0_A1/CMP0_IN4P" label="VMON_12V_SSD6_DIV" identifier="VMON_12V_SSD6_DIV"/>
                <pin_label pin_num="T10" pin_signal="PIO4_20/TRIG_IN8/FC2_P4/CT2_MAT0/FLEXIO0_D28/ADC1_A6" label="V_SSD4_DIS" identifier="V_SSD4_DIS"/>
@@ -592,13 +592,13 @@
             </function>
          </functions_list>
       </pins>
-      <clocks name="Clocks" version="18.0" enabled="true" update_project_code="true">
+      <clocks name="Clocks" version="20.0" enabled="true" update_project_code="true">
          <generated_project_files>
             <file path="board/clock_config.c" update_enabled="true"/>
             <file path="board/clock_config.h" update_enabled="true"/>
          </generated_project_files>
          <clocks_profile>
-            <processor_version>25.09.0</processor_version>
+            <processor_version>26.03.20</processor_version>
          </clocks_profile>
          <clock_configurations>
             <clock_configuration name="BOARD_BootClockFRO12M" id_prefix="" prefix_user_defined="false">
@@ -835,6 +835,8 @@
                   <clock_output id="PLL0_CLK_clock.outFreq" value="150 MHz" locked="false" accuracy=""/>
                   <clock_output id="Slow_clock.outFreq" value="37.5 MHz" locked="false" accuracy=""/>
                   <clock_output id="System_clock.outFreq" value="150 MHz" locked="false" accuracy=""/>
+                  <clock_output id="WDT0_clock.outFreq" value="1 MHz" locked="false" accuracy=""/>
+                  <clock_output id="WDT1_clock.outFreq" value="1 MHz" locked="false" accuracy=""/>
                   <clock_output id="gdet_clock.outFreq" value="48 MHz" locked="false" accuracy=""/>
                   <clock_output id="trng_clock.outFreq" value="48 MHz" locked="false" accuracy=""/>
                </clock_outputs>
@@ -896,6 +898,8 @@
                   <setting id="SYSCON.I3C1FCLKSTCSEL.sel" value="SYSCON.I3C1FCLKSEL" locked="false"/>
                   <setting id="SYSCON.PLLCLKDIVSEL.sel" value="SYSCON.pll1_clk0" locked="false"/>
                   <setting id="SYSCON_CLOCK_CTRL_FRO1MHZ_CLK_ENA_CFG" value="Enabled" locked="false"/>
+                  <setting id="WDT0CLKDIV_HALT" value="Enable" locked="false"/>
+                  <setting id="WDT1CLKDIV_HALT" value="Enable" locked="false"/>
                </clock_settings>
                <called_from_default_init>true</called_from_default_init>
             </clock_configuration>
@@ -903,9 +907,14 @@
                <description></description>
                <options/>
                <dependencies>
-                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.EXTAL" description="&apos;EXTAL&apos; (Pins tool id: SCG0.EXTAL, Clocks tool id: SCG.EXTAL) needs to be routed" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.extal" description="&apos;EXTAL&apos; (Pins tool id: SCG0.extal, Clocks tool id: SCG.EXTAL) needs to be routed" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
                      <feature name="routed" evaluation="">
                         <data>true</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="SCG0.extal" description="&apos;EXTAL&apos; (Pins tool id: SCG0.extal, Clocks tool id: SCG.EXTAL) needs to have &apos;INPUT&apos; direction" problem_level="1" source="Clocks:BOARD_BootClockPLL100M">
+                     <feature name="direction" evaluation="">
+                        <data>INPUT</data>
                      </feature>
                   </dependency>
                   <dependency resourceType="SWComponent" resourceId="platform.drivers.common" description="Clocks initialization requires the COMMON Driver in the project." problem_level="2" source="Clocks:BOARD_BootClockPLL100M">
@@ -1017,7 +1026,7 @@
             </dependency>
             <dependency resourceType="SWComponent" resourceId="platform.drivers.vref_1" description="An unsupported version of the VREF Driver in the toolchain/IDE project. Required: ${required_value}, actual: ${actual_value}. The project might not compile correctly." problem_level="1" source="Peripherals">
                <feature name="version" evaluation="equivalent">
-                  <data type="Version">2.4.0</data>
+                  <data type="Version">2.5.0</data>
                </feature>
             </dependency>
             <dependency resourceType="Tool" resourceId="Pins" description="The Pins tool is required by the Peripherals tool, but it is disabled." problem_level="2" source="Peripherals">
@@ -1036,7 +1045,7 @@
             <file path="board/peripherals.h" update_enabled="true"/>
          </generated_project_files>
          <peripherals_profile>
-            <processor_version>25.09.0</processor_version>
+            <processor_version>26.03.20</processor_version>
          </peripherals_profile>
          <functional_groups>
             <functional_group name="BOARD_InitPeripherals" uuid="78304674-57e7-4c05-895d-e21c08633a8a" called_from_default_init="true" id_prefix="" core="cm33_core0">
@@ -1823,7 +1832,7 @@
                         </struct>
                      </config_set>
                   </instance>
-                  <instance name="VREF0" uuid="80997f41-bf92-4ed7-b781-a88c68e7b2e1" type="vref_1" type_id="vref_1_2.4.0" mode="general" peripheral="VREF0" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
+                  <instance name="VREF0" uuid="80997f41-bf92-4ed7-b781-a88c68e7b2e1" type="vref_1" type_id="vref_1_2.5.0" mode="general" peripheral="VREF0" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
                      <config_set name="fsl_vref" quick_selection="default">
                         <struct name="vref_config">
                            <setting name="bufferMode" value="kVREF_ModeHighPowerBuffer"/>
@@ -1833,6 +1842,10 @@
                            <setting name="enableHCBandgap" value="true"/>
                            <setting name="enableCurvatureCompensation" value="true"/>
                            <setting name="initTrim" value="false"/>
+                           <struct name="trimConfig">
+                              <setting name="bufferTrimValue" value="0"/>
+                              <setting name="bandgapTrimValue" value="0"/>
+                           </struct>
                         </struct>
                      </config_set>
                   </instance>

@@ -38,6 +38,11 @@ PowerSensor::PowerSensor(Port port, uint8_t address)
 , _power_input_coeff{DefaultSlopeM, DefaultOffsetB, DefaultExpMult, DefaultMask}
 {}
 
+void PowerSensor::set_power_input_coeff(float m, float b, float exp_mult, uint16_t mask)
+{
+    _power_input_coeff = {m, b, exp_mult, mask};
+}
+
 I2cStatus PowerSensor::clear_faults()
 {
     // PMBus CLEAR_FAULTS (0x03) is a Send Byte command.

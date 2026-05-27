@@ -110,10 +110,6 @@ constexpr size_t NV_PLDM_32_TRANSFER_SIZE = NV_PLDM_RESERVE_HEADER_SIZE
 #define NV_PLDM_VERIFY_CC_KEY_FAIL        0x94
 #define NV_PLDM_VERIFY_CC_IMAGE_AUTH_FAIL 0x95
 
-// CPLD metadata offset
-#define NV_PLDM_CPLD_FW_VERSION_OFFSET 16
-#define NV_PLDM_CPLD_SKU_ID_OFFSET     916
-
 //  base
 struct [[gnu::packed]] PldmCapability
 {

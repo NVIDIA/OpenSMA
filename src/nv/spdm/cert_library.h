@@ -121,18 +121,19 @@ struct __attribute__((packed)) SubjectPublicKeyInfo
     } subject_public_key;
 };
 
-bool check_certificate_format_valid(const CertArray& input_cert, uint32_t expected_cert_length);
+bool check_certificate_format_valid(std::span<const uint8_t> input_cert,
+                                    uint32_t                 expected_cert_length);
 
-const std::array<uint8_t, 96> parse_ecdsa_p384_pubkey(const CertArray& cert);
+const std::array<uint8_t, 96> parse_ecdsa_p384_pubkey(std::span<const uint8_t> cert);
 
-Signature parse_signature(const CertArray& cert);
+Signature parse_signature(std::span<const uint8_t> cert);
 
-bool    validate_certificate_signature(const CertArray& preceding_cert,
-                                       const CertArray& current_cert);
+bool    validate_certificate_signature(std::span<const uint8_t> preceding_cert,
+                                       std::span<const uint8_t> current_cert);
 uint8_t hex_in_int_to_ascii(uint8_t input_char);
 
 // this function will return the first one sequence meet subject key token
 std::array<uint8_t, 20> find_subject_key_identifier(std::span<const uint8_t>& cert);
 
-uint32_t parse_dda_ordinal_number(const CertArray& cert);
+uint32_t parse_dda_ordinal_number(std::span<const uint8_t> cert);
 }  // namespace nv::spdm::certlib

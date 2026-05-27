@@ -1606,6 +1606,40 @@ protected:
     void on_nv_internal_getAdcCalibrationResults(const Packet& rx, Packet& tx);
     void on_nv_internal_adcCalibSetLoopbackDacCode(const Packet& rx, Packet& tx);
     void on_nv_internal_getPowerSmoothRawReadback(const Packet& rx, Packet& tx);
+    void on_nv_internal_setSocCalibCoefficient(const Packet& rx, Packet& tx);
+    void on_nv_internal_getSocCalibCoefficient(const Packet& rx, Packet& tx);
+
+    enum class NvInternalReqCheck : uint8_t
+    {
+        LengthOnly,
+        ExactSize,
+        ExactSizeLengthOnMismatch,
+    };
+
+    template<typename Req>
+    bool load_nv_internal_request(const Packet&      rx,
+                                  Packet&            tx,
+                                  Req&               request,
+                                  NvInternalReqCheck check);
+
+    template<typename Handler>
+    void dispatch_nv_internal_get(const Packet& rx, Packet& tx, Handler&& handler);
+
+    template<typename Req, typename Handler>
+    void dispatch_nv_internal_get_req(const Packet&      rx,
+                                      Packet&            tx,
+                                      NvInternalReqCheck check,
+                                      Handler&&          handler);
+
+    template<typename Req, typename Handler>
+    void dispatch_nv_internal_set_req(const Packet&      rx,
+                                      Packet&            tx,
+                                      NvInternalReqCheck check,
+                                      Handler&&          handler);
+
+    template<typename Handler>
+    void dispatch_nv_internal_action(const Packet& rx, Packet& tx, Handler&& handler);
+
     // Misc
     void     fill_nsm_msg_header(const Packet& rx, Packet& tx) const;
     void     fill_error_packet(Ccode code, const Packet& rx, Packet& tx) const;

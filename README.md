@@ -36,8 +36,10 @@ ln -sf /usr/bin/make corepdk/ubs/bin/make
 7. Move *gnat_arm_elf_14.2.1_524d4d41* into `libexec/toolchain/`
 
 ## Prepare SDK ##
-1. Download MCXN556S SDK version 25.09.00 from https://mcuxpresso.nxp.com/en
-    * Select "mbedTLS", "NXP ELS PKC", "FreeRTOS" and "USB Host, Device, OTG Stack" option in "Developer Environment Settings"
+1. Download Processors MCXN556S SDK version 25.09.00 from https://mcuxpresso.nxp.com/en
+    * Host OS: Linux
+    * Toolchain/IDE: All toolchains
+    * Select all middlewares
 2. Extract *25.09.00 SDK* into `libexec/sdk/SDK_25_09_00_MCXN556S`
 ```
 mkdir -p libexec/sdk/SDK_25_09_00_MCXN556S
@@ -51,12 +53,12 @@ cd libexec/sdk/SDK_25_09_00_MCXN556S
 xz -dc ../../patch/mcu.patch.xz | patch -p1 -N
 ```
 
-## Build FW ##
+## Build and Sign FW ##
 Artifact will be generated under `build` folder
 
 ### MCU FW ###
 ```
-./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel RUN_LOCAL=1 BUILD_ONLY=1
+./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel SIGN_KEYSET=local RUN_LOCAL=1
 ```
 
 ## Use Docker ##
@@ -68,5 +70,5 @@ docker build -f ./libexec/ubs.dockerfile -t opensma .
 # Run Docker image
 docker run --rm -it --user=${UID}:${GID} -v $(pwd):/opensma opensma
 # Build and sign FW
-./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel RUN_LOCAL=1 BUILD_ONLY=1
+./mcu_build.sh PROJECT=mcxn547helloworld BOARD=mcxn547helloworld PLATFORM=mcxn556-both MODE=rel SIGN_KEYSET=local RUN_LOCAL=1
 ```

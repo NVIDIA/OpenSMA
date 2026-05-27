@@ -276,8 +276,23 @@ Status Bridge::init(nv::vruart::Instance      instance,
     /** init lpuart clock */
     init_clock(uartInstance);
 
-    /** init lpuart signal */
+    /** init lpuart signal
+     *
+     * Projects that have already routed the LPUART pins via BOARD_InitPins
+     * (MCUXpresso tool-generated pin_mux.c) can define
+     * NV_UART_BRIDGE_BYPASS_PIN_INIT in their config.h to skip this step.
+     *
+     * init_signal hardcodes kPORT_MuxAlt2, which is correct for the
+     * FRDM-MCXN947 FC4 pins on PIO1_8/PIO1_9 but wrong for boards using
+     * a different alt assignment (e.g. vel_mer_sw uses PIO1_20/PIO1_21
+     * where FC4 lives on ALT3).
+     */
+#if defined(NV_UART_BRIDGE_BYPASS_PIN_INIT) && (NV_UART_BRIDGE_BYPASS_PIN_INIT > 0)
+    (void)tx;
+    (void)rx;
+#else
     init_signal(tx, rx);
+#endif
 
     /** init lpuart */
     init_lpuart(baudrate);
@@ -314,11 +329,9 @@ Status Bridge::tx(std::span<uint8_t> data)
     if (!ready()) {
         return Status::NotInited;
     }
-
-    // USB HS packet max (512B) == edmaXferBufSize, so this never triggers
-    // if (data.size() > edmaXferBufSize) {
-    //     return Status::InvalidParam;
-    // }
+    if (txongoing()) {
+        return Status::LpuartEdmaTxBusy;
+    }
 
     // Non-blocking: start eDMA TX, will get callback when complete
     set_txongoing(true);

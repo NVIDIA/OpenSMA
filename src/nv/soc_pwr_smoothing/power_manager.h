@@ -92,7 +92,9 @@ public:
     [[no_unique_address]] DacPercentDev<IsinkDacPeripheral>            isink_offset_dac_dev{};
     [[no_unique_address]] GpioInDev<McuThermWarnPort, McuThermWarnPin> mcu_thermal_warn_dev{};
     [[no_unique_address]] GpioOutDev<PwrBrakeGpioPort, PwrBrakeGpioPin>
-                                              power_brake_gpio_dev{};  // active-low by default
+        power_brake_gpio_dev{};  // active-low by default
+    [[no_unique_address]] VirtualGpioDev<VirtualGpioSignal::McuThermWarn> therm_warning_vgpio{};
+    [[no_unique_address]] VirtualGpioDev<VirtualGpioSignal::SocPwrBrake>  soc_pwr_brake_vgpio{};
     [[no_unique_address]] PowerBrakePolicy    power_brake_policy{config.power_brake_policy};
     [[no_unique_address]] ThermBrakePolicy    therm_brake_policy{config.therm_brake_policy};
     [[no_unique_address]] OffsetPolicy        isink_offset_policy{config.isink_offset_policy};
@@ -118,6 +120,7 @@ inline void PowerManager::run_iteration()
         {.pin_asserted      = public_connectors.therm_power_brake_applied,
          .apply_therm_brake = public_connectors.therm_power_brake_directive});
 
+    therm_warning_vgpio.evaluate({.assert = public_connectors.therm_power_brake_directive});
     state_of_charge_dev.evaluate({
         .percent       = soc_percent,
         .soc_voltage_V = soc_voltage_V,
@@ -142,6 +145,7 @@ inline void PowerManager::run_iteration()
     power_brake_policy.evaluate(
         {.soc_voltage_V      = soc_voltage_V,
          .assert_power_brake = public_connectors.soc_power_brake_directive});
+    soc_pwr_brake_vgpio.evaluate({.assert = public_connectors.soc_power_brake_directive});
 
     public_connectors.assert_power_brake = public_connectors.soc_power_brake_directive
                                         || public_connectors.therm_power_brake_directive;

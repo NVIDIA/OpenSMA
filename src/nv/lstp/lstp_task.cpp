@@ -89,7 +89,7 @@ void LstpTask::entrypoint(void* params)
  * Process LSTP Requests from USB
  *****************************************************/
 
-LstpStatus LstpTask::submit_gpio_req(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
+LstpStatus LstpTask::submit_gpio_req(std::span<uint8_t>& req_buffer)
 {
     const auto& req_hdr     = from<LstpHdr>(req_buffer.data());
     const auto  payload_len = static_cast<size_t>(req_hdr.len_lsb
@@ -97,8 +97,7 @@ LstpStatus LstpTask::submit_gpio_req(std::array<uint8_t, nv::ipc::UsbLstpMsgSize
     if (payload_len > LstpMaxPayloadSize) {
         return LstpStatus::Error;
     }
-    auto item = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&req_buffer), sizeof(req_buffer));
-    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::LstpToGpio).send(item);
+    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::LstpToGpio).send(req_buffer);
     if (status != nv::ipc::Queue::Status::Ok) {
         return LstpStatus::Error;
     }

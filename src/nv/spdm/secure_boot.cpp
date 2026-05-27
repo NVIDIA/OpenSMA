@@ -64,4 +64,19 @@ void SecureBoot::secure_boot_ap_auth_callback(
     }
 }
 
+void SecureBoot::persist_ap_fw_authenticate_data_in_progress(
+    const nv::fw_parser::ap::ParsingApFwType        auth_ap_type,
+    const nv::fw_parser::ap::ApFwMetadata::TbsData& tbs_data)
+{
+    AuthenticateData authenticate_data{};
+    authenticate_data.ap_metadata_tbs_data = tbs_data;
+    authenticate_data.ap_auth_result       = nv::spdm::crypto::CryptoStatus::ApAuthInProgress;
+    if (auth_ap_type == nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
+        (void)nv::flash::Flash::set_ap_fw_authenticate_data(
+            authenticate_data, nv::flash::Key::NpdsActiveApFwAuthenticateData);
+        (void)nv::flash::Flash::set_ap_fw_authenticate_data(
+            authenticate_data, nv::flash::Key::NpdsUpdateApFwAuthenticateData);
+    }
+}
+
 }  // namespace nv::spdm::secure_boot

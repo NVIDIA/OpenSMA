@@ -50,7 +50,7 @@ public:
 
     static constexpr uint8_t StartAddress = 0x50;
 
-    static constexpr size_t CacheSize = 128;
+    static constexpr size_t CacheSize = 160;
 
 private:
     NV_SHARED_DATA static inline std::array<uint8_t, CacheSize> cache_ = []() {

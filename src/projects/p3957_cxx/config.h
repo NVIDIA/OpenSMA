@@ -481,7 +481,7 @@ constexpr uint32_t SpdmRequestQueueSize      = 2048;
 constexpr uint32_t SpdmRxQueueSize           = 72;
 constexpr uint32_t SpdmCryptoHelperQueueSize = 12;
 constexpr bool     SpdmI2cResponder          = true;
-constexpr bool     SpdmDummyCertificates     = true;
+constexpr bool     SpdmDummyCertificates     = false;
 constexpr uint32_t SpdmCryptoHelperMaxItems  = EnableDualCore ? 2 : 1;
 using QueueInfo                              = std::tuple<QueueId, uint8_t, uint16_t, CoreId>;
 
@@ -923,25 +923,34 @@ constexpr uint16_t UsbDeviceVid = 0x0955U;
 constexpr uint16_t UsbDevicePid = 0xCF11U;
 
 // Runtime WDT
-constexpr uint32_t RuntimeWatchdogResetMs = 1000;
+constexpr uint32_t RuntimeWatchdogResetMs = 10000;
 constexpr uint32_t SupervisorCheckMs      = 500;
 constexpr uint32_t SupervisorCheckUs      = SupervisorCheckMs * 1000;
 
-constexpr std::array<nv::watchdog::TaskMonitorIndex, 4> TaskMonitorList{
+constexpr std::array<nv::watchdog::TaskMonitorIndex, 13> TaskMonitorList{
     nv::watchdog::TaskMonitorIndex::Flash,
     nv::watchdog::TaskMonitorIndex::Logger,
     nv::watchdog::TaskMonitorIndex::Usb,
     nv::watchdog::TaskMonitorIndex::Pldm,
+    nv::watchdog::TaskMonitorIndex::Mctp,
+    nv::watchdog::TaskMonitorIndex::I2c1,
+    nv::watchdog::TaskMonitorIndex::I2c2,
+    nv::watchdog::TaskMonitorIndex::I2c3,
+    nv::watchdog::TaskMonitorIndex::I2c4,
+    nv::watchdog::TaskMonitorIndex::I2c5,
+    nv::watchdog::TaskMonitorIndex::I2c6,
+    nv::watchdog::TaskMonitorIndex::I2c7,
+    nv::watchdog::TaskMonitorIndex::I2c8,
 };
 
-constexpr bool EnableRuntimeWdt       = false;
+constexpr bool EnableRuntimeWdt       = true;
 constexpr bool EnableCP2112NativeGpio = false;
 
 // Debugtoken config
-constexpr bool DebugTokenEnabled = false;
+constexpr bool DebugTokenEnabled = true;
 
 // I2C config
-constexpr bool EnableSmbDirect = true;
+constexpr bool EnableSmbDirect = false;
 // I2C scan VDM support
 constexpr bool EnableI2cScanVdm = false;
 // I2c virtual address mapping configuration

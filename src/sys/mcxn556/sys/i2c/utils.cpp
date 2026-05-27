@@ -40,12 +40,18 @@ nv::i2c::I2cStatus get_status(status_t status)
 {
     nv::i2c::I2cStatus result = nv::i2c::I2cStatus::Error;
     switch (status) {
-        case kStatus_Success              : result = nv::i2c::I2cStatus::Ok; break;
-        case kStatus_LPI2C_Busy           : result = nv::i2c::I2cStatus::Busy; break;
-        case kStatus_LPI2C_Nak            : result = nv::i2c::I2cStatus::Nak; break;
-        case kStatus_LPI2C_ArbitrationLost: result = nv::i2c::I2cStatus::ArbLost; break;
-        case kStatus_LPI2C_Timeout        : result = nv::i2c::I2cStatus::Timeout; break;
-        default                           : result = nv::i2c::I2cStatus::Error;
+        case kStatus_Success                   : result = nv::i2c::I2cStatus::Ok; break;
+        case kStatus_LPI2C_Idle                : result = nv::i2c::I2cStatus::Ok; break;
+        case kStatus_LPI2C_Busy                : result = nv::i2c::I2cStatus::Busy; break;
+        case kStatus_LPI2C_Nak                 : result = nv::i2c::I2cStatus::Nak; break;
+        case kStatus_LPI2C_ArbitrationLost     : result = nv::i2c::I2cStatus::ArbLost; break;
+        case kStatus_LPI2C_Timeout             : result = nv::i2c::I2cStatus::Timeout; break;
+        case kStatus_LPI2C_FifoError           : result = nv::i2c::I2cStatus::FifoError; break;
+        case kStatus_LPI2C_BitError            : result = nv::i2c::I2cStatus::BitError; break;
+        case kStatus_LPI2C_PinLowTimeout       : result = nv::i2c::I2cStatus::PinLowTimeout; break;
+        case kStatus_LPI2C_DmaRequestFail      : result = nv::i2c::I2cStatus::DmaError; break;
+        case kStatus_LPI2C_NoTransferInProgress: result = nv::i2c::I2cStatus::NoTransfer; break;
+        default                                : result = nv::i2c::I2cStatus::Error;
     }
     return result;
 }

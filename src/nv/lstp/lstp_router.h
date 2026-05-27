@@ -18,6 +18,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 
 #include NV_IPC_CONFIG_H
 #include "nv/ipc/queue.h"
@@ -101,10 +102,18 @@ public:
     /**
      * @brief Receives an LSTP message and route to appropriate channel
      *
-     * @param buffer The buffer with the message data
-     * @param buffer_len The length of the message data
+     * @param buffer The buffer with the message data (validated)
+     * @return LstpStatus
      */
-    void receive(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, uint32_t buffer_len);
+    LstpStatus receive(std::span<uint8_t>& buffer);
+
+    /**
+     * @brief Send an error response for a failed request
+     *
+     * @param buffer The original request buffer (used to read the channel ID)
+     * @param status The status to report in the error response
+     */
+    static void send_error(std::span<uint8_t>& buffer, LstpStatus status);
 
     /**
      * @brief Callback from GPIO task when done
@@ -158,26 +167,18 @@ private:
     std::array<ChannelState, LstpNumChannels> _channels{};
 
     /**
-     * @brief Helper function to validate the received request and route to channel handler
-     * @param buffer The buffer with the message data
-     * @return The status of the operation
-     */
-    LstpStatus receive_helper(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
-                              uint32_t                                      buffer_len);
-
-    /**
      * @brief Receive a message from the management channel (channel 0) and sends response
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_ch0(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_ch0(std::span<uint8_t>& buffer);
 
     /**
      * @brief Read the configuration of a channel and send response
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus read_channel_config(std::span<uint8_t>& buffer);
 
     /**
      * @brief Helper to read GPIO channel config and append to response buffer
@@ -198,7 +199,7 @@ private:
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus write_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus write_channel_config(std::span<uint8_t>& buffer);
 
     /**
      * @brief Helper function to execute write to channel configuration
@@ -216,35 +217,35 @@ private:
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_spi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_spi(std::span<uint8_t>& buffer);
 
     /**
      * @brief Receive a message from the GPIO channel
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_gpio(std::span<uint8_t>& buffer);
 
     /**
      * @brief Receive a message from the I2C channel
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_i2c(std::span<uint8_t>& buffer);
 
     /**
      * @brief Receive a message from the IPMI channel
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_ipmi(std::span<uint8_t>& buffer);
 
     /**
      * @brief Receive a message from the UART channel
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus receive_uart(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
+    LstpStatus receive_uart(std::span<uint8_t>& buffer);
 };
 
 }  // namespace nv::lstp

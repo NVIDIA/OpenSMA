@@ -27,6 +27,12 @@
 
 #pragma once
 
+#include <chrono>
+
+namespace nv::ipc {
+enum class TimerId;
+}
+
 namespace nv::volt_mon {
 
 /**
@@ -56,5 +62,16 @@ void init(bool init_mcu_temp,
           bool init_leak_detect,
           bool init_busbar_temp,
           bool init_pgood_hotplug = false);
+
+/**
+ * @brief Timer-driven voltage monitoring entry point.
+ *
+ * Implemented by `volt_mon/timer/`. Schedules a periodic timer that drains the
+ * ADC FIFOs, dispatches each sample to the owning sensor family, and re-arms the
+ * next sampling round.
+ *
+ * @note Used by the timer-driven implementation only.
+ */
+void init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
 
 }  // namespace nv::volt_mon

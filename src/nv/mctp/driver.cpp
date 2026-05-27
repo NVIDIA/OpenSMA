@@ -515,17 +515,14 @@ void Driver::on_enumerate_done()
         }
     }
 
-    // Remove "flush router queue of stale routing table events" since we should always have a
-    // task for each downstream client
+    pdk::mctp::app::Control::RoutingMap tmp_map;
+    tmp_map       = {};
+    auto item_tmp = ipc::Queue::Item(std::bit_cast<uint8_t*>(&tmp_map), sizeof(tmp_map));
 
-    // pdk::mctp::app::Control::RoutingMap tmp_map;
-    // tmp_map = {};
-    // auto item_tmp = ipc::Queue::Item(std::bit_cast<uint8_t*>(&tmp_map), sizeof(tmp_map));
-
-    // // flush router queue of stale routing table events
-    // while (_router_queue.recv(item_tmp, 0s) == ipc::Queue::Status::Ok) {
-    //     // do nothing, to replace _router_queue.reset();
-    // }
+    // flush router queue of stale routing table events
+    while (_router_queue.recv(item_tmp, 0s) == ipc::Queue::Status::Ok) {
+        // do nothing, to replace _router_queue.reset();
+    }
     auto item = ipc::Queue::Item(std::bit_cast<uint8_t*>(&map), sizeof(map));
 
     // send routing table to upstream task

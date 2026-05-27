@@ -33,6 +33,10 @@ using namespace nv::ipc;
 using namespace nv;
 
 namespace nv::spdm {
+namespace {
+constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+}  // namespace
+
 // namespace {
 
 // enum class SpdmLockFuseBlockCode : uint32_t
@@ -375,18 +379,21 @@ Task::Task()
                         .request_task_id       = VarPtr->request_task_id,
                     };
             }
-            // if the request is for authenticating apfw
-            else if (const auto* VarPtr = std::get_if<
-                         nv::spdm::crypto::AuthenticateApFirmwareRequestParameter>(
-                         &request_parameters)) {
-                request_core_id  = VarPtr->request_core_id;
-                auto auth_result = nv::spdm::crypto::authenticate_ap_firmware(
-                    nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-                response_parameters = nv::spdm::crypto::AuthenticateApFirmwareResponseParameter{
-                    .auth_result           = auth_result,
-                    .input_parsing_fw_type = VarPtr->input_parsing_fw_type,
-                    .request_task_id       = VarPtr->request_task_id,
-                };
+            if constexpr (HasVrotAp) {
+                // if the request is for authenticating apfw
+                if (const auto* VarPtr = std::get_if<
+                        nv::spdm::crypto::AuthenticateApFirmwareRequestParameter>(
+                        &request_parameters)) {
+                    request_core_id  = VarPtr->request_core_id;
+                    auto auth_result = nv::spdm::crypto::authenticate_ap_firmware(
+                        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
+                    response_parameters = nv::spdm::crypto::
+                        AuthenticateApFirmwareResponseParameter{
+                            .auth_result           = auth_result,
+                            .input_parsing_fw_type = VarPtr->input_parsing_fw_type,
+                            .request_task_id       = VarPtr->request_task_id,
+                        };
+                }
             }
 
             nv::spdm::crypto::send_response_back(response_parameters);

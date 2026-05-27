@@ -12,7 +12,8 @@
  * USB
  */
 
-// Include config.h FIRST so USB_CONFIG_UART_BRIDGE is defined before usb.h
+// Include config.h FIRST so USB_CONFIG_UART_BRIDGE / USB_CONFIG_GPIO_MONITOR
+// are defined before usb.h gates on them.
 #include NV_IPC_CONFIG_H
 
 #include "usb.h"

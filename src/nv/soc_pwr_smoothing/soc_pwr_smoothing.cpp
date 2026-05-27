@@ -43,6 +43,11 @@ using namespace std::chrono_literals;
 
 namespace nv::soc_pwr_smoothing {
 
+NV_SHARED_BSS PowerManager
+    PowerSmoothing::power_manager{};  // NOLINT(*-non-const-global-variables)
+NV_SHARED_BSS PresetManager
+    PowerSmoothing::preset_manager{};  // NOLINT(*-non-const-global-variables)
+
 namespace {
 
 // ============================================================================
@@ -395,60 +400,53 @@ float PowerSmoothing::GetMaxACRampRate()
 // Uses nv::flash::Flash::get_data() and set_data() for PDS access
 // ============================================================================
 
+namespace {
+
+bool persist_key_value(nv::flash::Key key, nv::flash::Data value)
+{
+    return nv::flash::Flash::set_data(key, value) == nv::flash::Status::Ok;
+}
+
+bool load_key_value(nv::flash::Key key, nv::flash::Data& value)
+{
+    return nv::flash::Flash::get_data(key, value) == nv::flash::Status::Ok;
+}
+
+}  // namespace
+
 // Persist SoC Power Smoothing enabled state to PDS
 bool PowerSmoothing::PersistSoCPowerSmoothEnabled(bool enabled)
 {
     const nv::flash::Data value = enabled ? 1 : 0;
-    auto status = nv::flash::Flash::set_data(nv::flash::Key::PdsSoCPowerSmoothEnabled, value);
-    if (status != nv::flash::Status::Ok) {
-        return false;
-    }
-    return true;
+    return persist_key_value(nv::flash::Key::PdsSoCPowerSmoothEnabled, value);
 }
 
 // Persist SoC Power Brake enabled state to PDS
 bool PowerSmoothing::PersistSoCPowerBrakeEnabled(bool enabled)
 {
     const nv::flash::Data value = enabled ? 1 : 0;
-    auto status = nv::flash::Flash::set_data(nv::flash::Key::PdsSoCPowerBrakeEnabled, value);
-    if (status != nv::flash::Status::Ok) {
-        return false;
-    }
-    return true;
+    return persist_key_value(nv::flash::Key::PdsSoCPowerBrakeEnabled, value);
 }
 
 // Persist current preset index to PDS
 bool PowerSmoothing::PersistSoCPowerSmoothCurrentPresetIndex(uint8_t preset_id)
 {
-    const auto value  = static_cast<nv::flash::Data>(preset_id);
-    auto       status = nv::flash::Flash::set_data(
-        nv::flash::Key::PdsSoCPowerSmoothCurrentPresetIndex, value);
-    if (status != nv::flash::Status::Ok) {
-        return false;
-    }
-    return true;
+    const auto value = static_cast<nv::flash::Data>(preset_id);
+    return persist_key_value(nv::flash::Key::PdsSoCPowerSmoothCurrentPresetIndex, value);
 }
 
 // Persist max AC power ramp rate to PDS (float stored as uint32_t via bit_cast)
 bool PowerSmoothing::PersistMaxACPowerRampRate(float rate)
 {
     const auto value = std::bit_cast<nv::flash::Data>(rate);
-    auto status      = nv::flash::Flash::set_data(nv::flash::Key::PdsMaxACPowerRampRate, value);
-    if (status != nv::flash::Status::Ok) {
-        return false;
-    }
-    return true;
+    return persist_key_value(nv::flash::Key::PdsMaxACPowerRampRate, value);
 }
 
 // Persist SoC Thermal Brake enabled state to PDS
 bool PowerSmoothing::PersistSoCThermBrakeEnabled(bool enabled)
 {
     const nv::flash::Data value = enabled ? 1 : 0;
-    auto status = nv::flash::Flash::set_data(nv::flash::Key::PdsSoCThermBrakeEnabled, value);
-    if (status != nv::flash::Status::Ok) {
-        return false;
-    }
-    return true;
+    return persist_key_value(nv::flash::Key::PdsSoCThermBrakeEnabled, value);
 }
 
 // Load all persisted settings from PDS and apply them
@@ -458,24 +456,21 @@ void PowerSmoothing::LoadPersistedSettings()
     nv::flash::Data value = 0;
 
     // Load SoC Power Smooth Enabled
-    if (nv::flash::Flash::get_data(nv::flash::Key::PdsSoCPowerSmoothEnabled, value)
-        == nv::flash::Status::Ok) {
+    if (load_key_value(nv::flash::Key::PdsSoCPowerSmoothEnabled, value)) {
         const bool enabled = (value == 1);
         PowerSmoothing::SetOffsetPolicyState(enabled ? ConstantPowerMode::ConstantPowerModeOn
                                                      : ConstantPowerMode::ConstantPowerModeOff);
     }
 
     // Load SoC Power Brake Enabled
-    if (nv::flash::Flash::get_data(nv::flash::Key::PdsSoCPowerBrakeEnabled, value)
-        == nv::flash::Status::Ok) {
+    if (load_key_value(nv::flash::Key::PdsSoCPowerBrakeEnabled, value)) {
         const bool enabled = (value == 1);
         PowerSmoothing::SetPowerBrakePolicyState(enabled ? PowerBrakeState::PowerBrakeEnabled
                                                          : PowerBrakeState::PowerBrakeDisabled);
     }
 
     // Load Max AC Power Ramp Rate
-    if (nv::flash::Flash::get_data(nv::flash::Key::PdsMaxACPowerRampRate, value)
-        == nv::flash::Status::Ok) {
+    if (load_key_value(nv::flash::Key::PdsMaxACPowerRampRate, value)) {
         const auto rate = std::bit_cast<float>(value);
         // Set ramp rate directly without triggering auto-enable logic
         // (the enabled state was already loaded above)
@@ -483,8 +478,7 @@ void PowerSmoothing::LoadPersistedSettings()
     }
 
     // Load Current Preset Index
-    if (nv::flash::Flash::get_data(nv::flash::Key::PdsSoCPowerSmoothCurrentPresetIndex, value)
-        == nv::flash::Status::Ok) {
+    if (load_key_value(nv::flash::Key::PdsSoCPowerSmoothCurrentPresetIndex, value)) {
         const auto preset_id = static_cast<uint8_t>(value);
         if (preset_id < NUM_PRESETS) {
             // Switch to the persisted preset (will be applied at next ISR)
@@ -493,8 +487,7 @@ void PowerSmoothing::LoadPersistedSettings()
     }
 
     // Load Thermal Brake Enabled
-    if (nv::flash::Flash::get_data(nv::flash::Key::PdsSoCThermBrakeEnabled, value)
-        == nv::flash::Status::Ok) {
+    if (load_key_value(nv::flash::Key::PdsSoCThermBrakeEnabled, value)) {
         const bool enabled = (value == 1);
         PowerSmoothing::SetThermBrakePolicyState(enabled ? ThermBrakeState::ThermBrakeEnabled
                                                          : ThermBrakeState::ThermBrakeDisabled);

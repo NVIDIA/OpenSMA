@@ -134,6 +134,9 @@ void USB_DeviceIsrEnable(void)
 #endif
 
     /* Set interrupt priority and enable IRQ */
+    static_assert(nv::ipc::UsbDeviceInterruptPriority
+                      >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+                  "Priority cannot be set higher than the FreeRTOS maximum for this platform");
     NVIC_SetPriority((IRQn_Type)irqNumber, nv::ipc::UsbDeviceInterruptPriority);
     EnableIRQ((IRQn_Type)irqNumber);
 }

@@ -1212,7 +1212,10 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
     uint8_t    build_type = 0;
     const auto build_ok   = this->fill_build_type(get_active_slot(), build_type);
     if (true == build_ok && build_type == NsmBuildTypeRel
-        && false == debugtoken::is_dbg_token_tlv_in_flash()) {
+        && debugtoken::TokenErrorCode::NoErrorCode
+               != debugtoken::check_debug_token_subtype_enabled(
+                   debugtoken::Type::McuDebug,
+                   nv::debugtoken::DebugTokenSubtypeErrorInjection)) {
         fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);
         return;
     }

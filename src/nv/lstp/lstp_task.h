@@ -85,7 +85,7 @@ public:
      * Copies into task buffer, signals task. Response sent async via LstpRouter::send_gpio.
      * Returns Busy while a request is being processed.
      */
-    static LstpStatus submit_gpio_req(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer);
+    static LstpStatus submit_gpio_req(std::span<uint8_t>& req_buffer);
 
     /** @brief Submits event and returns immediately (non-blocking).
      * Sends IRQ event to LstpGpioIrq queue. Events sent async via

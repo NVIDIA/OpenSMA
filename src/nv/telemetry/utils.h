@@ -68,13 +68,17 @@ static constexpr std::array<std::pair<nv::mctp::Type3TemperatureSensors, TelemId
          }
 };
 
-static constexpr std::array<std::pair<nv::mctp::Type3PowerSensors, TelemId>, 3>
+static constexpr std::array<std::pair<nv::mctp::Type3PowerSensors, TelemId>, 5>
     PowerSensorIdToTelemIdPowerMapping = {
         {
          // Legacy Power Sensor enum for GB products
             {nv::mctp::Type3PowerSensors::PowerGpu1, TelemId::Gpu1Power},      // PowerGpu1
             {nv::mctp::Type3PowerSensors::PowerGpu2, TelemId::Gpu2Power},      // PowerGpu2
             {nv::mctp::Type3PowerSensors::PowerModule, TelemId::ModulePower},  // PowerModule
+
+            // Power Sensor enum for VR products
+            {nv::mctp::Type3PowerSensors::Power_Gpu1, TelemId::Gpu1Power},  // PowerGpu1
+            {nv::mctp::Type3PowerSensors::Power_Gpu2, TelemId::Gpu2Power},  // PowerGpu2
         }
 };
 

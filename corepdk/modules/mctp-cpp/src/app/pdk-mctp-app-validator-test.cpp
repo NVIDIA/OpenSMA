@@ -458,3 +458,50 @@ UBS_TEST(Validator, VendorPackets)
     v.reset();
     ensure::is_eq(v.validate(vendorIaniInvalidType, platforms::Interface::UsI2c), false);
 };
+
+// Regression: VendorPci (NSM) SOM=1 fragment must persist _eid / _msg_tag /
+// _pkt_seq so a SOM=0 continuation passes the multi-packet validation branch.
+// Before the fix, the SOM branch returned true without saving state and the
+// continuation fragment got dropped — silently breaking any NSM message large
+// enough to fragment (e.g. InstallToken).
+UBS_TEST(Validator, ValidMultiPacketVendorPciStart)
+{
+    platforms::RoutingTable router;
+    platforms::set_cur_eid(router, static_cast<uint8_t>(platforms::Interface::UsI2c), 0x02);
+    app::Validator v(router);
+
+    // First packet (SOM=1, EOM=0): start of a multi-fragment NSM message.
+    app::Packet firstPkt{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x1,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 0,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::VendorPci)}
+    };
+    auto& nrx1         = platforms::NsmPktReq::from(firstPkt);
+    nrx1.pci_vendor_id = platforms::NvMctpPciVendorId;
+    ensure::is_eq(v.validate(firstPkt, platforms::Interface::UsI2c), true);
+
+    // Second packet (SOM=0, EOM=1): continuation must validate against the
+    // _eid/_msg_tag/_pkt_seq the first packet persisted.
+    app::Packet secondPkt{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x1,
+                 .tag_owner = 1,
+                 .pkt_seq   = 1,
+                 .eom       = 1,
+                 .som       = 0},
+        .msg  = {static_cast<uint8_t>(app::MsgType::VendorPci)}
+    };
+    ensure::is_eq(v.validate(secondPkt, platforms::Interface::UsI2c), true);
+};

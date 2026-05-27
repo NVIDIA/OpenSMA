@@ -25,10 +25,14 @@
 #include "sys/crypto/crypto.h"
 #include "nv/pldm/task.h"
 #include "nv/spdm/secure_boot.h"
-#include "nv/ap_operation/ap_operation.h"
+#include "nv/vrot/interface/interface.h"
 #include "nv/logger/log.h"
+#include NV_IPC_CONFIG_H  // for nv::vrot::ApList
 using namespace nv;
 namespace nv::spdm::crypto {
+namespace {
+constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+}  // namespace
 
 void send_response_back(const CryptoReqResParameters& result)
 {
@@ -52,12 +56,15 @@ void send_response_back(const CryptoReqResParameters& result)
             return;
         }
     }
-    else if (const auto* VarPtr = std::get_if<
-                 nv::spdm::crypto::AuthenticateApFirmwareResponseParameter>(&result)) {
-        if (VarPtr->request_task_id == nv::ipc::TaskId::Pldm) {
-            nv::spdm::crypto::send_authenticate_ap_firmware_result<nv::ipc::TaskId::Pldm>(
-                *VarPtr);
-            return;
+    if constexpr (HasVrotAp) {
+        if (const auto*
+                VarPtr = std::get_if<nv::spdm::crypto::AuthenticateApFirmwareResponseParameter>(
+                    &result)) {
+            if (VarPtr->request_task_id == nv::ipc::TaskId::Pldm) {
+                nv::spdm::crypto::send_authenticate_ap_firmware_result<nv::ipc::TaskId::Pldm>(
+                    *VarPtr);
+                return;
+            }
         }
     }
 
@@ -67,33 +74,33 @@ void send_response_back(const CryptoReqResParameters& result)
 CryptoStatus
 _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_ap_type)
 {
+    if constexpr (!HasVrotAp) {
+        return CryptoStatus::FailUnknown;
+    }
+
     auto auth_result = CryptoStatus::Success;
     auto ap_metadata = nv::fw_parser::ap::ApFwMetadata{};
+    // Single-AP assumption baked into the TOT SPDM auth path: the request
+    // parameter doesn't carry an ap_id, so the AP is implicitly the AP with
+    // id `AP0`. When multi-AP arrives the ap_id should be plumbed through
+    // `AuthenticateApFirmwareRequestParameter` and looked up here instead.
+    auto ap_opt = nv::vrot::find_ap(nv::vrot::ApId::AP0, nv::vrot::ApList);
+    if (!ap_opt) {
+        return CryptoStatus::FailApNotFound;
+    }
+    const auto& ap = *ap_opt;
     do {  // NOLINT(cppcoreguidelines-avoid-do-while)
-        size_t need_to_read_size    = sizeof(ap_metadata);
-        size_t start_address        = 0;
-        auto&  meta_data_array_view = *std::bit_cast<std::array<uint8_t, sizeof(ap_metadata)>*>(
+        auto& meta_data_array_view = *std::bit_cast<std::array<uint8_t, sizeof(ap_metadata)>*>(
             &ap_metadata);
         const std::span<uint8_t> ap_metadata_buffer(meta_data_array_view.data(),
                                                     meta_data_array_view.size());
-        // add 10ms delay to avoid boot watchdog trigger, which is two ticks in FreeRTOS
-        constexpr auto i2c_delay_time_on_each_read = std::chrono::milliseconds(10);
-        while (need_to_read_size != 0) {
-            nv::spdm::Task::get_task().delay(i2c_delay_time_on_each_read);
-            constexpr size_t i2c_each_read_size = 256;
-            const size_t     read_size  = std::min(need_to_read_size, i2c_each_read_size);
-            auto             sub_buffer = ap_metadata_buffer.subspan(start_address, read_size);
-            if (nv::ap_operation::read_data_from_ap(start_address, sub_buffer)
-                != nv::ap_operation::ApOperationErrorCode::Success) {
-                auth_result = CryptoStatus::FailApMetadataRead;
-                break;
-            }
-            // coverity[cert_int30_c_violation] impossible to wrap
-            start_address += read_size;
-            // coverity[cert_int30_c_violation] impossible to wrap
-            need_to_read_size -= read_size;
-        }
-        if (auth_result != CryptoStatus::Success) {
+        // Metadata read: hand the entire region-keyed buffer to vrot in one
+        // shot. Transport-level chunking (per-page transactions) and any
+        // watchdog-feed yields are the platform Ops / driver's responsibility,
+        // not this layer's — see LatticeCpld::read_ufm for the CPLD case.
+        if (nv::vrot::read_metadata(ap, 0, ap_metadata_buffer)
+            != nv::vrot::ApOpErrCode::Success) {
+            auth_result = CryptoStatus::FailApMetadataRead;
             break;
         }
         //  auth public key
@@ -180,7 +187,12 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             }
         }
 
+        // store the ap metadata when metadata auth is done
+        nv::spdm::secure_boot::SecureBoot::persist_ap_fw_authenticate_data_in_progress(
+            auth_ap_type, ap_metadata.tbs_data);
+
         // check image hash
+        constexpr size_t MetadataSize = sizeof(ap_metadata);
         for (int i = 0; i < ap_metadata.tbs_data.ap_fw_images_count; i++) {
             auto ctx = Sha384Context{};
             if (!ctx.init()) {
@@ -190,17 +202,35 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
             size_t need_to_read_size = ap_metadata.tbs_data.hash_table[i].length;
 
-            size_t start_address = ap_metadata.tbs_data.hash_table[i].offset
-                                 + ap_metadata.tbs_data.image_offset;
+            // hash_table[i].offset is relative to image_offset; image_offset
+            // is the absolute offset of the sub-image area within the AP
+            // blob. Sub-images live in the firmware-data region (past the
+            // metadata), so subtract MetadataSize to get a fw-data-region-
+            // relative address. Reject malformed images that would underflow.
+            const size_t image_blob_offset = ap_metadata.tbs_data.hash_table[i].offset
+                                           + ap_metadata.tbs_data.image_offset;
             // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
+            if (image_blob_offset < MetadataSize) {
+                auth_result = CryptoStatus::FailParsingFirmware;
+                break;
+            }
+            size_t fw_data_offset = image_blob_offset - MetadataSize;
+            // Stream-hash chunk size. This is a RAM/stack-budget trade-off
+            // (a temporary buffer here, plus one SHA384 update per chunk),
+            // not a transport concern — the AP transport's per-page
+            // fragmentation and any WDT-feed yields happen inside the
+            // platform Ops / driver below vrot. Picked as a power of two
+            // that's a multiple of the Lattice CPLD page size so the
+            // vrot::read_fw_data call below stays page-aligned on the
+            // CPLD path.
+            constexpr size_t                     HashStreamChunk = 1024;
+            std::array<uint8_t, HashStreamChunk> read_buffer{};
             while (need_to_read_size != 0) {
-                nv::spdm::Task::get_task().delay(i2c_delay_time_on_each_read);
-                constexpr size_t                        i2c_each_read_size = 256;
-                std::array<uint8_t, i2c_each_read_size> read_buffer{};
-                const size_t read_size = std::min(need_to_read_size, i2c_each_read_size);
+                const size_t read_size = std::min(need_to_read_size, HashStreamChunk);
                 auto read_buffer_view  = std::span<uint8_t>(read_buffer).subspan(0, read_size);
-                if (nv::ap_operation::read_data_from_ap(start_address, read_buffer_view)
-                    != nv::ap_operation::ApOperationErrorCode::Success) {
+                if (nv::vrot::read_fw_data(
+                        ap, static_cast<uint32_t>(fw_data_offset), read_buffer_view)
+                    != nv::vrot::ApOpErrCode::Success) {
                     auth_result = CryptoStatus::FailApImageRead;
                     break;
                 }
@@ -208,7 +238,7 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                     auth_result = CryptoStatus::FailHashUpdate;
                     break;
                 }
-                start_address     += read_size;
+                fw_data_offset    += read_size;
                 need_to_read_size -= read_size;
             }
             if (auth_result != nv::spdm::crypto::CryptoStatus::Success) {
@@ -294,15 +324,16 @@ CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters)
 CryptoStatus
 authenticate_ap_firmware(const nv::fw_parser::ap::ParsingApFwType InputParseingApFwType)
 {
+    // check if the ap fw feature is enabled
+    if constexpr (!HasVrotAp) {
+        return CryptoStatus::FailUnknown;
+    }
+
     // start to authenticate the ap firmware
     (void)nv::flash::Flash::set_data(
         nv::flash::Key::NpdsAp0FwStatus,
         static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_In_Progress));
 
-    // check if the ap fw feature is enabled
-    if constexpr (nv::vrot::ApList.size() == 0) {
-        return CryptoStatus::FailUnknown;
-    }
     // check if the input parsing ap fw type is valid
     if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
         && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {

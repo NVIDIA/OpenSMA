@@ -70,7 +70,7 @@ void Flashrom::init()
         constexpr auto spi_ch  = nv::lstp::GetFirstChannelId(nv::lstp::LstpChannels,
                                                             nv::lstp::LstpChannelType::Spi);
         const auto&    spi_cfg = std::get<nv::lstp::LstpSpiChannelConfig>(
-            std::get<1>(nv::lstp::LstpChannels.at(spi_ch)));
+            nv::lstp::LstpChannels.at(spi_ch).config);
         _spi_speed = spi_cfg.freq_hz;
     }
 }

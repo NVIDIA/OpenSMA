@@ -49,6 +49,7 @@ public:
                                      InterruptSelect    select);
 
     static Status read(GpioPort port, GpioPin pin, uint8_t& data);
+    static Status read_force(GpioPort port, GpioPin pin, uint8_t& data);
     static Status read_virtual_physical_gpio(GpioPort port, GpioPin pin, uint8_t& data);
     /** @brief IOX task pushes emulated virtual pin level (0/1) by GpioSetup index. */
     static void   push_virtual_gpio_level(uint16_t gpio_index, uint8_t level);

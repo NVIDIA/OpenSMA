@@ -33,16 +33,29 @@ struct CpldOps
     static ApOpErrCode release_reset(const ApInfo& ap);
     static ApOpErrCode check_booted(const ApInfo& ap);
     static ApOpErrCode
-    read_flash(const ApInfo& ap, uint32_t start_address, std::span<uint8_t> data);
+    read_metadata(const ApInfo& ap, uint32_t metadata_offset, std::span<uint8_t> data);
+    static ApOpErrCode
+    read_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<uint8_t> data);
+    static ApOpErrCode
+    write_metadata(const ApInfo& ap, uint32_t metadata_offset, std::span<const uint8_t> data);
+    static ApOpErrCode
+    write_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<const uint8_t> data);
 
     static ApOpErrCode fw_update_prepare(const ApInfo& ap);
-    static ApOpErrCode
-    fw_update_write(const ApInfo& ap, uint32_t addr, std::span<const uint8_t> data);
     static ApOpErrCode fw_update_callback(const ApInfo&                  ap,
                                           nv::spdm::crypto::CryptoStatus result);
 
     static ApOpErrCode
     set_debug_token_feature(const ApInfo& ap, DebugTokenFeature feature, bool enable);
+
+    // PLDM-facing platform behavior. fw_update_pds / get_update_state /
+    // metadata parsing are AP-generic and live in pldm_wrap.cpp.
+    // request_authentication is kept as a platform hook so future APs can
+    // override or refuse authentication (e.g. an AP that uses a different
+    // attestation mechanism, or a project that wants to gate auth on
+    // additional preconditions).
+    static ApOpErrCode request_authentication(const ApInfo& ap);
+    static uint8_t     get_write_fail_retry(const ApInfo& ap);
 };
 
 }  // namespace nv::vrot

@@ -68,6 +68,7 @@ public:
     I2cStatus read_vout(uint32_t& microvolts);
     I2cStatus read_temperature(uint16_t& temperature);
     I2cStatus read_input_power(uint32_t& milliwatts);
+    void      set_power_input_coeff(float m, float b, float exp_mult, uint16_t mask);
     I2cStatus send_command(uint8_t offset);
     I2cStatus write_reg(uint8_t offset, uint8_t value);
     I2cStatus write_reg_16bits(uint8_t offset, uint16_t value);

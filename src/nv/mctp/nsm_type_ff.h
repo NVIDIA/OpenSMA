@@ -175,4 +175,52 @@ struct [[gnu::packed]] NsmTFFGetPowerSmoothRawReadbackRes
     uint16_t resvd;     // Set to 0
 };
 
+// ============================================================================
+// Voltage calibration coefficient store (0xA9 / 0xAA)
+// ============================================================================
+
+// Coefficient selector for SOC-ADC, EDPP-DAC, and ISINK-DAC cal models (15 total).
+enum class PwrSmoothVoltageCalibCoeffId : uint8_t
+{
+    SocAdcQA   = 0,
+    SocAdcQB   = 1,
+    SocAdcQC   = 2,
+    SocAdcLM   = 3,
+    SocAdcLC   = 4,
+    EdppDacQA  = 5,
+    EdppDacQB  = 6,
+    EdppDacQC  = 7,
+    EdppDacLM  = 8,
+    EdppDacLC  = 9,
+    IsinkDacQA = 10,
+    IsinkDacQB = 11,
+    IsinkDacQC = 12,
+    IsinkDacLM = 13,
+    IsinkDacLC = 14,
+    MaxCount   = 15,
+};
+
+// SetSocCalibCoefficient (0xA9) Request
+struct [[gnu::packed]] NsmTFFSetSocCalibCoefficientReq
+{
+    uint8_t  coeff_id;           // PwrSmoothVoltageCalibCoeffId (0-14)
+    uint8_t  resvd_u8;           // Set to 0
+    uint16_t resvd_u16;          // Set to 0
+    uint32_t coefficient_value;  // IEEE-754 float32 LE bit pattern
+};
+
+// GetSocCalibCoefficient (0xAA) Request
+struct [[gnu::packed]] NsmTFFGetSocCalibCoefficientReq
+{
+    uint8_t  coeff_id;   // PwrSmoothVoltageCalibCoeffId (0-14)
+    uint8_t  resvd_u8;   // Set to 0
+    uint16_t resvd_u16;  // Set to 0
+};
+
+// GetSocCalibCoefficient (0xAA) Response
+struct [[gnu::packed]] NsmTFFGetSocCalibCoefficientRes
+{
+    uint32_t coefficient_value;  // IEEE-754 float32 LE from PDS
+};
+
 }  // namespace nv::mctp

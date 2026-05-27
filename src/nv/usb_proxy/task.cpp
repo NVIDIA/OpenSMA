@@ -22,6 +22,7 @@
 #include "nv/usb/usb_mctp_header.h"
 #include "nv/usb/mctp_router.h"
 #include "nv/usb/i2c_backend.h"
+#include "nv/lstp/lstp_parser.h"
 
 #include "nv/ipc/ipc_task.h"
 #include "nv/logger/log.h"
@@ -81,7 +82,7 @@ bool Task::send_to_backend(ipchandler::Id     ipchandler_id,
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    constexpr auto           StackSize = std::max(512, int(configMINIMAL_STACK_SIZE));
+    constexpr auto           StackSize = std::max(704, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -102,8 +103,12 @@ Task::Task() noexcept
 
 [[noreturn]] void Task::main()
 {
-    constexpr uint32_t WaitBits = MctpRxBit | HidRxBit | HidI2cRespBit | WdtBit
-                                | UpdateRoutingTableBit;
+    auto wait_bits = MctpRxBit | HidRxBit | HidI2cRespBit | WdtBit | UpdateRoutingTableBit;
+
+    if constexpr (nv::lstp::EnableRouter) {
+        wait_bits = wait_bits | LstpRxBit;
+        _lstp_router.init();
+    }
 
     // Mark USB task as booted for boot watchdog
     nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Usb);
@@ -112,6 +117,7 @@ Task::Task() noexcept
     auto& mctp_queue     = ipc::Queue::make(ipc::QueueId::UsbTx);
     auto& hid_queue      = ipc::Queue::make(ipc::QueueId::UsbHid);
     auto& i2c_resp_queue = ipc::Queue::make(ipc::QueueId::UsbI2cResp);
+    auto& lstp_queue     = ipc::Queue::make(ipc::QueueId::LstpRx);
 
     alignas(4) std::array<uint8_t, 512> mctp_buf{};
     ipc::Queue::Item                    mctp_item(mctp_buf.data(), mctp_buf.size());
@@ -124,12 +130,16 @@ Task::Task() noexcept
         reinterpret_cast<uint8_t*>(&i2c_resp),  // NOLINT(*-reinterpret-cast)
         sizeof(i2c_resp));
 
+    constexpr size_t LstpBufferSize = nv::lstp::EnableRouter ? nv::ipc::UsbLstpMsgSize : 1;
+    alignas(4) std::array<uint8_t, LstpBufferSize> lstp_buf{};
+    ipc::Queue::Item                               lstp_item(lstp_buf.data(), lstp_buf.size());
+
     while (true) {
-        auto bits = _event.wait(WaitBits, false, false, 1s);
+        auto bits = _event.wait(wait_bits, false, false, 1s);
         if (!bits.has_value()) {
             continue;  // Timeout or error, retry wait
         }
-        auto active_bits = bits.value() & WaitBits;
+        auto active_bits = bits.value() & wait_bits;
 
         // Handle HID data from C2C (enqueued by IPC task)
         if (active_bits & HidRxBit) {
@@ -155,6 +165,25 @@ Task::Task() noexcept
             _event.clear(MctpRxBit);
             if (mctp_queue.recv(mctp_item, 0ms) == ipc::Queue::Status::Ok) {
                 process_mctp_from_c2c(mctp_buf.data(), mctp_item.size());
+            }
+        }
+
+        if constexpr (nv::lstp::EnableRouter) {
+            if (active_bits & LstpRxBit) {
+                _event.clear(LstpRxBit);
+                if (lstp_queue.recv(lstp_item, 0ms) == ipc::Queue::Status::Ok) {
+                    // This is technically redundant because core1 already validated the request
+                    auto status = nv::lstp::LstpParser::validate_request(lstp_item,
+                                                                         lstp_item.size());
+
+                    if (status == nv::lstp::LstpStatus::Success) {
+                        status = _lstp_router.receive(lstp_item);
+                    }
+
+                    if (status != nv::lstp::LstpStatus::Success) {
+                        nv::lstp::LstpRouter::send_error(lstp_item, status);
+                    }
+                }
             }
         }
 
@@ -562,6 +591,17 @@ bool Task::to_usb_proxy(ipchandler::Id    src_id,
     return status == ipc::Queue::Status::Ok;
 }
 
+bool Task::to_usbLstp_proxy(std::span<uint8_t>& data)
+{
+    if (data.empty()) {
+        return true;
+    }
+
+    ipc::Queue::ConstItem item(data.data(), data.size());
+    auto status = ipc::task::Task::handle_queue_data(item, ipc::QueueId::LstpTx, false);
+    return status == ipc::task::Status::Ok;
+}
+
 bool Task::send_response_to_core1(const uint8_t* data, size_t length)
 {
     if (!data || length == 0) {
@@ -619,6 +659,17 @@ bool dispatch_c2c_data(ipc::QueueId queue_id, const uint8_t* data, uint16_t leng
     }
 #endif
 
+    if constexpr (nv::lstp::EnableRouter) {
+        if (queue_id == ipc::QueueId::LstpRx) {
+            const auto item = ipc::Queue::ConstItem(data, nv::ipc::UsbLstpMsgSize);
+            if (ipc::Queue::make(ipc::QueueId::LstpRx).send(item, 100ms)
+                == ipc::Queue::Status::Ok) {
+                event.set(Task::LstpRxBit);
+            }
+            return true;
+        }
+    }
+
     return false;  // Not a USB queue — caller should use generic path
 }
 
@@ -628,6 +679,11 @@ bool to_usb_proxy_impl(ipchandler::Id    src_id,
                        i2c::I2cStatus    result)
 {
     return Task::to_usb_proxy(src_id, read_length, item, result);
+}
+
+bool to_usbLstp_proxy_impl(std::span<uint8_t>& data)
+{
+    return Task::to_usbLstp_proxy(data);
 }
 
 void Task::set_update_routing_table_event()

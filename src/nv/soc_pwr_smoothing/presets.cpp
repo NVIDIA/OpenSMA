@@ -227,6 +227,50 @@ constexpr std::array<size_t, static_cast<size_t>(RackPwrSmoothParams::MaxTuningP
         }
 };
 
+static void refresh_pid_dt_fp(OffsetPolicy::PidController::RuntimeCfg& cfg)
+{
+    cfg.pid_dt_fp = OffsetPolicy::PidController::dt_fp_from_divisor(cfg.pid_dt_divisor);
+}
+
+static void refresh_residency_sma_fp(OffsetPolicy::ResidencySma::RuntimeCfg& cfg)
+{
+    cfg.ewma_alpha           = OffsetPolicy::ResidencySma::ewma_alpha_from_tau(cfg.ewma_tau);
+    cfg.one_minus_ewma_alpha = OffsetPolicy::ResidencySma::one_minus_ewma_alpha_from_tau(
+        cfg.ewma_tau);
+}
+
+static void refresh_pid_dt_fp_for_param(RuntimeCfg& cfg, uint8_t param_id)
+{
+    switch (static_cast<RackPwrSmoothParams>(param_id)) {
+        case RackPwrSmoothParams::EdppPrimaryPidDtDivisor:
+            refresh_pid_dt_fp(cfg.edpp_offset_policy.critical_pid);
+            break;
+        case RackPwrSmoothParams::EdppSecondaryPidDtDivisor:
+            refresh_pid_dt_fp(cfg.edpp_offset_policy.residency_pid);
+            break;
+        case RackPwrSmoothParams::IsinkPrimaryPidDtDivisor:
+            refresh_pid_dt_fp(cfg.isink_offset_policy.critical_pid);
+            break;
+        case RackPwrSmoothParams::IsinkSecondaryPidDtDivisor:
+            refresh_pid_dt_fp(cfg.isink_offset_policy.residency_pid);
+            break;
+        default: break;
+    }
+}
+
+static void refresh_residency_sma_fp_for_param(RuntimeCfg& cfg, uint8_t param_id)
+{
+    switch (static_cast<RackPwrSmoothParams>(param_id)) {
+        case RackPwrSmoothParams::EdppResidencyEwmaTau:
+            refresh_residency_sma_fp(cfg.edpp_offset_policy.residency_sma);
+            break;
+        case RackPwrSmoothParams::IsinkResidencyEwmaTau:
+            refresh_residency_sma_fp(cfg.isink_offset_policy.residency_sma);
+            break;
+        default: break;
+    }
+}
+
 // Override params 40-42: pointer-to-member so we can index by (param_id - 40).
 using OverrideCfgPtr = RuntimeCfg::OverrideConfig RuntimeCfg::*;
 constexpr std::array<OverrideCfgPtr, 3U>          kOverrideCfgMember{
@@ -320,6 +364,8 @@ void set_param_in_cfg(RuntimeCfg& cfg, uint8_t param_id, uint32_t value)
     const size_t off  = kTuningParamOffset.at(static_cast<size_t>(param_id));
     auto*        base = static_cast<char*>(static_cast<void*>(&cfg));
     std::memcpy(base + off, &value, sizeof(value));
+    refresh_pid_dt_fp_for_param(cfg, param_id);
+    refresh_residency_sma_fp_for_param(cfg, param_id);
 }
 
 }  // namespace

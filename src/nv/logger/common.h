@@ -128,6 +128,7 @@ struct Event
     static constexpr EventStructItem I2cLoopbackWdtUpdate = {0x050b, Level::Info};
     static constexpr EventStructItem I2CCounts            = {0x050c, Level::Info};
     static constexpr EventStructItem I2CRuntPacket        = {0x050d, Level::Info};
+    static constexpr EventStructItem I2CRecovery          = {0x050e, Level::Info};
     // I3C
     static constexpr EventStructItem I3CBind                  = {0x0600, Level::Info};
     static constexpr EventStructItem I3CFailedToResetDaaV1    = {0x0601, Level::Error};
@@ -257,10 +258,11 @@ struct Event
     static constexpr EventStructItem SpiFlashromQueueFail = {0x0b07, Level::Error};
 
     // DebugToken
-    static constexpr EventStructItem DtInstallSuccess = {0x0c00, Level::Unknown};
-    static constexpr EventStructItem DtEraseSuccess   = {0x0c01, Level::Unknown};
-    static constexpr EventStructItem DtVerifyStatus   = {0x0c02, Level::Unknown};
-    static constexpr EventStructItem DtAuthTokenFail  = {0x0c03, Level::Unknown};
+    static constexpr EventStructItem DtInstallSuccess    = {0x0c00, Level::Info};
+    static constexpr EventStructItem DtEraseSuccess      = {0x0c01, Level::Info};
+    static constexpr EventStructItem DtVerifyStatus      = {0x0c02, Level::Unknown};
+    static constexpr EventStructItem DtAuthTokenFail     = {0x0c03, Level::Error};
+    static constexpr EventStructItem DtFeatureUpdateFail = {0x0c04, Level::Error};
 
     // Perf
     static constexpr EventStructItem PerfI3c            = {0x0d00, Level::Info};
@@ -314,6 +316,11 @@ struct Event
     static constexpr EventStructItem McuTempFifoTimeout           = {0x1003, Level::Error};
     static constexpr EventStructItem LeakDetectIsr                = {0x1004, Level::Info};
     static constexpr EventStructItem BusbarTempIsr                = {0x1005, Level::Info};
+    static constexpr EventStructItem LeakDetectStateChange        = {0x1006, Level::Info};
+    static constexpr EventStructItem LeakDetectVrgpioUpdateFail   = {0x1007, Level::Error};
+    static constexpr EventStructItem BusbarTempStateChange        = {0x1008, Level::Info};
+    static constexpr EventStructItem BusbarTempVrgpioUpdateFail   = {0x1009, Level::Error};
+    static constexpr EventStructItem LeakDetectWarPdsUpdate       = {0x100A, Level::Error};
 
     // Soc Pwr Smoothing
     static constexpr EventStructItem SocPwrSmoothingSocPercent       = {0x1100, Level::Info};

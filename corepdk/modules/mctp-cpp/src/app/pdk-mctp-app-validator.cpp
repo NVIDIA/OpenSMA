@@ -95,6 +95,7 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
         }
     }
 
+    // Start of VendorPci (NSM) message
     if ((ctl.msg_type == MsgType::VendorPci) && ctl.som) {
         if (!eid_ok) {
             pdk::cmn::log::hide().warn<Console>("invalid dst eid for vendor pci message\n");
@@ -107,6 +108,17 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
             pdk::cmn::log::hide().warn<Console>("NvMctpPciVendorId invalid");
             return false;
         }
+
+        // Persist state so SOM=0 continuation fragments validate against the
+        // EID/tag/seq we just accepted. Mirrors the PLDM/SPDM start branches
+        // above; writing on EOM=1 is harmless because single packets never
+        // re-read this state. Without this, multi-fragment NSM messages (e.g.
+        // InstallToken) drop every fragment after the first because the
+        // continuation branch below compares against stale _eid.
+        _msg_type = ctl.msg_type;
+        _msg_tag  = ctl.msg_tag;
+        _pkt_seq  = ctl.pkt_seq;
+        _eid      = ctl.dst_eid;
         return true;
     }
 

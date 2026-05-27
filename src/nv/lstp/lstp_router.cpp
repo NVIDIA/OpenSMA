@@ -16,13 +16,12 @@
  * limitations under the License.
  */
 #include "nv/lstp/lstp_router.h"
+#include "nv/lstp/lstp_parser.h"
 #include "nv/lstp/lstp_task.h"
 
-#include <cstring>
 #include <algorithm>
 #include <cassert>
 #include <cstring>
-#include <tuple>
 #include <variant>
 
 #include "nv/i2c/common.h"
@@ -46,7 +45,7 @@ namespace nv::lstp {
 void LstpRouter::init()
 {
     for (size_t channel_id = 0; channel_id < LstpNumChannels; channel_id++) {
-        const auto& channel_info    = std::get<0>(LstpChannels.at(channel_id));
+        const auto& channel_info    = LstpChannels.at(channel_id).info;
         bool        channel_enabled = false;
 
         switch (channel_info.type) {
@@ -68,68 +67,12 @@ void LstpRouter::init()
     }
 }
 
-void LstpRouter::receive(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
-                         uint32_t                                      buffer_len)
+LstpStatus LstpRouter::receive(std::span<uint8_t>& buffer)
 {
-    if (buffer.size() != LstpMsgSize) {
-        return;
-    }
-
-    if (buffer_len < sizeof(LstpHdr)) {
-        return;
-    }
-
-    auto& hdr = from<LstpHdr>(buffer.data());
-
-    const LstpStatus status = receive_helper(buffer, buffer_len);
-
-    // Only handle failure responses here for convenience
-    if (status != LstpStatus::Success) {
-        std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buf{};
-        auto&                                        resp_hdr = from<LstpHdr>(resp_buf.data());
-
-        resp_hdr.channel_id      = hdr.channel_id;
-        resp_hdr.cmd_status_code = static_cast<uint8_t>(status) | LstpResponseBit;
-        resp_hdr.len_lsb         = 0;
-        resp_hdr.len_msb         = 0;
-
-        std::span<uint8_t> item(resp_buf.data(), resp_buf.size());
-        nv::usb::Task::to_usbLstp(item);
-    }
-}
-
-LstpStatus LstpRouter::receive_helper(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
-                                      uint32_t                                      buffer_len)
-{
-    auto& hdr = from<LstpHdr>(buffer.data());
-
-    if (static_cast<size_t>(hdr.len_lsb) + static_cast<size_t>(hdr.len_msb << BYTE1_SHIFT)
-            + sizeof(LstpHdr)
-        > buffer_len) {
-        return LstpStatus::Error;
-    }
-
-    if (hdr.channel_id >= LstpNumChannels) {
-        return LstpStatus::Error;
-    }
-
-    // Flashrom (NV_SMA_SPI) may use channel ID = 0 in the request packet
-    // For backward compatibility, treat channel 0 commands 0x0..0x7 as SPI commands
-    // This assumes there is no aliasing between channel 0 and Flashom on command byte bits 3..0
-    auto channel_type = std::get<0>(LstpChannels.at(hdr.channel_id)).type;
-    if constexpr (EnableSpi) {
-        static_assert(static_cast<uint8_t>(LstpManagementCommand::Start)
-                      > static_cast<uint8_t>(spi::FlashromCmdCode::SPI_CMD_END));
-        static_assert(static_cast<uint8_t>(LstpManagementCommand::End)
-                      <= spi::Flashrom::CMD_CODE_MASK);
-        if ((hdr.channel_id == 0)
-            && (hdr.cmd_status_code & spi::Flashrom::CMD_CODE_MASK)
-                   <= spi::FlashromCmdCode::SPI_CMD_END) {
-            channel_type = LstpChannelType::Spi;
-        }
-    }
+    auto channel_type = LstpParser::parse_channel_type(buffer);
 
     LstpStatus status = LstpStatus::NotSupported;
+
     switch (channel_type) {
         case LstpChannelType::Management: {
             status = receive_ch0(buffer);
@@ -171,11 +114,29 @@ LstpStatus LstpRouter::receive_helper(std::array<uint8_t, nv::ipc::UsbLstpMsgSiz
     return status;
 }
 
+void LstpRouter::send_error(std::span<uint8_t>& buffer, LstpStatus status)
+{
+    if ((status != LstpStatus::Success) && (status != LstpStatus::SilentDrop)) {
+        auto& hdr = from<LstpHdr>(buffer.data());
+
+        std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buf{};
+        auto&                                        resp_hdr = from<LstpHdr>(resp_buf.data());
+
+        resp_hdr.channel_id      = hdr.channel_id;
+        resp_hdr.cmd_status_code = static_cast<uint8_t>(status) | LstpResponseBit;
+        resp_hdr.len_lsb         = 0;
+        resp_hdr.len_msb         = 0;
+
+        std::span<uint8_t> item(resp_buf.data(), resp_buf.size());
+        nv::usb::Task::to_usbLstp(item);
+    }
+}
+
 /*****************************************************
  * LSTP Management Channel (Ch0)
  *****************************************************/
 
-LstpStatus LstpRouter::receive_ch0(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
+LstpStatus LstpRouter::receive_ch0(std::span<uint8_t>& buffer)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
@@ -194,8 +155,7 @@ LstpStatus LstpRouter::receive_ch0(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
     }
 }
 
-LstpStatus
-LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
+LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
 {
     static_assert(sizeof(LstpChannelConfigReadRequest) <= LstpMaxPayloadSize);
 
@@ -226,8 +186,8 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
     resp_offset     += sizeof(LstpChannelConfigBlob);
 
     const auto& channel_entry = LstpChannels.at(channel_config_request.channel_id);
-    const auto& channel_info  = std::get<0>(channel_entry);
-    const auto& channel_cfg   = std::get<1>(channel_entry);
+    const auto& channel_info  = channel_entry.info;
+    const auto& channel_cfg   = channel_entry.config;
     const auto& channel_state = _channels.at(channel_config_request.channel_id);
 
     resp_data.channel_type    = static_cast<uint8_t>(channel_info.type);
@@ -256,7 +216,7 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
         case LstpChannelType::Spi: {
             static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpSpiChannelConfig)
                           <= LstpMaxPayloadSize);
-            if constexpr (EnableSpi) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Spi) == true) {
                 auto& spiConfigResp = from<LstpSpiChannelConfig>(
                     &resp_buffer.data()[resp_offset]);
                 resp_offset += sizeof(LstpSpiChannelConfig);
@@ -272,7 +232,7 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
             break;
         }
         case LstpChannelType::Gpio: {
-            if constexpr (EnableGpio) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Gpio) == true) {
                 static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpGpioChannelConfig)
                                   + MaxGpiosPerPacket * sizeof(LstpGpioConfig)
                               <= LstpMaxPayloadSize);
@@ -291,7 +251,7 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
             break;
         }
         case LstpChannelType::I2c: {
-            if constexpr (EnableI2c) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::I2c) == true) {
                 static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpI2cChannelConfig)
                               <= LstpMaxPayloadSize);
                 auto& i2cConfigResp = from<LstpI2cChannelConfig>(
@@ -310,7 +270,7 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
         case LstpChannelType::Ipmi: {
             static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpIpmiChannelConfig)
                           <= LstpMaxPayloadSize);
-            if constexpr (EnableIpmi) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi) == true) {
                 // Empty config for IPMI channel
             }
             else {
@@ -319,7 +279,7 @@ LstpRouter::read_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& re
             break;
         }
         case LstpChannelType::Uart: {
-            if constexpr (EnableUart) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Uart) == true) {
                 static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpUartChannelConfig)
                               <= LstpMaxPayloadSize);
                 auto& uartConfigResp = from<LstpUartChannelConfig>(
@@ -404,8 +364,7 @@ LstpRouter::read_gpio_config_helper(uint16_t                                    
     return LstpStatus::Success;
 }
 
-LstpStatus
-LstpRouter::write_channel_config(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
+LstpStatus LstpRouter::write_channel_config(std::span<uint8_t>& req_buffer)
 {
     static_assert(sizeof(LstpChannelConfigWriteRequest) + sizeof(LstpChannelConfigBlob)
                   <= LstpMaxPayloadSize);
@@ -484,7 +443,7 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
     switch (static_cast<LstpChannelType>(cfg.channel_type)) {
         case LstpChannelType::Ipmi: {
             status = LstpStatus::NotSupported;
-            if constexpr (EnableIpmi) {
+            if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi) == true) {
                 if (static_cast<bool>(cfg.channel_enabled) == true) {
                     nv::ssif::Task::enable();
                     channel_state.enabled = true;
@@ -509,7 +468,7 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
  * LSTP SPI Channel
  *****************************************************/
 
-LstpStatus LstpRouter::receive_spi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
+LstpStatus LstpRouter::receive_spi(std::span<uint8_t>& buffer)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
@@ -518,15 +477,14 @@ LstpStatus LstpRouter::receive_spi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
         return LstpStatus::Success;
     }
 
-    std::span<uint8_t> item(buffer.data(), buffer.size());
-    return LstpStatus_from(nv::spi::FlashromTask::to_spi(item));
+    return LstpStatus_from(nv::spi::FlashromTask::to_spi(buffer));
 }
 
 /*****************************************************
  * LSTP GPIO Channel
  *****************************************************/
 
-LstpStatus LstpRouter::receive_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
+LstpStatus LstpRouter::receive_gpio(std::span<uint8_t>& req_buffer)
 {
     auto& hdr = from<LstpHdr>(req_buffer.data());
 
@@ -576,7 +534,7 @@ void LstpRouter::send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t
  * LSTP I2C Channel
  *****************************************************/
 
-LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& req_buffer)
+LstpStatus LstpRouter::receive_i2c(std::span<uint8_t>& req_buffer)
 {
     auto&  req_hdr    = from<LstpHdr>(req_buffer.data());
     size_t req_offset = sizeof(LstpHdr);
@@ -648,22 +606,47 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
             break;
         }
 
-        case LstpI2cCommand::ReadRecvLen: {
-            if (req_offset + sizeof(LstpI2cReadRecvLenRequest) > LstpMaxPayloadSize) {
+        case LstpI2cCommand::DeprecatedReadRecvLen: {
+            if (req_offset + sizeof(LstpI2cDeprecatedReadRecvLenRequest) > LstpMaxPayloadSize) {
                 return LstpStatus::Error;
             }
-            if (payload_len < sizeof(LstpI2cReadRecvLenRequest)) {
+            if (payload_len < sizeof(LstpI2cDeprecatedReadRecvLenRequest)) {
                 return LstpStatus::Error;
             }
-            auto& read_recv_len_req = from<LstpI2cReadRecvLenRequest>(
+            auto& read_recv_len_req = from<LstpI2cDeprecatedReadRecvLenRequest>(
                 &req_buffer.data()[req_offset]);
-            // req_offset += sizeof(LstpI2cReadRecvLenRequest);
+            // req_offset += sizeof(LstpI2cDeprecatedReadRecvLenRequest);
 
             address = read_recv_len_req.address;
 
             // Response length determined by first byte received (SMBus block read)
             read_len = static_cast<uint16_t>(MaxI2cPayloadSize);
             flags    = nv::i2c::I2cFlags::RecvLen;
+            break;
+        }
+
+        case LstpI2cCommand::SmbusBlockRead: {
+            if (req_offset + sizeof(LstpI2cSmbusBlockReadRequest) > LstpMaxPayloadSize) {
+                return LstpStatus::Error;
+            }
+            if (payload_len < sizeof(LstpI2cSmbusBlockReadRequest)) {
+                return LstpStatus::Error;
+            }
+            auto& smbus_block_read_req = from<LstpI2cSmbusBlockReadRequest>(
+                &req_buffer.data()[req_offset]);
+            req_offset += sizeof(LstpI2cSmbusBlockReadRequest);
+
+            address = smbus_block_read_req.address;
+
+            // Response length determined by first byte received (SMBus block read)
+            read_len = static_cast<uint16_t>(MaxI2cPayloadSize);
+            flags    = nv::i2c::I2cFlags::RecvLen;
+            if (smbus_block_read_req.include_smbus_pec != 0U) {
+                flags |= nv::i2c::I2cFlags::SmbusPec;
+            }
+
+            write_len  = static_cast<uint16_t>(payload_len + sizeof(LstpHdr) - req_offset);
+            write_data = std::span<uint8_t>(&req_buffer.data()[req_offset], write_len);
             break;
         }
 
@@ -701,7 +684,7 @@ LstpStatus LstpRouter::receive_i2c(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>&
     }
 
     auto ipchandler_id = static_cast<ipchandler::Id>(
-        std::get<0>(LstpChannels.at(req_hdr.channel_id)).id);
+        LstpChannels.at(req_hdr.channel_id).info.id);
     auto status = LstpStatus_from(nv::i2c::Task::to_i2c(
         ipchandler::Id::Lstp, address, ipchandler_id, write_len, read_len, flags, write_data));
 
@@ -720,7 +703,7 @@ void LstpRouter::send_i2c(ipchandler::Id    src_id,
     // TODO: Optimize with LUT
     uint8_t channel_id = 0;
     for (channel_id = 1; channel_id < LstpNumChannels; channel_id++) {
-        const auto& channel_info = std::get<0>(LstpChannels.at(channel_id));
+        const auto& channel_info = LstpChannels.at(channel_id).info;
         if ((channel_info.type == LstpChannelType::I2c)
             && (static_cast<ipchandler::Id>(channel_info.id) == src_id)) {
             break;
@@ -758,7 +741,7 @@ void LstpRouter::send_i2c(ipchandler::Id    src_id,
  * LSTP IPMI Channel
  *****************************************************/
 
-LstpStatus LstpRouter::receive_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
+LstpStatus LstpRouter::receive_ipmi(std::span<uint8_t>& buffer)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
@@ -767,8 +750,7 @@ LstpStatus LstpRouter::receive_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>
         return LstpStatus::Success;
     }
 
-    std::span<uint8_t> item(buffer.data(), buffer.size());
-    (void)nv::ssif::Task::to_ssif(item);
+    (void)nv::ssif::Task::to_ssif(buffer);
     return LstpStatus::Success;
 }
 
@@ -789,7 +771,7 @@ void LstpRouter::send_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
  * LSTP UART Channel
  *****************************************************/
 
-LstpStatus LstpRouter::receive_uart(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
+LstpStatus LstpRouter::receive_uart(std::span<uint8_t>& buffer)
 {
     std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buf{};
     auto&                                        req_hdr  = from<LstpHdr>(buffer.data());

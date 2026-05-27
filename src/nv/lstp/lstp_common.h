@@ -25,6 +25,7 @@
 #include <variant>
 
 #include "nv/gpio/common.h"
+#include "sys/common/common.h"
 
 namespace nv::lstp {
 
@@ -88,6 +89,7 @@ enum class LstpStatus : uint8_t
     ArbLost      = 0x05,
     NotSupported = 0x06,
     TooLarge     = 0x07,
+    SilentDrop   = 0xFE,  // Private driver status, don't send over USB
     IrqInterrupt = 0xFF,  // Used for interrupt-driven communication
 };
 
@@ -146,7 +148,18 @@ struct [[gnu::packed]] LstpManagementConfig
  * LSTP SPI Channel
  *****************************************************/
 
-constexpr uint8_t LstpSpiMaxCs = 4U;
+constexpr uint8_t LstpSpiMaxCs   = 4U;
+constexpr uint8_t LstpSpiCmdMask = 0xFU;
+
+enum class LstpSpiCommand : uint8_t
+{
+    Config      = 0x00,
+    Read        = 0x01,
+    Write       = 0x02,
+    WriteRead   = 0x03,
+    PostedWrite = 0x04,
+    End         = 0x07,
+};
 
 struct [[gnu::packed]] LstpSpiChannelConfig
 {
@@ -311,11 +324,12 @@ enum LstpI2cCommandFlags : uint8_t
 
 enum class LstpI2cCommand : uint8_t
 {
-    BusRecovery = 0x00,
-    Read        = 0x01,
-    Write       = 0x02,
-    ReadRecvLen = 0x03,
-    WriteRead   = 0x04,
+    BusRecovery           = 0x00,
+    Read                  = 0x01,
+    Write                 = 0x02,
+    DeprecatedReadRecvLen = 0x03,  // Deprecated: Do not use
+    WriteRead             = 0x04,
+    SmbusBlockRead        = 0x05,
 };
 
 // I2C Request Structs
@@ -331,7 +345,7 @@ struct [[gnu::packed]] LstpI2cWriteRequest
     // Followed by N bytes of write data
 };
 
-struct [[gnu::packed]] LstpI2cReadRecvLenRequest
+struct [[gnu::packed]] LstpI2cDeprecatedReadRecvLenRequest
 {
     uint8_t address;
 };
@@ -340,6 +354,13 @@ struct [[gnu::packed]] LstpI2cWriteReadRequest
 {
     uint8_t  address;
     uint16_t read_len;
+    // Followed by M bytes of write data
+};
+
+struct [[gnu::packed]] LstpI2cSmbusBlockReadRequest
+{
+    uint8_t  address;
+    uint16_t include_smbus_pec;
     // Followed by M bytes of write data
 };
 
@@ -394,7 +415,13 @@ using LstpChannelConfig = std::variant<LstpManagementConfig,
                                        LstpI2cChannelConfig,
                                        LstpIpmiChannelConfig,
                                        LstpUartChannelConfig>;
-using LstpChannelEntry  = std::tuple<LstpChannelInfo, LstpChannelConfig>;
+
+struct LstpChannelEntry
+{
+    LstpChannelInfo   info;
+    LstpChannelConfig config;
+    nv::ipc::CoreId   core_id;
+};
 
 template<size_t N>
 constexpr bool ValidateLstpChannelConfigs(const std::array<LstpChannelEntry, N>& channels)
@@ -404,8 +431,8 @@ constexpr bool ValidateLstpChannelConfigs(const std::array<LstpChannelEntry, N>&
     }
 
     for (const auto& entry : channels) {
-        const auto& info = std::get<0>(entry);
-        const auto& cfg  = std::get<1>(entry);
+        const auto& info = entry.info;
+        const auto& cfg  = entry.config;
 
         switch (info.type) {
             case LstpChannelType::Management:
@@ -450,12 +477,24 @@ constexpr bool ValidateLstpChannelConfigs(const std::array<LstpChannelEntry, N>&
 }
 
 template<size_t N>
-constexpr bool IsChannelEnabled(const std::array<LstpChannelEntry, N>& channels,
-                                const LstpChannelType                  channel_type)
+constexpr bool IsLstpEnabled(const std::array<LstpChannelEntry, N>& channels,
+                             const nv::ipc::CoreId                  core_id)
 {
-    return std::any_of(channels.begin(), channels.end(), [channel_type](const auto& entry) {
-        return std::get<0>(entry).type == channel_type;
+    return std::any_of(channels.begin(), channels.end(), [core_id](const auto& entry) {
+        return entry.core_id == core_id || entry.core_id == nv::ipc::CoreId::Both;
     });
+}
+
+template<size_t N>
+constexpr bool IsChannelEnabled(const std::array<LstpChannelEntry, N>& channels,
+                                const LstpChannelType                  channel_type,
+                                const nv::ipc::CoreId core_id = nv::ipc::CoreId::Both)
+{
+    return std::any_of(
+        channels.begin(), channels.end(), [channel_type, core_id](const auto& entry) {
+            return entry.info.type == channel_type
+                && (entry.core_id == core_id || core_id == nv::ipc::CoreId::Both);
+        });
 }
 
 template<size_t N>
@@ -463,7 +502,7 @@ constexpr uint8_t GetFirstChannelId(const std::array<LstpChannelEntry, N>& chann
                                     const LstpChannelType                  channel_type)
 {
     for (uint8_t i = 0; i < channels.size(); ++i) {
-        if (std::get<0>(channels[i]).type == channel_type) {
+        if (channels[i].info.type == channel_type) {
             return i;
         }
     }
