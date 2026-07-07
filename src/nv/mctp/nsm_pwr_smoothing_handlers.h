@@ -56,7 +56,7 @@ namespace nv::mctp::nsm_pwr_smoothing_handlers {
 
 /**
  * @brief Get Max AC Power Ramp Rate setting
- * @param[out] ntx Response packet to populate with current ramp rate (float)
+ * @param[out] ntx Response packet to populate with current ramp rate (uint32_t, W/s)
  * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
  */
 Ccode handle_get_max_ac_ramp_rate(NsmPktResp& ntx);
@@ -95,10 +95,10 @@ Ccode handle_get_soc_therm_brake_enabled(NsmPktResp& ntx);
 
 /**
  * @brief Set Max AC Power Ramp Rate (also persists to PDS)
- * @param[in] ramp_rate New ramp rate value (W/s)
+ * @param[in] ramp_rate New ramp rate (uint32_t watts per second; 0 = disabled)
  * @return Ccode::Success if handled, Ccode::ErrorUnsupportedCmd if feature not available
  */
-Ccode handle_set_max_ac_ramp_rate(float ramp_rate);
+Ccode handle_set_max_ac_ramp_rate(uint32_t ramp_rate);
 
 /**
  * @brief Set SoC Power Smooth Enabled state (also persists to PDS)
@@ -187,10 +187,9 @@ Ccode handle_get_debug_telemetry(uint16_t telem_type, NsmPktResp& ntx);
 
 /**
  * @brief Trigger ADC Calibration Test sequence
- * Starts a 10-point calibration loop (0V to 2.5V) using external I2C DAC.
- * Results are stored in flash upon completion (~11 seconds).
- * @return Ccode::Success if calibration started, Ccode::ErrorUnsupportedCmd if feature not
- * available
+ * Runs 26-step calibration (0V to 2.5V) using external I2C DAC; persists to PDS on success.
+ * @return Ccode::Success, Ccode::ErrorI2CError on DAC I2C failure, Ccode::ErrorUpdateDbFail on
+ * PDS persist failure, Ccode::ErrorUnsupportedCmd if feature not available
  */
 Ccode handle_trigger_adc_calibration();
 

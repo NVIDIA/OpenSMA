@@ -22,22 +22,36 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
+#include NV_IPC_CONFIG_H
 #include "driver.h"
+#include "nv/common/preproc.h"
+#include "nv/fancontrol/common.h"
 #include "sys/pwm/pwm0.h"
+#include "sys/pwm/pwm_ctimer.h"
+
+#include <array>
 
 namespace nv::fancontrol {
 
+namespace {
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NV_SHARED_BSS std::array<uint8_t, FanNum> g_fan_duty{};
+}  // namespace
+
 void Driver::init()
 {
-    // Initialize PWM0 driver (16kHz PWM, both channels at 50% initially)
-    sys::pwm0::Driver::init();
+    // Bring up the PWM backend selected in config.h (FanPwm).
+    if constexpr (FanPwm == PwmBackend::Ctimer) {
+        sys::pwm_ctimer::Driver::init();
+    }
+    else {
+        sys::pwm0::Driver::init();
+    }
 
-    // Default PWM duty cycle percentages
-    constexpr uint32_t Fan0DefaultPwmPercent = 80;  // CPU fan default PWM 80%
-    constexpr uint32_t Fan1DefaultPwmPercent = 50;  // Side fan default PWM 50%
-
-    set_pwm_duty_cycle(0, Fan0DefaultPwmPercent);
-    set_pwm_duty_cycle(1, Fan1DefaultPwmPercent);
+    // Per-PWM default duty is owned by the project config.h.
+    for (size_t i = 0; i < FanNum; ++i) {
+        set_pwm_duty_cycle(i, FanDefaultDuty.at(i));
+    }
 }
 
 void Driver::set_fan_pwm(uint32_t duty_cycle, size_t fan_index)
@@ -58,18 +72,41 @@ void Driver::set_pwm_duty_cycle(size_t index, uint32_t duty_cycle)
         duty_cycle = MaxPwmDuty;
     }
 
-    // Map fan index to PWM channel
-    // FAN0 (index 0) → GPIO3_1 → PWM0_B0 → ChannelB
-    // FAN1 (index 1) → GPIO3_0 → PWM0_A0 → ChannelA
-    sys::pwm0::Channel pwm_channel = sys::pwm0::Channel::ChannelB;
-    switch (index) {
-        case 0 : pwm_channel = sys::pwm0::Channel::ChannelB; break;
-        case 1 : pwm_channel = sys::pwm0::Channel::ChannelA; break;
-        default: return;  // Invalid index
+    if (index >= FanNum) {
+        return;  // invalid fan index
     }
 
-    // Set hardware PWM duty cycle (safe to cast after clamping)
-    sys::pwm0::Driver::set_pwm(pwm_channel, static_cast<uint8_t>(duty_cycle));
+    // Cache the commanded duty so Get-PWM can read it back.
+    g_fan_duty.at(index) = static_cast<uint8_t>(duty_cycle);
+
+    // Dispatch to the PWM backend selected in config.h.
+    if constexpr (FanPwm == PwmBackend::Ctimer) {
+        // CTIMER instance, period channel and per-fan match channel come from config.h.
+        sys::pwm_ctimer::Driver::set_pwm(PwmCtimerInstance,
+                                         PwmCtimerPeriodCh,
+                                         PwmCtimerMatchCh.at(index),
+                                         static_cast<uint8_t>(duty_cycle));
+    }
+    else {
+        // index 0 -> PWM0_B0 (ChannelB), index 1 -> PWM0_A0 (ChannelA)
+        sys::pwm0::Channel channel = sys::pwm0::Channel::ChannelB;
+        switch (index) {
+            case 0 : channel = sys::pwm0::Channel::ChannelB; break;
+            case 1 : channel = sys::pwm0::Channel::ChannelA; break;
+            default: return;  // invalid index
+        }
+        sys::pwm0::Driver::set_pwm(channel, static_cast<uint8_t>(duty_cycle));
+    }
+}
+
+uint8_t Driver::get_fan_pwm(size_t fan_index)
+{
+    return (fan_index < FanNum) ? g_fan_duty.at(fan_index) : 0;
+}
+
+size_t Driver::fan_count()
+{
+    return FanNum;
 }
 
 }  // namespace nv::fancontrol

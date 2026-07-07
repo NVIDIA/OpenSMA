@@ -38,6 +38,7 @@
 #include "nv/mctp/nsm_type_4.h"
 #include "nv/mctp/nsm_type_5.h"
 #include "nv/mctp/nsm_type_ff.h"
+#include "nv/vrot/interface/types.h"
 #include "sys/common/error-inject.h"
 
 // Forward declarations to reduce compile size
@@ -185,19 +186,6 @@ struct [[gnu::packed]] QuerySvnResp
     uint16_t pending_svn;
     uint16_t min_svn;
     uint16_t pending_min_svn;
-};
-
-// setRotProperty Request data 6 bytes
-// - 2 byte: Component Classification
-// - 2 byte: Component Identifier
-// - 1 byte: Component Classification Index
-// - 1 byte: Property
-// - (TBD) MCU & CPLD do not support any property
-
-struct [[gnu::packed]] SetRotPropertyReq
-{
-    FwCompInfo               fw_comp_info;
-    NsmSetRotPropertyRequest property;
 };
 
 // ImageCopyControl Request data 7 bytes
@@ -1358,7 +1346,8 @@ constexpr std::array<uint8_t, nsm_msg::NvMctpSupportedNum> gen_type6_code_bitmas
     nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::QuerySecVerNum));
     nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::UpdateMinSecVerNum));
     nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::QueryFwCompId));
-    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::SetRotProperty));
+    // SetRotProperty (0x8) is intentionally not advertised: MCU & CPLD do not
+    // support any RoT property (see signoff bug 5579166 / bug 6217854).
     nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmFWCmdCode::ImageCopyControl));
 
     config_nsm_type6_cmd(bitmask);
@@ -1571,11 +1560,8 @@ protected:
     void query_auth_key(const Packet& rx, Packet& tx);
     void query_ap_auth_key(const Packet& rx, Packet& tx);
     void on_query_auth_key(const Packet& rx, Packet& tx);
-    void on_set_rot_property(const Packet& rx, Packet& tx);
     void query_image_copy_progress(const Packet& rx, Packet& tx);
-    void initiate_image_copy(const Packet&              rx,
-                             Packet&                    tx,
-                             const ImageCopyControlReq& image_copy_control_req);
+    void initiate_image_copy(const Packet& rx, Packet& tx);
     void on_image_copy_control(const Packet& rx, Packet& tx);
     void update_auth_key(const Packet& rx, Packet& tx, const UpdateAuthKeyReq& update_struct);
     void
@@ -1656,6 +1642,9 @@ protected:
     bool     is_input_length_valid(const Packet& rx, uint8_t size);
     bool     can_revoke_otp(Rcode& reason_code);
     bool     can_initiate_image_copy(Ccode& completion_code, Rcode& reason_code);
+    bool     can_initiate_ap_image_copy(const nv::vrot::ApInfo& ap,
+                                        Ccode&                  completion_code,
+                                        Rcode&                  reason_code);
     void     get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
                                    NsmRedundancyPolicy& redundancy_policy_current);
     Ccode    can_revoke_ap_otp();

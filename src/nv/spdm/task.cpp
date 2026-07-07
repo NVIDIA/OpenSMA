@@ -17,6 +17,7 @@
  */
 
 #include "nv/spdm/task.h"
+#include <array>
 #include <chrono>
 #include <utility>
 #include "sys/spdm/platform_certificate.h"
@@ -27,6 +28,7 @@
 #include "nv/mctp/interface.h"
 #include "nv/nv.h"
 #include "nv/i2c/lattice_driver.h"
+#include "nv/vrot/interface/interface.h"
 #include "library/spdm_lib_config.h"
 using namespace std::chrono_literals;
 using namespace nv::ipc;
@@ -35,6 +37,90 @@ using namespace nv;
 namespace nv::spdm {
 namespace {
 constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+
+void handle_mcu_auth_request(
+    const nv::spdm::crypto::AuthenticateMcuFirmwareRequestParameter& request,
+    nv::ipc::CoreId&                                                 request_core_id,
+    nv::spdm::crypto::CryptoReqResParameters&                        response_parameters)
+{
+    request_core_id  = request.request_core_id;
+    auto auth_result = nv::spdm::crypto::authenticate_mcu_firmware(
+        request.input_parsing_fw_type);
+    response_parameters = nv::spdm::crypto::AuthenticateMcuFirmwareResponseParameter{
+        .auth_result           = auth_result,
+        .input_parsing_fw_type = request.input_parsing_fw_type,
+        .request_task_id       = request.request_task_id,
+    };
+}
+
+bool handle_ap_auth_request(
+    const nv::spdm::crypto::AuthenticateApFirmwareRequestParameter& request,
+    nv::ipc::CoreId&                                                request_core_id,
+    nv::spdm::crypto::CryptoReqResParameters&                       response_parameters)
+{
+    if constexpr (!HasVrotAp) {
+        return false;
+    }
+    else {
+        request_core_id  = request.request_core_id;
+        auto auth_result = nv::spdm::crypto::CryptoStatus::FailUnknown;
+        if (const auto ap = nv::vrot::find_ap(request.ap_id, nv::vrot::ApList); ap) {
+            auth_result = nv::spdm::crypto::authenticate_ap_firmware_with_request_id(
+                ap.value(),
+                request.input_parsing_fw_type,
+                request.request_task_id,
+                request.auth_request_id);
+        }
+        response_parameters = nv::spdm::crypto::AuthenticateApFirmwareResponseParameter{
+            .auth_result           = auth_result,
+            .input_parsing_fw_type = request.input_parsing_fw_type,
+            .ap_id                 = request.ap_id,
+            .auth_request_id       = request.auth_request_id,
+            .request_task_id       = request.request_task_id,
+        };
+        return true;
+    }
+}
+
+bool handle_auth_request(const nv::spdm::crypto::CryptoReqResParameters& request_parameters,
+                         nv::ipc::CoreId&                                request_core_id,
+                         nv::spdm::crypto::CryptoReqResParameters&       response_parameters)
+{
+    if (const auto*
+            request = std::get_if<nv::spdm::crypto::AuthenticateMcuFirmwareRequestParameter>(
+                &request_parameters)) {
+        handle_mcu_auth_request(*request, request_core_id, response_parameters);
+        return true;
+    }
+
+    if (const auto*
+            request = std::get_if<nv::spdm::crypto::AuthenticateApFirmwareRequestParameter>(
+                &request_parameters)) {
+        return handle_ap_auth_request(*request, request_core_id, response_parameters);
+    }
+
+    return false;
+}
+
+void set_authenticate_task_idle(nv::ipc::Event& event, nv::ipc::CoreId core_id)
+{
+    if (nv::ipc::Event::Status::Ok
+        != event.set(nv::spdm::Task::EventBits::AuthenticateTaskIdle, core_id)) {
+        nv::info("set AuthenticateTaskIdle fail for core %d\n", core_id);
+    }
+}
+
+void refresh_ap_provision_status()
+{
+    if constexpr (HasVrotAp) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (!nv::vrot::supports_ap_provision(ap.type)) {
+                continue;
+            }
+            nv::vrot::set_ap_provision_status(ap);
+        }
+    }
+}
 }  // namespace
 
 // namespace {
@@ -150,7 +236,7 @@ void Task::make()
 {
     NV_TASK_DATA static Task task;
     // Minimum stack plus future overhead plus increase to support additional APs.
-    constexpr auto StackSize = std::max(2880 + 512 + (nv::vrot::ApList.size() > 0 ? 384 : 0),
+    constexpr auto StackSize = std::max(2880 + 512 + (HasVrotAp ? 384 : 0),
                                         int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
@@ -319,19 +405,17 @@ Task::Task()
         }
     }
 
-    // secure boot start authenticate ap, the first time
-    // TODO: Disable the CPLD secure boot until it is fully verified on platform.
-    if constexpr (CPLD_ProgramN_Pin_Enabled) {
-        this->secure_boot.secure_boot_main();
-    }
     // Validate MCU pwr-fail I2C debug token against NPDS cache at boot.
     // Ignore return value.
     (void)nv::debugtoken::check_debug_token_subtype_enabled(
         nv::debugtoken::Type::McuDebug, nv::debugtoken::DebugTokenSubtypePwrFailI2cDebug);
 
+    refresh_ap_provision_status();
+
     // coverity[no_escape] - no escape is expected
     while (true) {
         nv::ipc::Event& event = nv::ipc::Event::make(nv::ipc::EventId::SpdmTask);
+        nv::ipc::Queue& queue = nv::ipc::Queue::make(nv::ipc::QueueId::SpdmCryptoHelper);
 
         auto event_bits = event.wait(nv::spdm::Task::RxWaitEventBit, false, false, 1s).value();
 
@@ -342,12 +426,15 @@ Task::Task()
                 nv::info("libspdm_responder_dispatch_message fail, status: %d\n", status);
             }
         }
+        if (event_bits & nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit) {
+            (void)event.clear(nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit);
+            nv::spdm::crypto::process_primitive_request_queue();
+        }
         // need to auth fw
         if (event_bits & nv::spdm::Task::EventBits::AuthenticateRequestBit) {
             (void)event.clear(nv::spdm::Task::EventBits::AuthenticateRequestBit);
-            // get the data from queue.
-            nv::ipc::Queue& queue = nv::ipc::Queue::make(nv::ipc::QueueId::SpdmCryptoHelper);
 
+            // NOLINTNEXTLINE(misc-const-correctness) queue.recv() writes through Queue::Item.
             nv::spdm::crypto::CryptoReqResParameters request_parameters{};
 
             auto& request_parameters_arr_view = *std::bit_cast<
@@ -362,53 +449,33 @@ Task::Task()
             if (status != nv::ipc::Queue::Status::Ok) {
                 // fail
             }
-            nv::spdm::crypto::CryptoReqResParameters response_parameters{};
+            else {
+                nv::spdm::crypto::CryptoReqResParameters response_parameters{};
 
-            nv::ipc::CoreId request_core_id = nv::ipc::CoreId::Invalid;
-            // if the request is for authenticating mcufw
-            if (const auto* VarPtr = std::get_if<
-                    nv::spdm::crypto::AuthenticateMcuFirmwareRequestParameter>(
-                    &request_parameters)) {
-                request_core_id  = VarPtr->request_core_id;
-                auto auth_result = nv::spdm::crypto::authenticate_mcu_firmware(
-                    VarPtr->input_parsing_fw_type);
-                response_parameters = nv::spdm::crypto::
-                    AuthenticateMcuFirmwareResponseParameter{
-                        .auth_result           = auth_result,
-                        .input_parsing_fw_type = VarPtr->input_parsing_fw_type,
-                        .request_task_id       = VarPtr->request_task_id,
-                    };
-            }
-            if constexpr (HasVrotAp) {
-                // if the request is for authenticating apfw
-                if (const auto* VarPtr = std::get_if<
-                        nv::spdm::crypto::AuthenticateApFirmwareRequestParameter>(
-                        &request_parameters)) {
-                    request_core_id  = VarPtr->request_core_id;
-                    auto auth_result = nv::spdm::crypto::authenticate_ap_firmware(
-                        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-                    response_parameters = nv::spdm::crypto::
-                        AuthenticateApFirmwareResponseParameter{
-                            .auth_result           = auth_result,
-                            .input_parsing_fw_type = VarPtr->input_parsing_fw_type,
-                            .request_task_id       = VarPtr->request_task_id,
-                        };
+                nv::ipc::CoreId request_core_id = nv::ipc::CoreId::Invalid;
+                const bool      request_handled = handle_auth_request(
+                    request_parameters, request_core_id, response_parameters);
+                if (!request_handled) {
+                    nv::logger::error(nv::logger::Event::SpdmError,
+                                      nv::logger::data_from_u32(
+                                          static_cast<uint32_t>(request_parameters.index())));
+                    set_authenticate_task_idle(event, nv::ipc::CoreId::Core0);
+                    if constexpr (nv::ipc::EnableDualCore) {
+                        set_authenticate_task_idle(event, nv::ipc::CoreId::Core1);
+                    }
                 }
-            }
+                else {
+                    nv::spdm::crypto::send_response_back(response_parameters);
 
-            nv::spdm::crypto::send_response_back(response_parameters);
+                    // Set the event based on request_core_id
+                    set_authenticate_task_idle(event, request_core_id);
+                }
 
-            // Set the event based on request_core_id
-            if (nv::ipc::Event::Status::Ok
-                != event.set(nv::spdm::Task::EventBits::AuthenticateTaskIdle,
-                             request_core_id)) {
-                nv::info("set AuthenticateTaskIdle fail for core %d\n", request_core_id);
-            }
-
-            // Set the event when the queue is not empty to handle request again
-            // It's possible because both core will send queue then set event
-            if (queue.size() != 0) {
-                (void)event.set(nv::spdm::Task::EventBits::AuthenticateRequestBit);
+                // Set the event when the queue is not empty to handle request again.
+                // It's possible because both cores may send queue then set event.
+                if (queue.size() != 0) {
+                    (void)event.set(nv::spdm::Task::EventBits::AuthenticateRequestBit);
+                }
             }
         }
         if constexpr (nv::ipc::SpdmI2cResponder) {

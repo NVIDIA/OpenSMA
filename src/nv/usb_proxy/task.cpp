@@ -39,7 +39,7 @@
 #include "nv/ipc/queue.h"
 #include "sys/usb/usb.h"
 #if defined(USB_CONFIG_UART_BRIDGE)
-#include "nv/vruart/bridge.h"
+#include "nv/vcom/vruart/bridge.h"
 #endif
 
 using namespace std::chrono_literals;

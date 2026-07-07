@@ -18,14 +18,16 @@
 #pragma once
 #include <span>
 
-#include "nv/spi/port.h"
-#include "nv/spi/spb.h"
+#include "nv/gpio/common.h"
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
-#include "nv/gpio/common.h"
-#include "sys/spi/spi.h"
+#include "nv/perf_mon/perf_mon.h"
 #include "nv/spi/common.h"
+#include "nv/spi/port.h"
+#include "nv/spi/spb.h"
+#include "sys/spi/spi.h"
+
 using namespace std::chrono_literals;
 
 namespace nv::spi {
@@ -113,8 +115,8 @@ private:
     nv::ipc::BootedEventBits _boot_event;
     MasterDevice             _master_device;
     SlaveDevice              _slave_device;
-
-    Spb _spb;
+    Spb                      _spb;
+    nv::perf_mon::OobBus     _oob_bus;
 
     constexpr static bool EnableMctpOverSpiDebugLog = false;
 

@@ -40,21 +40,27 @@ using AllTaskExecutionTime                   = std::array<TaskExecutionTime, Tas
 enum class OobBus
 {
     Begin = 0,
-    UsI2c = Begin,
-    DsI2c0,
-    DsI2c1,
-    DsI2c2,
-    DsI2c3,
-    DsI3c0,
-    DsI3c1,
-    Spi0,
-    Spi1,
-    Spi2,
-    DsI2c4,
-    DsI2c5,
-    DsI2c6,
-    DsI2c7,
+    Port0 = Begin,
+    Port1,
+    Port2,
+    Port3,
+    Port4,
+    Port5,
+    Port6,
+    Port7,
+    Port8,
+    Port9,
+    I3cPort0,
+    I3cPort1,
     End
+};
+
+/** Used to make it clear which type is being used on a such port number */
+enum class OobBusType : uint8_t
+{
+    I2c = 0,  // it will be the default in case not set
+    I3c = 1,
+    Spi = 2
 };
 
 constexpr uint8_t error_type_num = 16;
@@ -123,7 +129,8 @@ public:
 
     using MeasurementBuffer = std::array<Measurement, BufferSize>;
 
-    // Refer to https://confluence.nvidia.com/display/GFWBC/MCU+SMA+Performance+Measurement
+    // Refer to
+    // https://confluence.nvidia.com/display/GFWBC/MCU+SMA+Performance+Measurement
     // Packet latency
     enum class LatencyEvent : uint8_t
     {
@@ -226,6 +233,7 @@ public:
     std::array<OobBusErrorCount, OobBusTypeNum> oob_bus_error_buf{};
     std::array<uint8_t, OobBusTypeNum>          oob_bus_error_latched{};
     std::array<bool, OobBusTypeNum>             oob_bus_valid{};
+    std::array<OobBusType, OobBusTypeNum>       oob_bus_type{};
 
     static void reset_transaction_error_all();
 
@@ -234,6 +242,12 @@ public:
     static bool is_oob_bus_valid(OobBus bus);
 
     static void set_oob_bus_valid(OobBus bus);
+
+    static OobBus flexcomm_port_to_oobBus(uint8_t port_number);
+
+    static void set_oob_bus_type(OobBus bus, OobBusType type);
+
+    static OobBusType get_oob_bus_type(OobBus bus);
 
     constexpr static uint32_t InvalidErrorCount = 0xFFFFFFFF;
 

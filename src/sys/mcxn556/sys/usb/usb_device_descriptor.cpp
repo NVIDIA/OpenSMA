@@ -368,6 +368,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
 };
 #elif defined(USB_CONFIG_COMPOSITE)
 // clang-format off
+#if (SYS_USB_HID_CP2112 > 0U)
 USB_DMA_INIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
 NV_SHARED_DATA uint8_t g_UsbDeviceHidGenericReportDescriptor[] = {
     0x06, 0x00, 0xFF,     // Usage Page (Vendor Defined 0xFF00)
@@ -591,6 +592,7 @@ NV_SHARED_DATA usb_device_class_struct_t g_UsbDeviceHidGenericConfig = {
     kUSB_DeviceClassTypeHid,        /* The HID class type */
     USB_DEVICE_CONFIGURATION_COUNT, /* Number of configurations */
 };
+#endif /* SYS_USB_HID_CP2112 */
 
 #ifdef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
 /* NV_SMA_SPI class endpoint information */
@@ -700,9 +702,11 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_LOW(USB_DESCRIPTOR_LENGTH_CONFIGURE
                       + USB_DESCRIPTOR_LENGTH_INTERFACE     // MCTP Interface
                       + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // MCTP IN/OUT endpoints
+#if (SYS_USB_HID_CP2112 > 0U)
                       + USB_DESCRIPTOR_LENGTH_INTERFACE     // HID Interface
                       + USB_DESCRIPTOR_LENGTH_HID           // HID Descriptor
                       + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // HID IN/OUT endpoints
+#endif
 #ifdef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
                       + USB_DESCRIPTOR_LENGTH_INTERFACE     // NV_SMA_SPI Interface
                       + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // NV_SMA_SPI IN/OUT endpoints
@@ -711,9 +715,11 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_HIGH(USB_DESCRIPTOR_LENGTH_CONFIGURE
                        + USB_DESCRIPTOR_LENGTH_INTERFACE     // MCTP Interface
                        + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // MCTP IN/OUT endpoints
+#if (SYS_USB_HID_CP2112 > 0U)
                        + USB_DESCRIPTOR_LENGTH_INTERFACE     // HID Interface
                        + USB_DESCRIPTOR_LENGTH_HID           // HID Descriptor
                        + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // HID IN/OUT endpoints
+#endif
 #ifdef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
                        + USB_DESCRIPTOR_LENGTH_INTERFACE     // NV_SMA_SPI Interface
                        + 2 * USB_DESCRIPTOR_LENGTH_ENDPOINT  // NV_SMA_SPI IN/OUT endpoints
@@ -761,6 +767,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_HIGH(HS_MCTP_CLASS_OUT_PACKET_SIZE),
     0x01,  // bInterval (1 frame)
 
+#if (SYS_USB_HID_CP2112 > 0U)
     /* HID Interface Descriptor */
     USB_DESCRIPTOR_LENGTH_INTERFACE,        // bLength: Size of this descriptor in
                                             // bytes
@@ -811,6 +818,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     USB_SHORT_GET_LOW(HS_HID_GENERIC_INTERRUPT_OUT_PACKET_SIZE),
     USB_SHORT_GET_HIGH(HS_HID_GENERIC_INTERRUPT_OUT_PACKET_SIZE),
     0x01,  // bInterval (1 frame)
+#endif  // SYS_USB_HID_CP2112
 #ifdef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
     /* NV_SMA_SPI Interface Descriptor */
     USB_DESCRIPTOR_LENGTH_INTERFACE,       // bLength: Size of this descriptor in
@@ -949,6 +957,7 @@ NV_SHARED_DATA uint8_t g_UsbDeviceConfigurationDescriptor[] = {
 #endif
 };
 
+#if (SYS_USB_HID_CP2112 > 0U)
 usb_status_t USB_DeviceGetHidDescriptor(usb_device_handle                       handle,
                                         usb_device_get_hid_descriptor_struct_t* hidDescriptor)
 {
@@ -984,6 +993,7 @@ usb_status_t USB_DeviceGetHidPhysicalDescriptor(
 {
     return kStatus_USB_InvalidRequest;
 }
+#endif /* SYS_USB_HID_CP2112 */
 #endif
 
 USB_DMA_INIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
@@ -1362,6 +1372,7 @@ usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
 #endif
 
 #if defined(USB_CONFIG_COMPOSITE)
+#if (SYS_USB_HID_CP2112 > 0U)
     for (uint8_t i = 0U; i < USB_HID_GENERIC_ENDPOINT_COUNT; i++) {
         if (USB_SPEED_HIGH == speed) {
             if (g_UsbDeviceHidEndpoints[i].endpointAddress
@@ -1390,6 +1401,7 @@ usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
             }
         }
     }
+#endif /* SYS_USB_HID_CP2112 */
 #ifdef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
     for (uint8_t i = 0U; i < USB_NV_SMA_SPI_ENDPOINT_COUNT; i++) {
         if (USB_SPEED_HIGH == speed) {

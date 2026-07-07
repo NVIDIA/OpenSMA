@@ -17,16 +17,20 @@
  */
 #pragma once
 
-#include <stdint.h>
-#include <span>
-#include <chrono>
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <span>
+#include <stdint.h>
 #include <type_traits>
 #include <variant>
+#include "nv/crypto/aes_gcm.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "nv/ipc/task.h"
 #include "nv/fw_parser/fw_parser_ap.h"
 #include "corepdk/modules/spdm/src/app/crypto/hash/pdk-spdm-app-res-crypto-hash.h"
+#include "nv/vrot/interface/types.h"
+#include "nv/spdm/crypto_status.h"
 
 #include "mbedtls/bignum.h"
 #include "mbedtls/ctr_drbg.h"
@@ -38,6 +42,9 @@
 
 namespace nv {
 namespace spdm {
+
+enum class Status;
+
 namespace crypto {
 
 typedef enum
@@ -55,39 +62,6 @@ typedef enum
     Ecdsa384SignatureSize = 384 / 8 * 2,
     Ecdsa512SignatureSize = 512 / 8 * 2,
 } EcdsaSignatureSizeT;
-
-enum class CryptoStatus : uint8_t
-{
-    Success = 0,
-    FailEcdsaSign,
-    FailGetPriKey,
-    FailLoadEcdsaContext,
-    FailHashStart,
-    FailHashUpdate,
-    FailHashCalc,
-    FailRandomGen,
-    FailSignatureBufferLength,
-    FailSignatureVerify,
-    FailCfpaAccess,
-    FailCmpaAccess,
-    FailNbootContextInit,
-    FailNbootImageAuthenticate,
-    FailSecurityVersionRollBack,
-    FailImageSigningKeyRevoke,
-    FailEfuseAccess,
-    FailSendToSpdm,
-    FailParsingFirmware,
-    FailApMetadataRead,
-    FailApImageRead,
-    FailApImageHashMismatch,
-    FailApPublicKeyMismatch,
-    FailApRollbackProtection,
-    FailApImageSigningKeyRevoke,
-    FailUnknown,       // this FailUnknown should be the last value.
-    ApAuthInProgress,  // full authentication is in progress
-    FailApNotFound,
-    End,
-};
 
 constexpr uint32_t Ecdsa384PublicKeySize = 96;
 
@@ -141,14 +115,93 @@ struct AuthenticateApFirmwareRequestParameter
 {
     nv::ipc::CoreId                    request_core_id;
     nv::fw_parser::ap::ParsingApFwType input_parsing_fw_type;
-    nv::ipc::TaskId                    request_task_id;
+    nv::vrot::ApId                     ap_id;
+    // Assigned by spdm_crypto_helper when the async request is created.
+    // Callers use the returned id to match the completion callback.
+    uint8_t         auth_request_id;
+    nv::ipc::TaskId request_task_id;
 };
 
 struct AuthenticateApFirmwareResponseParameter
 {
     nv::spdm::crypto::CryptoStatus     auth_result;
     nv::fw_parser::ap::ParsingApFwType input_parsing_fw_type;
+    nv::vrot::ApId                     ap_id;
+    uint8_t                            auth_request_id;
     nv::ipc::TaskId                    request_task_id;
+};
+
+constexpr size_t UdsKeyBytes                      = 32;
+constexpr size_t PufWrappedBytes                  = 84;
+constexpr size_t PufWrapPrimitiveOutputBytes      = PufWrappedBytes;
+constexpr size_t AesGcmPrimitiveMaxAadBytes       = 16;
+constexpr size_t AesGcmPrimitiveMaxPlaintextBytes = 16;
+constexpr size_t AesGcmPrimitiveTagBytes          = 16;
+constexpr size_t AesGcmPrimitiveMaxOutputBytes    = AesGcmPrimitiveMaxPlaintextBytes
+                                               + AesGcmPrimitiveTagBytes;
+constexpr size_t TrngPrimitiveOutputBytes   = 32;
+constexpr size_t CryptoPrimitiveOutputBytes = std::max(
+    AesGcmPrimitiveMaxOutputBytes,
+    std::max(PufWrapPrimitiveOutputBytes, TrngPrimitiveOutputBytes));
+
+enum class CryptoPrimitiveRequestId : uint32_t
+{
+    TrngGenerate     = 1U,
+    PufWrap          = 2U,
+    PufUnwrap        = 3U,
+    Aes256GcmEncrypt = 4U,
+};
+
+enum class CryptoPrimitiveQueueType : uint8_t
+{
+    Request,
+    Response,
+};
+
+struct TrngGenerateRequestParameter
+{
+    nv::ipc::TaskId          request_task_id;
+    nv::ipc::CoreId          request_core_id;
+    uint32_t                 request_id;
+    std::array<uint32_t, 21> reserved;
+};
+
+struct PufWrapRequestParameter
+{
+    nv::ipc::TaskId request_task_id;
+    nv::ipc::CoreId request_core_id;
+    uint32_t        request_id;
+    alignas(uint32_t) std::array<uint8_t, UdsKeyBytes> key;
+    std::array<uint32_t, 13> reserved;
+};
+
+struct PufUnwrapRequestParameter
+{
+    nv::ipc::TaskId request_task_id;
+    nv::ipc::CoreId request_core_id;
+    uint32_t        request_id;
+    alignas(uint32_t) std::array<uint8_t, PufWrappedBytes> wrapped;
+};
+
+struct Aes256GcmEncryptRequestParameter
+{
+    nv::ipc::TaskId request_task_id;
+    nv::ipc::CoreId request_core_id;
+    uint32_t        request_id;
+    alignas(uint32_t) nv::crypto::Aes256Key key;
+    alignas(uint32_t) nv::crypto::AesGcmIv iv;
+    size_t aad_size;
+    size_t plaintext_size;
+    alignas(uint32_t) std::array<uint8_t, AesGcmPrimitiveMaxAadBytes> aad;
+    alignas(uint32_t) std::array<uint8_t, AesGcmPrimitiveMaxPlaintextBytes> plaintext;
+};
+
+struct CryptoPrimitiveResponseParameters
+{
+    nv::ipc::TaskId request_task_id;
+    uint32_t        request_id;
+    CryptoStatus    status;
+    alignas(uint32_t) std::array<uint8_t, CryptoPrimitiveOutputBytes> output;
 };
 
 using CryptoReqResParameters = std::variant<AuthenticateMcuFirmwareRequestParameter,
@@ -157,6 +210,12 @@ using CryptoReqResParameters = std::variant<AuthenticateMcuFirmwareRequestParame
                                             AuthenticateApFirmwareResponseParameter>;
 static_assert(sizeof(CryptoReqResParameters) == nv::ipc::SpdmCryptoHelperQueueSize,
               "the SpdmCryptoHelperQueueSize value shopuld equal to structure size");
+
+using CryptoPrimitiveRequestParameters = std::variant<TrngGenerateRequestParameter,
+                                                      PufWrapRequestParameter,
+                                                      PufUnwrapRequestParameter,
+                                                      Aes256GcmEncryptRequestParameter>;
+
 CryptoStatus spdm_hash_data(uint8_t* ret, const uint8_t* data, uint32_t data_len);
 CryptoStatus spdm_hash_sha1(uint8_t* ret, const uint8_t* data, uint32_t data_len);
 CryptoStatus spdm_random_data(uint8_t* data, size_t data_len);
@@ -169,8 +228,44 @@ CryptoStatus spdm_ecdsa_verify(const std::array<uint8_t, Ecdsa384PublicKeySize>&
 
 CryptoStatus
 authenticate_mcu_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwType);
+
 CryptoStatus
-authenticate_ap_firmware(const nv::fw_parser::ap::ParsingApFwType InputParseingApFwType);
+send_authenticate_firmware_request(const nv::vrot::ApInfo&            ap,
+                                   nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+                                   uint8_t&                           auth_request_id,
+                                   nv::ipc::TaskId request_task_id = nv::ipc::TaskId::Begin);
+
+CryptoStatus authenticate_ap_firmware(const nv::vrot::ApInfo&            ap,
+                                      nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+                                      uint8_t&                           auth_request_id,
+                                      nv::ipc::TaskId request_task_id = nv::ipc::TaskId::Begin);
+
+// SPDM task execution path for a request already created by this helper.
+// Requesters should call authenticate_ap_firmware() or
+// send_authenticate_firmware_request() so the helper can assign and return the
+// request id.
+CryptoStatus authenticate_ap_firmware_with_request_id(
+    const nv::vrot::ApInfo&            ap,
+    nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+    nv::ipc::TaskId                    request_task_id,
+    uint8_t                            auth_request_id);
+
+nv::spdm::Status
+                 submit_primitive_request(CryptoPrimitiveRequestParameters&  request,
+                                          CryptoPrimitiveResponseParameters& response,
+                                          std::chrono::milliseconds timeout = std::chrono::milliseconds{500});
+void             process_primitive_request_queue();
+bool             is_primitive_request_queue_enabled();
+nv::ipc::QueueId get_primitive_queue_id(CryptoPrimitiveQueueType queue_type);
+CryptoStatus     trng_generate(std::span<uint8_t> output);
+CryptoStatus     puf_wrap(std::span<const uint8_t> key, std::span<uint8_t> wrapped);
+CryptoStatus     puf_unwrap(std::span<const uint8_t> wrapped, std::span<uint8_t> key);
+CryptoStatus     aes_256_gcm_encrypt(const nv::crypto::Aes256Key&                        key,
+                                     std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
+                                     std::span<const uint8_t>                            aad,
+                                     std::span<const uint8_t>                            plaintext,
+                                     std::span<uint8_t>                                  ciphertext,
+                                     std::span<uint8_t, nv::crypto::AesGcmTagBytes>      tag);
 
 template<nv::ipc::TaskId task_id>
 requires(task_id == nv::ipc::TaskId::Pldm)

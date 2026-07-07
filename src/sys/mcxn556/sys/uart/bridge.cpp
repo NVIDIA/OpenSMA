@@ -15,7 +15,7 @@
 #include "nv/ctimer/ctimer.h"
 #include "nv/common/preproc.h"
 
-#include "nv/vruart/bridge.h"
+#include "nv/vcom/vruart/bridge.h"
 
 /** @todo: for convenience, to-be-moved to gpio driver */
 extern "C" clock_ip_name_t get_port_clock(uint8_t port)

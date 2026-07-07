@@ -168,6 +168,24 @@ public:
      */
     std::array<uint8_t, 2> get_alert_pin_vals(VrGpioState state);
 
+    /**
+     * @brief Override one leak sensor's ADC reading for NSM error injection.
+     *
+     * The timer-driven implementation applies the override. The legacy implementation
+     * provides no-op stubs because fake ADC injection is not supported there.
+     */
+    Status set_error_injection(SensorId sensorId, Reading adcReading);
+
+    /**
+     * @brief Clear one leak sensor's ADC reading override.
+     */
+    Status clear_error_injection(SensorId sensorId);
+
+    /**
+     * @brief Clear all leak detection ADC reading overrides.
+     */
+    void clear_error_injection();
+
 private:
     friend void nv::volt_mon::init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
 
@@ -180,6 +198,14 @@ private:
 
     // Sensors - Using dedicated LeakDetectSensor structure (refactored from VoltMonitor)
     std::array<LeakDetectSensor, LeakDetectSensorNum> sensor;
+
+    struct ErrorInjectionOverride
+    {
+        bool    enabled = false;
+        Reading reading = 0;
+    };
+
+    std::array<ErrorInjectionOverride, LeakDetectSensorNum> errorInjectionOverrides{};
 
     // Status
     bool alertActive;

@@ -21,6 +21,18 @@
 #include NV_IPC_CONFIG_H
 
 /*
+ * CP2112 (HID) interface gate. Present by default on composite builds; a
+ * project may drop it with `#define USB_CONFIG_CP2112 (0U)` in its config.h.
+ */
+#ifndef SYS_USB_HID_CP2112
+#if defined(USB_CONFIG_CP2112)
+#define SYS_USB_HID_CP2112 (USB_CONFIG_CP2112)
+#else
+#define SYS_USB_HID_CP2112 (1U)
+#endif
+#endif
+
+/*
  * Core1 Bare-metal USB mode
  * When NCSI_ENABLE is defined, USB hardware is handled by Core1
  * Core0 uses usb_proxy task to forward MCTP/HID to Core1 via IPC
@@ -46,9 +58,10 @@
 #define SYS_USB_MCTP_ENDPOINTS (2U)
 
 /*
- * HID (when USB_CONFIG_COMPOSITE defined)
+ * HID (when USB_CONFIG_COMPOSITE defined and CP2112 not disabled)
  */
-#if ((defined(USB_CONFIG_COMPOSITE)) && (USB_CONFIG_COMPOSITE > 0U))
+#if ((defined(USB_CONFIG_COMPOSITE)) && (USB_CONFIG_COMPOSITE > 0U))                           \
+    && (SYS_USB_HID_CP2112 > 0U)
 #define SYS_USB_HID_CLASS     (1U)
 #define SYS_USB_HID_INTERFACE (1U)
 #define SYS_USB_HID_ENDPOINTS (2U)

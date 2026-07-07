@@ -21,11 +21,20 @@
 #include "nv/ipc/event.h"
 #include "nv/ipc/common.h"
 #include "nv/ipc/driver.h"
+#include "nv/ipc/tasknotify.h"
 #include "sys/ipc/driver.h"
+#include <limits>
+#include <variant>
 
 namespace nv::ipc::task {
 constexpr std::chrono::microseconds C2CReceiveTimeout = std::chrono::seconds(1);  // 1 second
 constexpr std::chrono::microseconds SendQueueTimeout  = std::chrono::seconds(1);  // 1 second
+
+static_assert(static_cast<uint64_t>(nv::common::to_underlying(ipc::EventId::End))
+                      + static_cast<uint64_t>(nv::common::to_underlying(ipc::TaskId::End))
+                  <= static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1u,
+              "EventId::End + TaskId::End must fit in uint32_t (EventRequest::event_id)");
+
 class Task : public ipc::Task
 {
 public:
@@ -53,11 +62,11 @@ public:
 
     [[noreturn]] void start();
 
-    // Functions called in queue.cpp & event.cpp
+    // Functions called in queue.cpp, event.cpp & tasknotify.cpp
     static nv::ipc::task::Status
     handle_queue_data(const ipc::Queue::ConstItem& item, ipc::QueueId queue_id, bool is_front);
     static nv::ipc::task::Status
-    handle_event_data(ipc::EventId event_id, bool is_set, uint32_t event_bits);
+    handle_event_data(std::variant<ipc::EventId, ipc::TaskId> id, bool is_set, uint32_t bits);
 
 private:
     uint32_t              _core1_image_address;

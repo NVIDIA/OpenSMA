@@ -24,6 +24,7 @@
 #include "nv/i2c/mutex.h"
 #include "nv/i2c/task.h"
 #include "nv/i2c/smb_direct.h"
+#include "nv/i2c/helper.h"
 #include "nv/ipc/mutex.h"
 #include "nv/i2c/eeprom_cache.h"
 #include "nv/logger/log.h"
@@ -149,11 +150,41 @@ void Driver::target_callback_lookup(LPI2C_Type*             base,
     // Dispatch to appropriate slave callback
     switch (context->function) {
         case SlaveFunction::Eeprom: target_callback_eeprom(base, transfer, user_data); break;
+        case SlaveFunction::Erot  : target_callback_erot(base, transfer, user_data); break;
         case SlaveFunction::Mctp  :
         default                   : target_callback(base, transfer, user_data); break;
     }
 }
+/// EROT slave callback - handles OCP Recovery 2-byte writes (reg, value) from
+/// a downstream EROT acting as I2C master after its boot completes.
+void Driver::target_callback_erot([[maybe_unused]] LPI2C_Type* base,
+                                  lpi2c_slave_transfer_t*      transfer,
+                                  void*                        user_data)
+{
+    using namespace nv::i2c;
+    auto                     context = static_cast<TargetContex*>(user_data);
+    auto                     task    = static_cast<Task*>(context->task);
+    const std::span<uint8_t> Buffer  = context->buffer;
 
+    switch (transfer->event) {
+        case kLPI2C_SlaveAddressMatchEvent:
+            transfer->data     = nullptr;
+            transfer->dataSize = 0;
+            break;
+        case kLPI2C_SlaveReceiveEvent:
+            context->transmit  = false;
+            transfer->data     = Buffer.subspan(2).data();
+            transfer->dataSize = Buffer.subspan(2).size();
+            break;
+        case kLPI2C_SlaveCompletionEvent:
+            if (!context->transmit && transfer->transferredCount == 2) {
+                task->handle_erot_recovery(/*reg=*/context->buffer[2],
+                                           /*value=*/context->buffer[3]);
+            }
+            break;
+        default: break;
+    }
+}
 }  // namespace sys::i2c
 
 LPI2C_Type* Driver::get_base(nv::i2c::Port port)
@@ -447,20 +478,48 @@ bool Driver::write(std::span<uint8_t> data)
 
 bool Driver::get_status(uint8_t address)
 {
+    constexpr size_t  PacketSize     = 11;
+    constexpr uint8_t SmbusMctpCmd   = 0x0F;
+    constexpr uint8_t MctpByteCount  = 0x08;
+    constexpr uint8_t MctpHdrVersion = 0x01;
+    constexpr uint8_t MctpNullEid    = 0x00;
+    // SOM=1, EOM=1, pkt_seq=0, TO=1, msg_tag=0
+    constexpr uint8_t MctpPktFlags    = 0xC8;
+    constexpr uint8_t MctpMsgTypeCtrl = 0x00;
+    // rq=1, d=0, instance_id=0
+    constexpr uint8_t MctpCtrlRqByte = 0x80;
+    constexpr uint8_t MctpCmdGetEpId = 0x02;
+    constexpr uint8_t PecPlaceholder = 0x00;
+
+    std::array<uint8_t, PacketSize> packet{SmbusMctpCmd,
+                                           MctpByteCount,
+                                           static_cast<uint8_t>(this->address() << 1U),
+                                           MctpHdrVersion,
+                                           MctpNullEid,
+                                           MctpNullEid,
+                                           MctpPktFlags,
+                                           MctpMsgTypeCtrl,
+                                           MctpCtrlRqByte,
+                                           MctpCmdGetEpId,
+                                           PecPlaceholder};
+
+    std::array<uint8_t, PacketSize> pec_input{};
+    pec_input[0] = static_cast<uint8_t>(address << 1U);
+    std::copy(packet.begin(), packet.end() - 1, pec_input.begin() + 1);
+    packet.back() = nv::i2c::crc8(pec_input);
+
     lpi2c_master_transfer_t transfer = {
         .flags          = kLPI2C_TransferDefaultFlag,
         .slaveAddress   = address,
         .direction      = kLPI2C_Write,
         .subaddress     = 0,
         .subaddressSize = 0,
-        .data           = nullptr,
-        .dataSize       = 0,
+        .data           = packet.data(),
+        .dataSize       = packet.size(),
     };
 
     auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(_port));
-    // Acquire mutex
-    auto mutex_status = mutex.lock();
-    if (mutex_status != nv::ipc::Mutex::Status::Ok) {
+    if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
         return false;
     }
     const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
@@ -484,6 +543,42 @@ void Driver::set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr)
     }
     logger::info(logger::Event::I2CAddressUpdate,
                  {static_cast<uint8_t>(port), static_cast<uint8_t>(address)});
+}
+
+void Driver::set_master_duty_cycle(nv::i2c::Port port, uint8_t duty_cycle)
+{
+    constexpr uint32_t ClkLowShift  = 0;
+    constexpr uint32_t ClkHighShift = 8;
+    constexpr uint32_t ClkMask      = 0x3FU;
+
+    auto enabled = is_master_enabled(port);
+    auto base    = get_base(port);
+    auto mccr0   = base->MCCR0;
+
+    uint32_t clkHi  = (mccr0 >> ClkHighShift) & ClkMask;
+    uint32_t clkLo  = (mccr0 >> ClkLowShift) & ClkMask;
+    uint32_t period = clkHi + clkLo;
+    if (duty_cycle > 100 || period == 0) {
+        return;
+    }
+    clkHi = static_cast<uint32_t>((static_cast<float>(period) * static_cast<float>(duty_cycle))
+                                  / 100.0);
+    clkLo = period - clkHi;
+
+    logger::info(logger::Event::I2cClockPeriods,
+                 {static_cast<uint8_t>(clkHi), static_cast<uint8_t>(clkLo)});
+    mccr0 &= ~((ClkMask << ClkHighShift) | (ClkMask << ClkLowShift));
+    mccr0 |= (clkHi << ClkHighShift) | (clkLo << ClkLowShift);
+
+    if (enabled) {
+        LPI2C_MasterEnable(base, false);
+    }
+
+    base->MCCR0 = mccr0;
+
+    if (enabled) {
+        LPI2C_MasterEnable(base, true);
+    }
 }
 
 i2c::I2cStatus

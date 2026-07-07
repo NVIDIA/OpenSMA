@@ -720,3 +720,12 @@ bool nv::i3c::Driver::gpu_read_cms1(uint8_t address, std::span<uint8_t> buffer)
     }
     return false;
 }
+
+nv::perf_mon::OobBus nv::i3c::Driver::i3c_port_to_oob_bus(nv::i3c::Driver::Port port)
+{
+    switch (port) {
+        case Port::Zero: return nv::perf_mon::OobBus::I3cPort0; break;
+        case Port::One : return nv::perf_mon::OobBus::I3cPort1; break;
+        default        : return nv::perf_mon::OobBus::End; break;
+    }
+}

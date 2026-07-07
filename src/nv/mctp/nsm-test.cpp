@@ -467,7 +467,7 @@ TEST_F(nsmtest, get_supported_command_codes_type6)
     //          nvmsg| cmd | size| nvmsg
     arr8_req req{0x00, 0x02, 0x01, 0x06};
     //          nvmsg| cmd | code| reserved  | data size | supported cmd bitmask type6
-    arr8_res res{0x00, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0xFE, 0x03, 0x00, 0x00, 0x00, 0x00,
+    arr8_res res{0x00, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0xFE, 0x02, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 4), true);
@@ -1282,118 +1282,23 @@ TEST_F(nsmtest, query_fw_comp_id)
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 3), true);
 };
 
-// ---------- 0x08 : NSM_SET_ROT_PROPERTY ----------
-TEST_F(nsmtest, set_rot_property_invalid_length)
+// ---------- 0x08 : NSM_SET_ROT_PROPERTY (unsupported on MCU/CPLD) ----------
+// Per signoff bug 5579166, MCU & CPLD do not support Set RoT Property, so it is
+// not advertised in Get Supported Command Codes (Type0 Cmd2) and the command is
+// rejected with ErrorUnsupportedCmd. See bug 6217854.
+TEST_F(nsmtest, set_rot_property_unsupported)
 {
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx
-    arr8_req req{0x06, 0x08, 0x05, 0x0A, 0x00, 0x02, NvPldmMcuComponentIdPrefix, 0x00};  // 5
-                                                                                         // bytes
-                                                                                         // instead
-                                                                                         // of 6
+    //          nvmsg| cmd | size
+    arr8_req req{0x06, 0x08, 0x00};
+    //          nvmsg| cmd | code| reserved  | data size
     arr8_res res{
-        0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidLength), 0x00, 0x00, 0x00, 0x00};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 8), true);
-};
-
-TEST_F(nsmtest, set_rot_property_redundancy_policy_not_supported)
-{
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06,
-                 0x08,
-                 0x06,
-                 0x0A,
-                 0x00,
-                 0x02,
-                 NvPldmMcuComponentIdPrefix,
-                 0x00,
-                 0x00};  // SetRedundancyPolicy
-    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06,
-                 0x08,
-                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
-};
-
-TEST_F(nsmtest, set_rot_property_inband_update_policy_not_supported)
-{
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06,
-                 0x08,
-                 0x06,
-                 0x0A,
-                 0x00,
-                 0x02,
-                 NvPldmMcuComponentIdPrefix,
-                 0x00,
-                 0x01};  // SetInbandUpdatePolicy
-    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06,
-                 0x08,
-                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
-};
-
-TEST_F(nsmtest, set_rot_property_ap_sku_id_not_supported)
-{
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06,
-                 0x08,
-                 0x06,
-                 0x0A,
-                 0x00,
-                 0x02,
-                 NvPldmMcuComponentIdPrefix,
-                 0x00,
-                 0x02};  // SetApSkuId
-    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06,
-                 0x08,
-                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
-};
-
-TEST_F(nsmtest, set_rot_property_global_failover_policy_not_supported)
-{
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06,
-                 0x08,
-                 0x06,
-                 0x0A,
-                 0x00,
-                 0x02,
-                 NvPldmMcuComponentIdPrefix,
-                 0x00,
-                 0x03};  // SetGlobalFailoverPolicy
-    //          nvmsg| cmd | comp_code                                 | reason_code (2 bytes)
-    arr8_res res{0x06,
-                 0x08,
-                 static_cast<uint8_t>(Ccode::ErrorUnsupportedArgument),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 0),
-                 static_cast<uint8_t>(static_cast<uint16_t>(Rcode::PropertyNotSupported) >> 8)};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
-};
-
-TEST_F(nsmtest, set_rot_property_invalid_property)
-{
-    //          nvmsg| cmd | size| comp_class| comp_id                | comp_class_idx| property
-    arr8_req req{0x06,
-                 0x08,
-                 0x06,
-                 0x0A,
-                 0x00,
-                 0x02,
-                 NvPldmMcuComponentIdPrefix,
-                 0x00,
-                 0xFF};  // Invalid property
-    arr8_res res{
-        0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorInvalidData), 0x00, 0x00, 0x00, 0x00};
-    ensure::is_eq(fixture.sendRecv_nsm(req, res, 9), true);
+        0x06, 0x08, static_cast<uint8_t>(Ccode::ErrorUnsupportedCmd), 0x00, 0x00, 0x00, 0x00};
+    fixture.sendRecv_nsm(req, res, 3);
+    auto& tx  = fixture.from(fixture.result);
+    auto& ntx = NsmPktResp::from(tx);
+    // comparing only the return code because Nsm::process() now returns false
+    // then fixture.sendRecv_nsm() does not compare 'response' with 'expected respone'
+    ensure::is_eq(ntx.completion_code, Ccode::ErrorUnsupportedCmd);
 };
 
 // ---------- 0x09 : NSM_IMAGE_COPY_CONTROL ----------
@@ -1504,7 +1409,7 @@ TEST_F(nsmtest, initiate_image_copy_success)
     ensure::is_eq(fixture.sendRecv_nsm(req, res, 10), true);
 };
 
-// ---------- Unsupported Type6 Command ---------- 0x08
+// ---------- Unsupported Type6 Command ---------- 0x0a
 TEST_F(nsmtest, unsupported_fw_cmd_0x0a)
 {
     //          nvmsg| cmd | size
@@ -2159,9 +2064,9 @@ TEST_F(nsmtest, type4_append_all_error_counter_telemetries)
     ensure::is_true(items == expected_items);
     ensure::is_true(size_data > 0);
     struct nsmtest::AggregateInfo aggregate(buffer.data());
-    for (uint16_t counter = 0; counter < items; counter++) {
-        nv::info("item[%d], tag=%02d 0x%02X size=%d\n",
-                 counter,
+    for (uint8_t oobError = 0; oobError < items; oobError++) {
+        nv::info("error[oobError=%02d] tag=%02d,0x%02X %02d errors\n",
+                 oobError,
                  aggregate.tag(),
                  aggregate.tag(),
                  aggregate.sizeData());

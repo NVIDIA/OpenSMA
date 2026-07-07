@@ -58,6 +58,17 @@ constexpr uint16_t PowerMask              = 0x0FFF;    // 12-bit data mask
 
 }  // namespace
 
+namespace nv::i2c::power {
+__attribute__((weak)) uint8_t lm5066i_ot_fault_limit_celsius()
+{
+    return 0;
+}
+__attribute__((weak)) uint8_t lm5066i_ot_warn_limit_celsius()
+{
+    return 0;
+}
+}  // namespace nv::i2c::power
+
 Lm5066i::Lm5066i(Port port, uint8_t address) : PowerSensor(port, address)
 {
     _ot_warn_limit_coeff = {
@@ -67,4 +78,54 @@ Lm5066i::Lm5066i(Port port, uint8_t address) : PowerSensor(port, address)
     _temp_coeff        = {TempSlopeM, TempOffsetB, TempExpMult, TempMask};
     _power_input_coeff = {
         PowerSlope1MOhmClVddM, PowerOffset1MOhmClVddB, PowerExpMult, PowerMask};
+}
+
+I2cStatus Lm5066i::write_ot_fault_limit(uint8_t limit)
+{
+    // OT_FAULT_LIMIT and OT_WARN_LIMIT use the same coefficients.
+    const float raw_value = (static_cast<float>(limit) * _ot_warn_limit_coeff.m
+                             + _ot_warn_limit_coeff.b)
+                          / _ot_warn_limit_coeff.exp_mult;
+    return write_reg_16bits(Register::OtFaultLimit,
+                            static_cast<uint16_t>(raw_value) & _ot_warn_limit_coeff.mask);
+}
+
+I2cStatus Lm5066i::init()
+{
+    // Unmask OT warning (bit10) and OT fault (bit2) in ALERT_MASK (D8h) so an over-temperature
+    // condition asserts SMBA. D8h is 1=mask / 0=assert, so CLEAR those bits (LM5066i default
+    // FD04h leaves OT-warn masked). Read-modify-write to preserve the other mask bits.
+    {
+        constexpr uint8_t  AlertMaskReg = 0xD8;
+        constexpr uint16_t OtMaskBits   = (1u << 10) | (1u << 2);  // OT_WARN, OT_FAULT
+        uint16_t           mask         = 0;
+        I2cStatus          st           = read_reg_16bits(AlertMaskReg, mask);
+        if (st != I2cStatus::Ok) {
+            return st;
+        }
+        st = write_reg_16bits(AlertMaskReg, static_cast<uint16_t>(mask & ~OtMaskBits));
+        if (st != I2cStatus::Ok) {
+            return st;
+        }
+    }
+
+    // Per-project limits; 0 means "not opted in", leave the LM5066i hardware default.
+    const uint8_t ot_fault_c = nv::i2c::power::lm5066i_ot_fault_limit_celsius();
+    if (ot_fault_c != 0) {
+        const I2cStatus status = write_ot_fault_limit(ot_fault_c);
+        if (status != I2cStatus::Ok) {
+            return status;
+        }
+    }
+
+    const uint8_t ot_warn_c = nv::i2c::power::lm5066i_ot_warn_limit_celsius();
+    if (ot_warn_c != 0) {
+        const I2cStatus status = write_ot_warn_limit(ot_warn_c);
+        if (status != I2cStatus::Ok) {
+            return status;
+        }
+    }
+
+    // Clear any stale boot-time latched faults for a clean status baseline.
+    return clear_faults();
 }

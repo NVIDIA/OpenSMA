@@ -23,11 +23,13 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <variant>
 
 #include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
 
 #include "nv/bootloader.h"
+#include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/flash.h"
 #include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
@@ -38,6 +40,8 @@
 #include "nv/mctp/interface.h"
 #include "nv/nv.h"
 #include "nv/pldm/task.h"
+#include "nv/vrot/ap_background_copy.h"
+#include "nv/vrot/interface/types.h"
 #include NV_IPC_CONFIG_H
 #include "nv/iox/task.h"
 #include "sys/flash/flash_config.h"
@@ -49,6 +53,30 @@ using namespace sys::flash::config;
 
 extern "C" void
 ada_populate_stamp(uint8_t minor, uint16_t patch, uint16_t build, uint32_t* stamp);
+
+namespace {
+
+bool is_any_background_copy_in_progress()
+{
+    const auto pldm_event_bits = nv::ipc::Event::make(nv::ipc::EventId::PldmTask).bits();
+    constexpr uint32_t McuBackgroundCopyBits = nv::pldm::Task::PldmEventBits::BgStartBit
+                                             | nv::pldm::Task::PldmEventBits::BgEndBit;
+    if (!pldm_event_bits || ((*pldm_event_bits & McuBackgroundCopyBits) != 0U)) {
+        return true;
+    }
+
+    if constexpr (!nv::vrot::ApList.empty()) {
+        if (nv::vrot::ap_background_copy::is_in_progress()) {
+            return true;
+        }
+    }
+
+    nv::flash::ProgressPercent progress{};
+    return flash::Flash::background_copy_query(progress)
+        == flash::Status::BackgroundCopyInprogress;
+}
+
+}  // namespace
 
 bool mctp::Nsm::can_revoke_otp(Rcode& reason_code)
 {
@@ -137,6 +165,55 @@ bool mctp::Nsm::can_initiate_image_copy(Ccode& completion_code, Rcode& reason_co
     return true;
 }
 
+bool mctp::Nsm::can_initiate_ap_image_copy([[maybe_unused]] const nv::vrot::ApInfo& ap,
+                                           Ccode& completion_code,
+                                           Rcode& reason_code)
+{
+    if constexpr (nv::vrot::ApList.empty()) {
+        completion_code = Ccode::ErrorUnsupportedCmd;
+        reason_code     = Rcode::Null;
+        return false;
+    }
+    else if (!nv::vrot::ap_background_copy::supports(ap)) {
+        completion_code = Ccode::ErrorUnsupportedCmd;
+        reason_code     = Rcode::Null;
+        return false;
+    }
+
+    flash::Data pldm_update_state{};
+    if (flash::Flash::get_data(flash::Key::PdsUpdateState, pldm_update_state)
+            != flash::Status::Ok
+        || pldm_update_state
+               == static_cast<flash::Data>(bootloader::Driver::State::InProgress)) {
+        completion_code = Ccode::ErrorInvalidStateForCommand;
+        reason_code     = Rcode::UpdateInProgress;
+        return false;
+    }
+
+    flash::Data ap_state{};
+    const auto  status_key = ap.id == nv::vrot::ApId::AP0 ? flash::Key::NpdsAp0FwStatus
+                                                          : flash::Key::NpdsAp1FwStatus;
+    if (flash::Flash::get_data(status_key, ap_state) != flash::Status::Ok) {
+        completion_code = Ccode::ErrorInvalidStateForCommand;
+        reason_code     = Rcode::NoBootComplete;
+        return false;
+    }
+
+    if (ap_state == static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Update_In_Progress)) {
+        completion_code = Ccode::ErrorInvalidStateForCommand;
+        reason_code     = Rcode::UpdateInProgress;
+        return false;
+    }
+
+    if (ap_state != static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete)) {
+        completion_code = Ccode::ErrorInvalidStateForCommand;
+        reason_code     = Rcode::NoBootComplete;
+        return false;
+    }
+
+    return true;
+}
+
 void mctp::Nsm::get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
                                       NsmRedundancyPolicy& redundancy_policy_current)
 {
@@ -180,7 +257,7 @@ Ccode mctp::Nsm::can_revoke_ap_otp()
 {
     flash::Data state{};
     if (flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, state) != flash::Status::Ok
-        || state != static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Sb_Auth_Success)) {
+        || state != static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete)) {
         return Ccode::ErrorGeneral;
     }
     return Ccode::Success;
@@ -375,7 +452,7 @@ uint8_t mctp::Nsm::get_ap_state()
             return common::WriteInProgress;
         case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Update_Complete):
             return common::PendingActivation;
-        case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Sb_Auth_Success):
+        case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete):
             return common::Activated;
         default: return common::FailedAuthentication;
     }
@@ -1378,13 +1455,6 @@ bool mctp::Nsm::process_firmware(const Packet& rx, Packet& tx)
         case cmd::QueryFwCompId:
             if constexpr (is_cmd_set(NsmMsgType::Firmware, cmd::QueryFwCompId)) {
                 on_query_fw_comp_id(rx, tx);
-                break;
-            }
-            return unsupported_command();
-
-        case cmd::SetRotProperty:
-            if constexpr (is_cmd_set(NsmMsgType::Firmware, cmd::SetRotProperty)) {
-                on_set_rot_property(rx, tx);
                 break;
             }
             return unsupported_command();
@@ -2618,6 +2688,13 @@ void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
                 fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorNonceMismatch, rx, tx);
                 return;
             }
+            // GFWLYNT1-7457: Block key-revocation updates while a debug token is
+            // installed. Apply the check before component dispatch so MCU and AP
+            // targets follow the same policy.
+            if (nv::debugtoken::is_dbg_token_tlv_in_flash()) {
+                fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);
+                return;
+            }
             // check comp info(comp class, comp id, comp class idx)
             if (is_fw_comp_id_valid(update_auth_key_req.fw_comp_info, McuComponentId)) {
                 update_auth_key(rx, tx, update_auth_key_req);
@@ -3054,6 +3131,13 @@ void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
                 fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorNonceMismatch, rx, tx);
                 return;
             }
+            // GFWLYNT1-7457: Block min-SVN updates while a debug token is
+            // installed. Apply the check before component dispatch so MCU and AP
+            // targets follow the same policy.
+            if (nv::debugtoken::is_dbg_token_tlv_in_flash()) {
+                fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);
+                return;
+            }
             // check comp info(comp class, comp id, comp class idx)
             if (is_fw_comp_id_valid(update_min_svn_req.fw_comp_info, McuComponentId)) {
                 update_min_sec_ver_num(rx, tx, update_min_svn_req);
@@ -3111,34 +3195,6 @@ void mctp::Nsm::on_query_fw_comp_id(const Packet& rx, Packet& tx)
     return;
 }
 
-void mctp::Nsm::on_set_rot_property(const Packet& rx, Packet& tx)
-{
-    // Component Info : 5 bytes
-    // Property : 1 byte
-    constexpr uint8_t RequestSize = 6;
-    if (!is_input_length_valid(rx, RequestSize)) {
-        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
-        return;
-    }
-
-    auto&             nrx = NsmPktReq::from(rx);
-    SetRotPropertyReq set_rot_property_req{};
-    memcpy(&set_rot_property_req, &nrx.data, sizeof(SetRotPropertyReq));
-
-    // MCU & CPLD do not support any property
-    if (set_rot_property_req.property == NsmSetRotPropertyRequest::SetRedundancyPolicy
-        || set_rot_property_req.property == NsmSetRotPropertyRequest::SetInbandUpdatePolicy
-        || set_rot_property_req.property == NsmSetRotPropertyRequest::SetApSkuId
-        || set_rot_property_req.property == NsmSetRotPropertyRequest::SetGlobalFailoverPolicy) {
-        fill_error_packet_v2(
-            Ccode::ErrorUnsupportedArgument, Rcode::PropertyNotSupported, rx, tx);
-        return;
-    }
-
-    fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-    return;
-}
-
 void mctp::Nsm::query_image_copy_progress(const Packet& rx, Packet& tx)
 {
     constexpr uint8_t RespSize = 2;
@@ -3149,11 +3205,23 @@ void mctp::Nsm::query_image_copy_progress(const Packet& rx, Packet& tx)
     ntx.completion_code   = Ccode::Success;
     ntx.data_size         = RespSize;
 
-    QueryImageCopyProgressResp query_image_copy_progress_resp{};
-
     nv::flash::ProgressPercent progress{};
-    auto                       flash_status = flash::Flash::background_copy_query(progress);
+    flash::Status              flash_status = flash::Status::Error;
+    bool                       queried_ap   = false;
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        const auto latest_component_id = pldm::Task::latest_background_copy_component_id();
+        const auto ap                  = nv::vrot::find_ap_by_component_id(latest_component_id,
+                                                          nv::vrot::ApList);
+        if (ap && nv::vrot::ap_background_copy::supports(*ap)) {
+            flash_status = nv::vrot::ap_background_copy::query(*ap, progress);
+            queried_ap   = true;
+        }
+    }
+    if (!queried_ap) {
+        flash_status = flash::Flash::background_copy_query(progress);
+    }
 
+    QueryImageCopyProgressResp query_image_copy_progress_resp{};
     if (flash_status == flash::Status::BackgroundCopyIdle) {
         query_image_copy_progress_resp.status   = NsmImageCopyStatus::NotTriggered;
         query_image_copy_progress_resp.progress = 0;
@@ -3180,9 +3248,7 @@ void mctp::Nsm::query_image_copy_progress(const Packet& rx, Packet& tx)
     return;
 }
 
-void mctp::Nsm::initiate_image_copy(const Packet&              rx,
-                                    Packet&                    tx,
-                                    const ImageCopyControlReq& image_copy_control_req)
+void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
 {
     // request type (1 byte) + component count (1 byte)
     if (!is_input_length_valid(rx, sizeof(ImageCopyControlReq))) {
@@ -3190,7 +3256,10 @@ void mctp::Nsm::initiate_image_copy(const Packet&              rx,
         return;
     }
 
-    // Only support MCU for now
+    auto& image_copy_control_req = *std::bit_cast<const ImageCopyControlReq*>(
+        &NsmPktReq::from(rx).data[0]);
+
+    // Only support MCU or dual-bank AP components
     auto max_component_count = 1;
     if (image_copy_control_req.component_count != max_component_count) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
@@ -3206,9 +3275,36 @@ void mctp::Nsm::initiate_image_copy(const Packet&              rx,
         return;
     }
 
-    // input check
-    if (!is_fw_comp_id_valid(image_copy_control_req.fw_comp_info[0], McuComponentId)) {
+    const auto&                     fw_comp = image_copy_control_req.fw_comp_info[0];
+    const bool                      is_mcu  = is_fw_comp_id_valid(fw_comp, McuComponentId);
+    std::optional<nv::vrot::ApInfo> ap_target{};
+    if constexpr (nv::vrot::ApList.size() > 0) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (is_fw_comp_id_valid(fw_comp, ap.component_id)) {
+                if (nv::vrot::ap_background_copy::supports(ap)) {
+                    ap_target = ap;
+                }
+                else {
+                    // Downstream RoT APs such as the CPLD do not support image copy
+                    // (see signoff bug 5579166 / bug 6217854): recognize a known AP
+                    // component (mirroring on_get_rot_state_info) and report it as
+                    // unsupported, vs. ErrorInvalidData for an unknown component id.
+                    fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+                    return;
+                }
+                break;
+            }
+        }
+    }
+
+    if (!is_mcu && !ap_target) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    if (is_any_background_copy_in_progress()) {
+        fill_error_packet_v2(
+            Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
         return;
     }
 
@@ -3221,14 +3317,42 @@ void mctp::Nsm::initiate_image_copy(const Packet&              rx,
 
     Ccode      completion_code = Ccode::Success;
     Rcode      reason_code     = Rcode::Null;
-    const bool can_initiate    = can_initiate_image_copy(completion_code, reason_code);
+    const bool can_initiate    = ap_target ? can_initiate_ap_image_copy(
+                                              *ap_target, completion_code, reason_code)
+                                           : can_initiate_image_copy(completion_code, reason_code);
     if (!can_initiate) {
         fill_error_packet_v2(completion_code, reason_code, rx, tx);
         return;
     }
-    else {
-        /* trigger BG */
-        pldm::Task::pldm_bg_start();
+
+    if constexpr (!nv::vrot::ApList.empty()) {
+        if (ap_target) {
+            const auto start_status = nv::vrot::ap_background_copy::start(
+                *ap_target,
+                nv::vrot::ap_background_copy::Slot0,
+                nv::vrot::ap_background_copy::Slot1);
+            if (start_status != nv::flash::Status::Ok) {
+                fill_error_packet_v2(
+                    Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
+                return;
+            }
+
+            const auto schedule_status = pldm::Task::pldm_ap_bg_start(ap_target->component_id);
+            if (schedule_status != pldm::Status::Ok) {
+                nv::vrot::ap_background_copy::cancel(false);
+                fill_error_packet_v2(
+                    Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
+                return;
+            }
+            return;
+        }
+    }
+
+    const auto schedule_status = pldm::Task::pldm_bg_start();
+    if (schedule_status != pldm::Status::Ok) {
+        fill_error_packet_v2(
+            Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
+        return;
     }
     return;
 }
@@ -3248,15 +3372,15 @@ void mctp::Nsm::on_image_copy_control(const Packet& rx, Packet& tx)
         return;
     }
 
-    auto& nrx                    = NsmPktReq::from(rx);
-    auto& image_copy_control_req = *std::bit_cast<ImageCopyControlReq*>(&nrx.data[0]);
+    const auto& nrx     = NsmPktReq::from(rx);
+    const auto  request = static_cast<NsmImageCopyControlRequest>(nrx.data[0]);
 
-    if (image_copy_control_req.request == NsmImageCopyControlRequest::QueryImageCopyProgress) {
+    if (request == NsmImageCopyControlRequest::QueryImageCopyProgress) {
         query_image_copy_progress(rx, tx);
         return;
     }
-    else if (image_copy_control_req.request == NsmImageCopyControlRequest::InitiateImageCopy) {
-        initiate_image_copy(rx, tx, image_copy_control_req);
+    else if (request == NsmImageCopyControlRequest::InitiateImageCopy) {
+        initiate_image_copy(rx, tx);
         return;
     }
     else {
@@ -3680,7 +3804,7 @@ bool mctp::Nsm::get_gpi_spoofing_value(uint16_t gpio_index, uint8_t& pin_value)
     const auto  pin        = std::get<1>(gpio_entry);
 
     // Virtual GPIO has no hardware direction; treat as input for spoofing eligibility.
-    if (port != nv::iox::vrPort) {
+    if (port != nv::gpio::vrPort) {
         nv::gpio::Direction dir = gpio::Direction::Input;
         if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok) {
             return false;

@@ -61,60 +61,19 @@
 #include "sys/adc/adc.h"
 #include "nhp_config.h"
 
-#if defined(NV_UART_INSTANCE) && (NV_UART_INSTANCE == 2)
-#include "fsl_lpuart.h"
-/* Definition of peripheral ID */
-#define LP_FLEXCOMM2_UART_PERIPHERAL   ((LPUART_Type*)LP_FLEXCOMM2)
-/* Definition of the clock source frequency */
-#define LP_FLEXCOMM2_UART_CLOCK_SOURCE 12000000UL
-
-const lpuart_config_t LP_FLEXCOMM2_uart_config = {
-    .baudRate_Bps     = 115200UL,
-    .parityMode       = kLPUART_ParityDisabled,
-    .dataBitsCount    = kLPUART_EightDataBits,
-    .isMsb            = false,
-    .stopBitCount     = kLPUART_OneStopBit,
-    .txFifoWatermark  = 0U,
-    .rxFifoWatermark  = 1U,
-    .enableRxRTS      = false,
-    .enableTxCTS      = false,
-    .txCtsSource      = kLPUART_CtsSourcePin,
-    .txCtsConfig      = kLPUART_CtsSampleAtStart,
-    .rxIdleType       = kLPUART_IdleTypeStartBit,
-    .rxIdleConfig     = kLPUART_IdleCharacter1,
-    .timeoutConfig    = {.rxExtendedTimeoutValue = 0U,
-                         .txExtendedTimeoutValue = 0U,
-                         .rxCounter0             = {.enableCounter    = false,
-                                                    .timeoutCondition = kLPUART_TimeoutAfterCharacters,
-                                                    .timeoutValue     = 0U},
-                         .rxCounter1             = {.enableCounter    = false,
-                                                    .timeoutCondition = kLPUART_TimeoutAfterCharacters,
-                                                    .timeoutValue     = 0U},
-                         .txCounter0             = {.enableCounter    = false,
-                                                    .timeoutCondition = kLPUART_TimeoutAfterCharacters,
-                                                    .timeoutValue     = 0U},
-                         .txCounter1             = {.enableCounter    = false,
-                                                    .timeoutCondition = kLPUART_TimeoutAfterCharacters,
-                                                    .timeoutValue     = 0U}},
-    .enableSingleWire = false,
-    .rtsDelay         = 0,
-    .enableTx         = true,
-    .enableRx         = true,
-};
-
-static void enable_debug_uart2(void)
-{
-    LPI2C_MasterDeinit(LP_FLEXCOMM2_PERIPHERAL);
-    LPUART_Init(LP_FLEXCOMM2_UART_PERIPHERAL,
-                &LP_FLEXCOMM2_uart_config,
-                LP_FLEXCOMM2_UART_CLOCK_SOURCE);
-}
-#endif  // #if defined(NV_UART_INSTANCE) && (NV_UART_INSTANCE == 2)
-
 static void make_i2c_task()
 {
     using namespace nv;
 
+    // SSD<->bus mapping (FLEXCOMM):
+    //   SSD0 - I2C1 - Port::Seven - DownStreamInfos[0] - Client::DsI2c0 - Ap1Status
+    //   SSD1 - I2C2 - Port::One   - DownStreamInfos[1] - Client::DsI2c1 - Ap2Status
+    //   SSD2 - I2C3 - Port::Two   - DownStreamInfos[2] - Client::DsI2c2 - Ap3Status
+    //   SSD3 - I2C4 - Port::Four  - DownStreamInfos[3] - Client::DsI2c3 - Ap4Status
+    //   SSD4 - I2C5 - Port::Five  - DownStreamInfos[4] - Client::DsI2c4 - Ap5Status
+    //   SSD5 - I2C6 - Port::Eight - DownStreamInfos[5] - Client::DsI2c5 - Ap6Status
+    //   SSD6 - I2C7 - Port::Three - DownStreamInfos[6] - Client::DsI2c6 - Ap7Status
+    //   SSD7 - I2C8 - Port::Zero  - DownStreamInfos[7] - Client::DsI2c7 - Ap8Status
     i2c::make_task_by_port<i2c::Port::Seven>(
         i2c::Task::Config{ipc::TaskId::I2c1,
                           "I2C1",
@@ -137,7 +96,6 @@ static void make_i2c_task()
                           ipc::BootedEventBits::I2c2,
                           nv::ipc::TimerId::Ap2Status,
                           nv::ipchandler::Id::I2c2});
-#if !defined(NV_UART_INSTANCE) || (NV_UART_INSTANCE != 2)
     i2c::make_task_by_port<i2c::Port::Two>(
         i2c::Task::Config{ipc::TaskId::I2c3,
                           "I2C3",
@@ -149,7 +107,6 @@ static void make_i2c_task()
                           ipc::BootedEventBits::I2c3,
                           nv::ipc::TimerId::Ap3Status,
                           nv::ipchandler::Id::I2c3});
-#endif  // #if !defined(NV_UART_INSTANCE) || (NV_UART_INSTANCE != 2)
     i2c::make_task_by_port<i2c::Port::Four>(
         i2c::Task::Config{ipc::TaskId::I2c4,
                           "I2C4",
@@ -207,149 +164,6 @@ static void make_i2c_task()
                           nv::ipchandler::Id::I2c8});
 }
 
-#if 0
-// Disable this code for now, but preserve it for future reference
-// Specific to P3957 board
-// There are two clock muxes on the board.  One selects the clock for SSD0-3
-// the other selects the clock for SSD4-7.  For SSD0-3, the clock can be either
-// MCIO0 or MCIO1 or split (SSD0-1 on MCIO0, SSD2-3 on MCIO1).  For SSD4-7, the clock
-// can be either MCIO2 or MCIO3 or split (SSD4-5 on MCIO2, SSD6-7 on MCIO3).
-// A low signal selects MCIO0/MCIO2, a high signal selects MCIO1/MCIO3, and a
-// mid signal (input/high-Z) selects split.
-enum P3957ClockTopology
-{
-    SingleSourceClock0,
-    SingleSourceClock1,
-    HardwareStrap
-};
-
-void set_p3957_clock_topology(P3957ClockTopology topology_setting)
-{
-    using namespace nv;
-    auto const _port = ipc::Port::MCU_CLKSEL_MODE_PORT;
-    auto const _pin = ipc::Pin::MCU_CLKSEL_MODE_PIN;
-    auto const _output = nv::gpio::Direction::Output;
-    auto const _input = nv::gpio::Direction::Input;
-    auto const _low = nv::gpio::GpioState::Low;
-    auto const _high = nv::gpio::GpioState::High;
-    auto const _hi_z = nv::gpio::GpioState::Low;
-
-    switch (topology_setting) {
-        case SingleSourceClock0:  // low
-            nv::gpio::Driver::init_pin(_port, _pin, _output, _low);
-            break;
-        case SingleSourceClock1:  // high
-            nv::gpio::Driver::init_pin(_port, _pin, _output, _high);
-            break;
-        case HardwareStrap:  // high Z
-            nv::gpio::Driver::init_pin(_port, _pin, _input, _hi_z);
-            break;
-        default:
-            nv::error("Invalid p3957 clock topology %d passed to NHP\n", topology_setting);
-            break;
-    }
-}
-#endif  // #if 0
-
-#if defined(DEBUG_E1S_INIT) && (DEBUG_E1S_INIT != 0)
-// If DEBUG_E1S_INIT is non-zero, enable this code
-// If DEBUG_E1S_INIT is 2, then check Drive 7 connected to force hard-coded init
-// If DEBUG_E1S_INIT is 1, then just force hard-coded init without a check
-void debug_init_e1_s_drives()
-{
-    using namespace nv;
-    using namespace nv::nhp;
-    nv::info("debug_init_e1_s_drives()\n");
-    constexpr std::array<E1sInputPins, 8>  e1s_input_pins  = {Drive0InputPins,
-                                                              Drive1InputPins,
-                                                              Drive2InputPins,
-                                                              Drive3InputPins,
-                                                              Drive4InputPins,
-                                                              Drive5InputPins,
-                                                              Drive6InputPins,
-                                                              Drive7InputPins};
-    constexpr std::array<E1sOutputPins, 8> e1s_output_pins = {Drive0OutputPins,
-                                                              Drive1OutputPins,
-                                                              Drive2OutputPins,
-                                                              Drive3OutputPins,
-                                                              Drive4OutputPins,
-                                                              Drive5OutputPins,
-                                                              Drive6OutputPins,
-                                                              Drive7OutputPins};
-
-    // Initialize the GPIO driver for use by the E1.S drives
-    nv::gpio::Driver::init();
-
-#if (DEBUG_E1S_INIT == 2)
-    // Read the presence detection state of drive 7.
-    // This will be used to determine if we should boot the normal code,
-    // or the static/init debug code.
-    nv::gpio::Driver::init_pin(e1s_input_pins.at(7).prsnt_l_port,
-                               e1s_input_pins.at(7).prsnt_l_pin,
-                               nv::gpio::Direction::Input,
-                               nv::gpio::GpioState::High);
-    uint8_t                ssd7_prsnt_l = 0;
-    const nv::gpio::Status status       = nv::gpio::Driver::read(
-        e1s_input_pins.at(7).prsnt_l_port, e1s_input_pins.at(7).prsnt_l_pin, ssd7_prsnt_l);
-
-    // If the read failed, log an error and return to boot the normal code
-    if (status != gpio::Status::Ok) {
-        nv::error("Failed to read prsntL for drive 7\n");
-        return;
-    }
-
-    // If the presence detection state of drive 7 is high, return to boot the normal code
-    if (ssd7_prsnt_l != 0) {
-        return;
-    }
-#endif  // #if (DEBUG_E1S_INIT == 2)
-
-    // Here, static init of all the SSD drive GPIOS should be done.
-    for (uint8_t driveIndex = 0; driveIndex < 8; driveIndex++) {
-        // Initialize the presence detection input pin as an input
-        nv::gpio::Driver::init_pin(e1s_input_pins.at(driveIndex).prsnt_l_port,
-                                   e1s_input_pins.at(driveIndex).prsnt_l_pin,
-                                   nv::gpio::Direction::Input,
-                                   nv::gpio::GpioState::High);
-
-        // Initialize the PCIe reset deasserted output pin as HiZ (for Drive-On state)
-        nv::gpio::Driver::init_pin(e1s_output_pins.at(driveIndex).perst_l_port,
-                                   e1s_output_pins.at(driveIndex).perst_l_pin,
-                                   nv::gpio::Direction::Input,
-                                   nv::gpio::GpioState::High);
-
-        // Initialize the clock enable output pin as Low (for Drive-On state)
-        nv::gpio::Driver::init_pin(e1s_output_pins.at(driveIndex).clk_en_l_port,
-                                   e1s_output_pins.at(driveIndex).clk_en_l_pin,
-                                   nv::gpio::Direction::Output,
-                                   nv::gpio::GpioState::Low);
-
-        // Initialize the power disable output pin Low (for Drive-On state)
-        nv::gpio::Driver::init_pin(e1s_output_pins.at(driveIndex).pwrdis_port,
-                                   e1s_output_pins.at(driveIndex).pwrdis_pin,
-                                   nv::gpio::Direction::Output,
-                                   nv::gpio::GpioState::Low);
-
-        // Initialize the 12V power enable asserted output pin as Low (for Drive-On state)
-        nv::gpio::Driver::init_pin(e1s_output_pins.at(driveIndex).pwren_l_port,
-                                   e1s_output_pins.at(driveIndex).pwren_l_pin,
-                                   nv::gpio::Direction::Output,
-                                   nv::gpio::GpioState::Low);
-
-        // Initialize the LED tristate control output pin as Low (for Drive-On state - Blue)
-        nv::gpio::Driver::init_pin(e1s_output_pins.at(driveIndex).led_tristate_ctrl_port,
-                                   e1s_output_pins.at(driveIndex).led_tristate_ctrl_pin,
-                                   nv::gpio::Direction::Output,
-                                   nv::gpio::GpioState::Low);
-    }
-
-    // Now, just spin here forever.
-    while (true) {
-        // Just spin here forever.
-    }
-}
-#endif  // #if defined(DEBUG_E1S_INIT) && (DEBUG_E1S_INIT != 0)
-
 static void make_lstp_task()
 {
     using namespace nv;
@@ -371,16 +185,6 @@ int main()
     BOARD_InitBootPins();
     BOARD_InitBootClocks();
     BOARD_InitBootPeripherals();
-
-#if defined(NV_UART_INSTANCE) && (NV_UART_INSTANCE == 2)
-    enable_debug_uart2();
-    nv::info("DEBUG-UART2 Enabled\n");
-#endif  // #if defined(NV_UART_INSTANCE) && (NV_UART_INSTANCE == 2)
-
-#if defined(DEBUG_E1S_INIT) && (DEBUG_E1S_INIT != 0)
-    // Initialize the E1.S drives for debug
-    debug_init_e1_s_drives();
-#endif  // #if defined(DEBUG_E1S_INIT) && (DEBUG_E1S_INIT != 0)
 
     nv::watchdog::Boot::start_watchdog(nv::ipc::WatchdogResetMs);
     nv::bootloader::Driver::set_fmc_wp();
@@ -410,11 +214,6 @@ int main()
 
     sys::adc::ADC::init_adc(0U);
     sys::adc::ADC::init_adc(1U);
-
-#if 0
-    // Setup the clock topology for the P3957 board
-    set_p3957_clock_topology(HardwareStrap);
-#endif  // #if 0
 
     // Initialize the Hotplug Support Module/Task
     ahs::Task::make(nhp::ahs_task_config);
@@ -449,6 +248,7 @@ extern "C" void vApplicationGetIdleTaskMemory(StaticTask_t** taskTcbBuffer,
     *taskStackSize   = stack.size();
 }
 
+// Strong overrides for the weak hooks declared in src/nv/i2c/task.cpp.
 bool projectIsApStatusTimer(nv::ipc::Timer& timer)
 {
     switch (timer.id()) {
@@ -462,7 +262,6 @@ bool projectIsApStatusTimer(nv::ipc::Timer& timer)
         case nv::ipc::TimerId::Ap8Status: return true;
         default                         : return false;
     }
-    return false;
 }
 
 nv::ipc::QueueId projectGetApStatusQueueId(nv::ipc::Timer& timer)
@@ -478,30 +277,4 @@ nv::ipc::QueueId projectGetApStatusQueueId(nv::ipc::Timer& timer)
         case nv::ipc::TimerId::Ap8Status: return nv::ipc::QueueId::I2c8;
         default                         : return nv::ipc::QueueId::End;
     }
-    return nv::ipc::QueueId::End;
-}
-
-void project_stop_polling_timers()
-{
-    constexpr int32_t DefaultPollingTimeout = 10;
-    nv::ipc::Timer::make(nv::ipc::TimerId::Ap4Status,
-                         std::chrono::seconds(DefaultPollingTimeout),
-                         [](nv::ipc::Timer& timer) {})
-        .stop();
-    nv::ipc::Timer::make(nv::ipc::TimerId::Ap5Status,
-                         std::chrono::seconds(DefaultPollingTimeout),
-                         [](nv::ipc::Timer& timer) {})
-        .stop();
-    nv::ipc::Timer::make(nv::ipc::TimerId::Ap6Status,
-                         std::chrono::seconds(DefaultPollingTimeout),
-                         [](nv::ipc::Timer& timer) {})
-        .stop();
-    nv::ipc::Timer::make(nv::ipc::TimerId::Ap7Status,
-                         std::chrono::seconds(DefaultPollingTimeout),
-                         [](nv::ipc::Timer& timer) {})
-        .stop();
-    nv::ipc::Timer::make(nv::ipc::TimerId::Ap8Status,
-                         std::chrono::seconds(DefaultPollingTimeout),
-                         [](nv::ipc::Timer& timer) {})
-        .stop();
 }

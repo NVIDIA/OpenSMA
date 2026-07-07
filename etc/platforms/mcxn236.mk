@@ -23,9 +23,10 @@ GD_MCUXPRESSO_SDK 		:= 1
 
 # -- tools ------------------------------------------------------------------------------------
 # Assign a MCU toolchain path
-MCU_ARM_PATH := libexec/toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
-MCU_GNAT_PATH := libexec/toolchain/gnat_arm_elf_14.2.1_524d4d41/
-MCU_ARM_LINKER_PATH := libexec/toolchain/gcc-arm-none-eabi-10.3-2021.10/bin
+MCU_TOOLCHAIN_ROOT ?= /toolchain
+MCU_ARM_PATH := $(MCU_TOOLCHAIN_ROOT)/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi
+MCU_GNAT_PATH := $(MCU_TOOLCHAIN_ROOT)/gnat_arm_elf_14.2.1_524d4d41/
+MCU_ARM_LINKER_PATH := $(MCU_TOOLCHAIN_ROOT)/gcc-arm-none-eabi-10.3-2021.10/bin
 # need to export PATH here to pass system requirements check
 export PATH:=$(PATH):$(MCU_GNAT_PATH)/bin:$(MCU_ARM_PATH)/bin
 

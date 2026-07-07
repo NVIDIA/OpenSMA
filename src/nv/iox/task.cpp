@@ -44,7 +44,7 @@ void Task::make()
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
-    task.setup(stack.span(), Priv, Priority::Norm, Task::entrypoint);
+    task.setup(stack.span(), Priv, Priority::IOX, Task::entrypoint);
 
     nv::info("Iox task created\n");
 }
@@ -68,7 +68,7 @@ Task::Task() : ipc::Task(ipc::TaskId::Iox, "Iox"), ioexp()
         ioexp.at(i)        = Iox(config.addr, config.pinConfig);
         for (const auto& pinConfig : config.pinConfig) {
             // vrPort and unUsed have the same value
-            if (pinConfig.port != nv::iox::vrPort) {
+            if (pinConfig.port != nv::gpio::vrPort) {
                 Iox::set_ioxn(pinConfig.port, pinConfig.pin, i);
             }
         }
@@ -458,7 +458,7 @@ void Task::apply_spoofing_to_input_port(uint8_t iox_offset, uint8_t regn, uint8_
         const auto  pin     = pin_cfg.pin;
 
         // Only input GPIOs and virtual GPIOs are eligible for spoofing
-        if (port != nv::iox::vrPort) {
+        if (port != nv::gpio::vrPort) {
             nv::gpio::Direction dir = nv::gpio::Direction::Input;
             if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok
                 || dir != nv::gpio::Direction::Input) {
@@ -535,25 +535,11 @@ void Task::sync_virtual_gpio_shadow()
         return;
     }
 
-    constexpr uint16_t invalidIndex = UINT16_MAX;
-
     for (size_t i = 0; i < IoxNum; ++i) {
         const auto& cfg = nv::ipc::IoxConfigs.at(i);
         for (uint8_t j = 0; j < pinNum; ++j) {
             const auto& pc = cfg.pinConfig.at(j);
-            if (pc.port != nv::iox::vrPort) {
-                continue;
-            }
-
-            uint16_t gpio_index = invalidIndex;
-            for (uint16_t g = 0; g < nv::ipc::GpioNum; ++g) {
-                const auto& gc = nv::ipc::GpioSetup.at(g);
-                if (std::get<0>(gc) == pc.port && std::get<1>(gc) == pc.pin) {
-                    gpio_index = g;
-                    break;
-                }
-            }
-            if (gpio_index >= nv::ipc::GpioNum) {
+            if (pc.port != nv::gpio::vrPort) {
                 continue;
             }
 
@@ -565,7 +551,7 @@ void Task::sync_virtual_gpio_shadow()
                 continue;
             }
             const auto level = static_cast<uint8_t>((val >> bit) & 0x01U);
-            nv::gpio::Driver::push_virtual_gpio_level(gpio_index, level);
+            (void)nv::gpio::Driver::write_virtual_physical_gpio(pc.port, pc.pin, level);
         }
     }
 }

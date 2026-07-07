@@ -38,7 +38,8 @@ public:
     struct PublicConnectors
     {
         bool      soc_power_brake_directive;
-        bool      therm_power_brake_applied;
+        bool      peer_thermal_warning;
+        bool      local_thermal_warning;
         bool      therm_power_brake_directive;
         bool      assert_power_brake;
         SFXP22_10 soc_percent_avg;
@@ -103,6 +104,11 @@ public:
     [[no_unique_address]] DebugTelemetrySmaCh state_of_charge_sma_ch{};
     [[no_unique_address]] DebugTelemetrySmaCh edpp_offset_sma_ch{};
     [[no_unique_address]] DebugTelemetrySmaCh isink_offset_sma_ch{};
+
+    void set_peer_thermal_warning(bool assert)
+    {
+        public_connectors.peer_thermal_warning = assert;
+    }
 };
 
 inline void PowerManager::run_iteration()
@@ -115,9 +121,10 @@ inline void PowerManager::run_iteration()
 
     uint16_t adc_raw{};
 
-    mcu_thermal_warn_dev.evaluate({.assert = public_connectors.therm_power_brake_applied});
+    mcu_thermal_warn_dev.evaluate({.assert = public_connectors.local_thermal_warning});
     therm_brake_policy.evaluate(
-        {.pin_asserted      = public_connectors.therm_power_brake_applied,
+        {.pin_asserted = public_connectors.peer_thermal_warning
+                      || public_connectors.local_thermal_warning,
          .apply_therm_brake = public_connectors.therm_power_brake_directive});
 
     therm_warning_vgpio.evaluate({.assert = public_connectors.therm_power_brake_directive});

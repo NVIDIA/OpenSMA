@@ -67,14 +67,18 @@ public:
                         void* spi_buffer1 = nullptr,
                         void* spi_rx_len  = 0);
     uint8_t        write_mctp(uint8_t* data, uint32_t length);
-    uint8_t        write_hid(uint8_t* data, uint32_t length);
-    uint8_t        write_spi(uint8_t* data, uint32_t length);
-    usb_status_t   enable_mctp_rx();
-    usb_status_t   enable_hid_rx();
-    usb_status_t   enable_spi_rx();
-    void           recover_spi_endpoint();
-    bool           check_vbus();
-    static bool    is_device_connected();
+#if (SYS_USB_HID_CP2112 > 0U)
+    uint8_t write_hid(uint8_t* data, uint32_t length);
+#endif
+    uint8_t      write_spi(uint8_t* data, uint32_t length);
+    usb_status_t enable_mctp_rx();
+#if (SYS_USB_HID_CP2112 > 0U)
+    usb_status_t enable_hid_rx();
+#endif
+    usb_status_t enable_spi_rx();
+    void         recover_spi_endpoint();
+    bool         check_vbus();
+    static bool  is_device_connected();
 
     static usb_status_t
     usb_devicemctpcallback(class_handle_t handle, uint32_t event, void* param);

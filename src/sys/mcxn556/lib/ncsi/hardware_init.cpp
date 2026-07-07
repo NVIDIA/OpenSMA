@@ -24,6 +24,11 @@
 #include "fsl_port.h"
 #include "fsl_spc.h"
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+#include "fsl_phy.h"
+#include "fsl_phylan8741.h"
+#endif
+
 #include NV_IPC_CONFIG_H
 
 #include "eth_adapter.h"
@@ -78,6 +83,28 @@ ENET_Type* BOARD_Enet = ENET0;
 
 // System clock for ENET (used by SDK)
 uint32_t BOARD_PhySysClock = 0U;
+
+#if USB_DEVICE_CONFIG_CDC_ECM && defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+// LAN8741 on FRDM-MCXN947 is hardware-strapped to MDIO address 0. Override
+// per-build by passing BOARD_LAN8741_PHY_ADDR=0xNN to make (handled in the
+// devkit block of *-mcxn556-core1.mk). There is no runtime MDIO scan, so a
+// wrong value here silently breaks PHY communication.
+#ifndef BOARD_LAN8741_PHY_ADDR
+#define BOARD_LAN8741_PHY_ADDR (0x00U)
+#endif
+
+// PHY resource (read/write callbacks filled in by ECM_InitEnetHardware)
+static phy_lan8741_resource_t g_phy_resource;
+
+// PHY operations
+const phy_operations_t* BOARD_PhyOps = &phylan8741_ops;
+
+// PHY address (see BOARD_LAN8741_PHY_ADDR above - hardcoded, no MDIO scan)
+uint8_t BOARD_PhyAddress = BOARD_LAN8741_PHY_ADDR;
+
+// PHY resource handle (passed into PHY driver)
+void* BOARD_PhySource = &g_phy_resource;
+#endif  // USB_DEVICE_CONFIG_CDC_ECM && NCSI_USE_PHY_MDIO
 }
 
 /*******************************************************************************
@@ -89,8 +116,10 @@ uint32_t BOARD_PhySysClock = 0U;
 /**
  * @brief Initialize ENET pins for RMII mode
  *
- * Configure GPIO pins for RMII interface only.
- * MDIO pins are skipped as PHY runs in default auto-negotiation mode.
+ * Configure GPIO pins for RMII interface. When NCSI_USE_PHY_MDIO is defined
+ * (devkit / FRDM-MCXN947 with LAN8741), MDIO pins are also configured so the
+ * PHY can be brought up via MDIO. Production boards keep PHY strap-pin config
+ * and skip MDIO entirely.
  */
 static void ECM_InitEnetPins(void)
 {
@@ -125,6 +154,12 @@ static void ECM_InitEnetPins(void)
         .lockRegister        = kPORT_UnlockRegister,
     };
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    /* MDIO pins - required for PHY communication on devkit */
+    PORT_SetPinConfig(PORT1, 20U, &enet_tx_pin_config); /* ENET0_MDC */
+    PORT_SetPinConfig(PORT1, 21U, &enet_tx_pin_config); /* ENET0_MDIO */
+#endif
+
     /* RMII TX pins */
     PORT_SetPinConfig(PORT1, 4U, &enet_tx_pin_config); /* ENET0_TX_CLK */
     PORT_SetPinConfig(PORT1, 5U, &enet_tx_pin_config); /* ENET0_TXEN */
@@ -137,17 +172,58 @@ static void ECM_InitEnetPins(void)
     PORT_SetPinConfig(PORT1, 15U, &enet_rx_pin_config); /* ENET0_RXD1 */
 }
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+/**
+ * @brief Configure the MDIO/SMI clock divider.
+ *
+ * ENET clock gating is already done by ECM_InitEnetHardware before this is
+ * called, so we only need to size the SMI clock here.
+ */
+static void MDIO_Init(void)
+{
+    ENET_SetSMI(BOARD_Enet, BOARD_PhySysClock);
+}
+
+// MDIO read/write callbacks consumed by the LAN8741 PHY driver via function
+// pointers stashed in g_phy_resource. The PHY driver is C, so we need C
+// language linkage to guarantee a compatible calling convention; static
+// keeps them out of the global symbol namespace (generic names like
+// MDIO_Read collide with NXP SDK examples otherwise).
+extern "C" {
+
+static status_t NCSI_MDIO_Write(uint8_t phyAddr, uint8_t regAddr, uint16_t data)
+{
+    return ENET_MDIOWrite(BOARD_Enet, phyAddr, regAddr, data);
+}
+
+static status_t NCSI_MDIO_Read(uint8_t phyAddr, uint8_t regAddr, uint16_t* pData)
+{
+    return ENET_MDIORead(BOARD_Enet, phyAddr, regAddr, pData);
+}
+
+}  // extern "C"
+#endif  // NCSI_USE_PHY_MDIO
+
 /**
  * @brief Initialize ENET hardware
  *
- * PHY runs in default auto-negotiation mode (no MDIO control).
- * RMII pins are initialized, MDIO pins are skipped.
+ * Production boards: PHY runs in default auto-negotiation mode driven by
+ * hardware strap pins; MCU supplies the 50MHz RMII reference clock from
+ * PLL0/div internally.
+ *
+ * Devkit (NCSI_USE_PHY_MDIO): PHY is brought up via MDIO (LAN8741 driver);
+ * the PHY itself sources the 50MHz RMII reference clock into the MCU, so
+ * the internal RMII clock generator is left detached.
  */
 extern "C" void ECM_InitEnetHardware(void)
 {
-    // Initialize ENET pins (RMII interface only, MDIO skipped)
+    // Initialize ENET pins (RMII interface; MDIO when NCSI_USE_PHY_MDIO is set)
     ECM_InitEnetPins();
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    // The devkit PHY provides the 50MHz RMII reference clock to the MCU.
+    CLOCK_AttachClk(kNONE_to_ENETRMII);
+#else
     // Select clock divider based on chip revision:
     // A2+ revision: PLL0 = 150MHz, divide by 3 to get 50MHz
     // Pre-A2:       PLL0 = 100MHz, divide by 2 to get 50MHz
@@ -161,6 +237,7 @@ extern "C" void ECM_InitEnetHardware(void)
 
     CLOCK_AttachClk(kPLL0_to_ENETPTPREF);
     CLOCK_SetClkDiv(kCLOCK_DivEnetptprefClk, div);
+#endif
 
     // Enable ENET clock
     CLOCK_EnableClock(kCLOCK_Enet);
@@ -171,6 +248,13 @@ extern "C" void ECM_InitEnetHardware(void)
 
     // Get system clock for ENET
     BOARD_PhySysClock = CLOCK_GetCoreSysClkFreq();
+
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    // Initialize MDIO interface and wire up PHY resource read/write callbacks
+    MDIO_Init();
+    g_phy_resource.read  = NCSI_MDIO_Read;
+    g_phy_resource.write = NCSI_MDIO_Write;
+#endif
 
     // Set ENET interrupt priority
     NVIC_SetPriority(ETHERNET_IRQn, ENET_INTERRUPT_PRIORITY);

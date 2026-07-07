@@ -27,6 +27,7 @@
  */
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 
 #include "nv/flash/flash.h"
@@ -59,7 +60,7 @@ void fill_device_mode_get_u8(NsmPktResp& ntx, uint8_t value)
     fill_device_mode_get_response(ntx, &value, sizeof(value));
 }
 
-void fill_device_mode_get_float(NsmPktResp& ntx, float value)
+void fill_device_mode_get_u32(NsmPktResp& ntx, uint32_t value)
 {
     fill_device_mode_get_response(ntx, &value, sizeof(value));
 }
@@ -132,7 +133,7 @@ Ccode set_rack_power_smoothing_param(uint8_t        preset_id,
 
 Ccode handle_get_max_ac_ramp_rate(NsmPktResp& ntx)
 {
-    fill_device_mode_get_float(ntx, nv::soc_pwr_smoothing::PowerSmoothing::GetMaxACRampRate());
+    fill_device_mode_get_u32(ntx, nv::soc_pwr_smoothing::PowerSmoothing::GetMaxACRampRate());
     return Ccode::Success;
 }
 
@@ -182,7 +183,7 @@ Ccode handle_get_soc_therm_brake_enabled(NsmPktResp& ntx)
 // Type-5: Set Device Mode Settings handlers (strong implementations)
 // ============================================================================
 
-Ccode handle_set_max_ac_ramp_rate(float ramp_rate)
+Ccode handle_set_max_ac_ramp_rate(uint32_t ramp_rate)
 {
     nv::soc_pwr_smoothing::PowerSmoothing::SetMaxACRampRate(ramp_rate);
     // Persist to PDS for survival across power cycles
@@ -351,8 +352,13 @@ Ccode handle_get_debug_telemetry(uint16_t telem_type, NsmPktResp& ntx)
 Ccode handle_trigger_adc_calibration()
 {
     // Run full 26-step calibration blocking (~130ms) in MCTP task context.
-    nv::soc_pwr_smoothing::execute_adc_calibration();
-    return Ccode::Success;
+    using nv::soc_pwr_smoothing::AdcCalibrationExecuteResult;
+    switch (nv::soc_pwr_smoothing::execute_adc_calibration()) {
+        case AdcCalibrationExecuteResult::Success        : return Ccode::Success;
+        case AdcCalibrationExecuteResult::I2cFailure     : return Ccode::ErrorI2CError;
+        case AdcCalibrationExecuteResult::PdsWriteFailure: return Ccode::ErrorUpdateDbFail;
+    }
+    return Ccode::ErrorGeneral;
 }
 
 Ccode handle_get_adc_calibration_results(NsmPktResp& ntx)
@@ -444,32 +450,3 @@ Ccode handle_get_power_smooth_raw_readback(uint8_t readback_id, NsmPktResp& ntx)
 }
 
 }  // namespace nv::mctp::nsm_pwr_smoothing_handlers
-
-namespace nv::mctp {
-
-Ccode handle_get_supported_device_modes(NsmPktResp& ntx)
-{
-    // Response structure for GetSupportedDeviceModesV2 (0x84)
-    struct [[gnu::packed]] Response
-    {
-        uint32_t                handle;
-        uint32_t                mode_count;
-        std::array<uint32_t, 5> modes;
-    };
-
-    auto& response = *std::bit_cast<Response*>(&ntx.data[0]);
-
-    response.handle     = 0;  // All modes fit in one response
-    response.mode_count = 5;
-    response.modes[0]   = static_cast<uint32_t>(DeviceModeIndex::MaxACPowerRampRate);
-    response.modes[1]   = static_cast<uint32_t>(DeviceModeIndex::SoCPowerSmoothEnabled);
-    response.modes[2]   = static_cast<uint32_t>(
-        DeviceModeIndex::SoCPowerSmoothCurrentPresetIndex);
-    response.modes[3] = static_cast<uint32_t>(DeviceModeIndex::SoCPowerBrakeEnabled);
-    response.modes[4] = static_cast<uint32_t>(DeviceModeIndex::SoCThermBrakeEnabled);
-
-    ntx.data_size = sizeof(Response);
-    return Ccode::Success;
-}
-
-}  // namespace nv::mctp

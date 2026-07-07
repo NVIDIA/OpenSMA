@@ -853,6 +853,28 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
             LowerHalfByte);
     }
 
+#ifdef EDGELOCK2GO_CERT
+    auto& serial_number_array = *std::bit_cast<std::array<uint32_t, 4>*>(
+        &dev_ik_req.serial_number);
+
+    // read serial number from efuse
+    constexpr nv::flash::Address serial_number_start_address = 68;
+    for (uint32_t i = 0; i < 4; i++) {
+        auto ret = nv::flash::Flash::read_efuse(serial_number_start_address + i,
+                                                serial_number_array.at(i));
+        if (ret != nv::flash::Status::Ok) {
+            read_devik_success = false;
+        }
+    }
+
+    // Change the endian
+    for (auto& _serial_number : serial_number_array) {
+        std::array<uint8_t, 4>&
+            serial_number_bytes_view = *std::bit_cast<std::array<uint8_t, 4>*>(&_serial_number);
+        std::reverse(serial_number_bytes_view.begin(), serial_number_bytes_view.end());
+    }
+#endif
+
     // find the L3 subject_key_identifier on the flash
     std::span<const uint8_t> l3_cert_span(l3_cert_array);
     dev_ik_req.authority_key_identifier = nv::spdm::certlib::find_subject_key_identifier(

@@ -50,6 +50,12 @@ void Task::make()
                      Driver::EnumeratePeriod,
                      mctp::Driver::on_enumeration_done_timer,
                      false);
+
+    ipc::Timer::make(ipc::TimerId::MctpEnumerateStart,
+                     ipc::EnumerateStartMs ? ipc::EnumerateStartMs * 1000us : 1s,
+                     mctp::Driver::on_enumeration_start_timer,
+                     false);
+
     static_assert(!nv::ipc::EnableEndpointStatusChangeDebounce
                       || nv::ipc::EndpointStatusChangePeriodMs != 0,
                   "EndpointStatusChangePeriodMs must not be 0 when "

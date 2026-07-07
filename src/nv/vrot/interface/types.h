@@ -34,6 +34,7 @@ enum class ApId : uint8_t
 enum class ApType : uint8_t
 {
     Cpld = 0,
+    Lpu  = 1,
 };
 
 enum class ApOpErrCode : uint8_t
@@ -50,6 +51,19 @@ enum class ApOpErrCode : uint8_t
     // distinguish "this AP is not configured for this project" (a legitimate
     // outcome on AP-less projects) from real argument-validation failures.
     UnknownComponent,
+    AlreadyProvisioned,
+    FlashReadFailure,
+    FlashWriteFailure,
+    HardwareSdkFailure,
+    ProvisionFailure,
+    CryptoFailure,
+    FlashDataInvalid,
+    NoCapacity,
+    PlaintextImageNotAllowed,
+    // AP firmware image failed layout or header validation (e.g. pointer block,
+    // region containment, encrypted header structure). Distinct from
+    // InvalidParam so callers can distinguish malformed images from bad args.
+    ImageLayoutInvalid,
 };
 
 enum class DebugTokenFeature : uint8_t
@@ -66,7 +80,21 @@ struct ApInfo
     uint32_t fw_offset;
     uint32_t ap_sku_id;
     uint8_t  build_mode;
+
+    // Optional AP metadata placement in the same address space as fw_offset.
+    // Projects that store metadata in a separate AP-specific region can leave
+    // these as zero and let the platform Ops use its native layout.
+    uint32_t metadata_offset = 0;
+    uint32_t metadata_size   = 0;
 };
+
+struct ApBackgroundCopyRegion
+{
+    uint32_t offset = 0;
+    uint32_t size   = 0;
+};
+
+constexpr std::size_t ApBackgroundCopyMaxRegions = 2;
 
 template<std::size_t N>
 constexpr std::optional<ApInfo> find_ap(ApId id, const std::array<ApInfo, N>& list)

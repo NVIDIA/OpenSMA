@@ -50,7 +50,7 @@
 #include "nv/vrot/interface/types.h"
 #include "nv/volt_mon/common.h"
 #include "core0/powersensor.h"
-#include "nv/vruart/common.h"
+#include "nv/vcom/vruart/common.h"
 
 namespace nv::telemetry {
 
@@ -75,7 +75,9 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 }  // namespace nv::telemetry
 
 namespace nv::ipc {
-constexpr bool EnableLstp = true;
+
+constexpr bool EanbleTaskSamePriority = false;
+constexpr bool EnableLstp             = true;
 
 /********************* Uart over USB Config starts *********************/
 constexpr nv::vruart::Signal   pintx{.port = 2, .pin = 3};
@@ -417,16 +419,18 @@ constexpr inline std::array<StreamBufferInfo, int(StreamBufferId::End)> StreamBu
 };
 
 // Down stream Information
-constexpr uint8_t I2cUpStreamNum          = 1;
-constexpr uint8_t I2cDownStreamNum        = 2;
-constexpr uint8_t I3cDownStreamNum        = 0;
-constexpr uint8_t DownStreamNum           = I2cDownStreamNum + I3cDownStreamNum;
-constexpr uint8_t UpStreamNum             = 2;
-constexpr uint8_t DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
-constexpr uint8_t RoutingInfoUpdateSize   = 4;
-constexpr uint8_t RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
-constexpr bool    EnableEndpointStatusChangeDebounce = false;
-constexpr auto    EndpointStatusChangePeriodMs       = 0;
+constexpr uint8_t  I2cUpStreamNum          = 1;
+constexpr uint8_t  I2cDownStreamNum        = 2;
+constexpr uint8_t  I3cDownStreamNum        = 0;
+constexpr uint8_t  DownStreamNum           = I2cDownStreamNum + I3cDownStreamNum;
+constexpr uint8_t  UpStreamNum             = 2;
+constexpr uint8_t  DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
+constexpr uint8_t  RoutingInfoUpdateSize   = 4;
+constexpr uint8_t  RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
+constexpr uint32_t EnumerateStartMs        = 0;
+constexpr bool     EnableEndpointStatusChangeDebounce = false;
+constexpr auto     EndpointStatusChangePeriodMs       = 0;
+constexpr uint8_t  MaxEnumerateRetries                = 0;
 
 constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos{
     // Use MCU pg540 as downstream which address is 0x40
@@ -526,6 +530,7 @@ enum class TimerId
 {
     Begin,
     MctpEnumerate = Begin,
+    MctpEnumerateStart,
     Pldm,
     PerfMonitor,
     MctpApPowerGoodEngage,
@@ -555,6 +560,7 @@ constexpr auto make_timer_infos()
     int                                      idx = 0;
 
     infos[idx++] = TimerInfo{TimerId::MctpEnumerate, get_core_from_task(TaskId::Mctp)};
+    infos[idx++] = TimerInfo{TimerId::MctpEnumerateStart, get_core_from_task(TaskId::Mctp)};
     infos[idx++] = TimerInfo{TimerId::Pldm, get_core_from_task(TaskId::Pldm)};
     infos[idx++] = TimerInfo{TimerId::PerfMonitor, CoreId::Core0};
     infos[idx++] = TimerInfo{TimerId::MctpApPowerGoodEngage, get_core_from_task(TaskId::Mctp)};
@@ -700,8 +706,11 @@ enum BootedEventBits : uint32_t
     Lstp           = nv::common::bit(12),
     Ssif           = nv::common::bit(13),
     Ubridge        = nv::common::bit(14),
+    SecureBoot     = nv::common::bit(15),
     BootStatusMask = (nv::common::bit(15) - 1),
 };
+
+static_assert((BootStatusMask & SecureBoot) == 0, "No-AP build must not wait for SecureBoot");
 
 constexpr uint32_t WatchdogResetMs       = 2000;
 constexpr uint32_t CheckTaskBootStatusMs = 1000;
@@ -720,6 +729,8 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 2> TaskMonitorList{
 
 constexpr bool EnableRuntimeWdt       = false;
 constexpr bool EnableCP2112NativeGpio = false;
+constexpr bool EnablePufEngine        = false;
+constexpr bool EnableAesGCM           = false;
 
 // Debugtoken config
 constexpr bool DebugTokenEnabled = true;
@@ -912,6 +923,20 @@ constexpr inline std::array<LstpGpioPinInfo, LstpGpioNum> PinConfigs{
 // clang-format on
 }  // namespace nv::lstp
 
+namespace nv::gpio {
+
+struct VirtualGpioEvent
+{
+    GpioPort         port = vrPort;
+    GpioPin          pin{};
+    nv::ipc::EventId event{};
+    uint32_t         bits{};
+};
+
+constexpr inline std::array<VirtualGpioEvent, 0> VirtualGpioEventSetup{};
+
+}  // namespace nv::gpio
+
 namespace nv::mctp {
 
 /** function to add/remove NSM Message Types
@@ -1034,6 +1059,9 @@ NV_SHARED_DATA inline std::array<nv::i2c::I2cTempSensorConfig, I2cTempSensorSize
 namespace nv::vrot {
 constexpr inline std::array<ApInfo, 0> ApList = {{}};
 }  // namespace nv::vrot
+
+static_assert(nv::vrot::ApList.size() == 0,
+              "Update BootStatusMask if this project gains an AP");
 
 namespace nv::i2c {
 constexpr size_t                      I2cBufferSize                   = 512;

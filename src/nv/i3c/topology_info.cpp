@@ -117,13 +117,14 @@ void sys::topology::TopologyInfo::update_sn()
     using namespace nv::i2c;
     using namespace sys::i2c;
     reset_sn();
-    SnBuffer sn          = {0};
-    auto     i2c_status  = I2cStatus::Ok;
-    auto     read_status = ReadSNStatus::Success;
-    uint8_t  retry       = 0;
+    SnBuffer               sn          = {0};
+    auto                   i2c_status  = I2cStatus::Ok;
+    auto                   read_status = ReadSNStatus::Success;
+    uint8_t                retry       = 0;
+    std::array<uint8_t, 1> command     = {static_cast<uint8_t>(SnSyncCommand::SerialNumber)};
     // retry to read SN from target
     for (; retry < MaxRetry; retry++) {
-        i2c_status = i2c_read(TargetPort, TargetAddress, sn);
+        i2c_status = i2c_write_read(TargetPort, TargetAddress, command, sn);
         if (i2c_status == I2cStatus::Ok) {
             if (is_sn_valid(sn)) {
                 read_status = ReadSNStatus::Success;
@@ -139,10 +140,7 @@ void sys::topology::TopologyInfo::update_sn()
         nv::ctimer::Driver::delay_for_us(RetryUs);  // 10ms
     }
     info(Event::NvlSnSync,
-         {static_cast<uint8_t>(SnSyncStatus::ReadSNFailed),
-          static_cast<uint8_t>(read_status),
-          retry,
-          static_cast<uint8_t>(i2c_status)});
+         {static_cast<uint8_t>(read_status), retry, static_cast<uint8_t>(i2c_status)});
     if (read_status != ReadSNStatus::Success) {
         return;
     }

@@ -45,10 +45,13 @@ Status Npds::set_data(Key key, const Data data)
 
 AuthenticateData& Npds::get_ap_fw_authenticate_data_index(Key key)
 {
-    if (key == Key::NpdsActiveApFwAuthenticateData) {
-        return _ap_fw_authenticate_data[0];
+    if constexpr (AuthDataSlots == 0) {
+        __builtin_unreachable();
     }
     else {
-        return _ap_fw_authenticate_data[1];
+        if (key == Key::NpdsActiveApFwAuthenticateData) {
+            return _ap_fw_authenticate_data.at(0);
+        }
+        return _ap_fw_authenticate_data.at(1);
     }
 }

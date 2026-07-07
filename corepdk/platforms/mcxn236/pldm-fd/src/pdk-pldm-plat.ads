@@ -108,13 +108,6 @@ is
                                       Version_String : out Array_Version_String;
                                       Length         : out NvU8);
 
-   procedure Populate_Ap_Version_String (Major          : NvU16;
-                                         Minor          : NvU8;
-                                         Patch          : NvU16;
-                                         Build          : NvU16;
-                                         Version_String : out Array_Version_String;
-                                         Length         : out NvU8);
-
    procedure Get_Active_Stamp (Stamp : out NvU32);
 
    procedure Get_Active_Version_String (Version_String : out Array_Version_String;
@@ -141,5 +134,4 @@ is
        external_name => "ada_get_pldm_device_identity";
 
 end Pdk.Pldm.Plat;
-
 

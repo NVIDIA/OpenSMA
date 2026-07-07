@@ -16,16 +16,42 @@
  * limitations under the License.
  */
 
+#include "sys/i2c/utils.h"
+
 #include <cstring>
 
-#include "sys/i2c/utils.h"
 #include "nv/common/utils.h"
 #include "nv/i2c/mutex.h"
 #include "nv/i2c/port.h"
+#include "nv/i2c/task.h"
 #include "nv/ipc/mutex.h"
 #include "nv/ipc/supervisor.h"
 
+namespace {
+
+nv::i2c::Task::Error status_to_error(status_t status)
+{
+    switch (status) {
+        case kStatus_Success              : return nv::i2c::Task::Error::Ok;
+        case kStatus_LPI2C_Busy           : return nv::i2c::Task::Error::CtrlBusBusy;
+        case kStatus_LPI2C_Nak            : return nv::i2c::Task::Error::CtrlNak;
+        case kStatus_LPI2C_ArbitrationLost: return nv::i2c::Task::Error::CtrlArbLost;
+        case kStatus_LPI2C_Timeout        : return nv::i2c::Task::Error::CtrlTimeout;
+        default                           : return nv::i2c::Task::Error::CtrlError;
+    }
+}
+
+}  // namespace
+
 namespace sys::i2c {
+
+void record_i2c_error(status_t status, nv::i2c::Port port)
+{
+    auto error   = status_to_error(status);
+    auto oob_bus = nv::perf_mon::Driver::flexcomm_port_to_oobBus(static_cast<uint8_t>(port));
+    nv::perf_mon::Driver::set_oob_bus_valid(oob_bus);
+    nv::perf_mon::Driver::set_transaction_error(oob_bus, static_cast<uint8_t>(error));
+}
 
 LPI2C_Type* get_base(nv::i2c::Port port)
 {
@@ -73,14 +99,24 @@ nv::i2c::I2cStatus i2c_write(nv::i2c::Port port, uint8_t address, std::span<uint
         .dataSize       = buffer.size(),
     };
 
-    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    auto& mutex         = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    auto  mutex_timeout = nv::ipc::Mutex::DefaultTimeout;
+
+    if (nv::ipc::Supervisor::inst().current_task_id() == nv::ipc::TaskId::Timer) {
+        using Usecs   = std::chrono::microseconds;
+        mutex_timeout = Usecs(0);
+    }
     // Acquire mutex
-    auto mutex_status = mutex.lock();
+    auto mutex_status = mutex.lock(mutex_timeout);
     if (mutex_status != nv::ipc::Mutex::Status::Ok) {
         return nv::i2c::I2cStatus::MutexError;
     }
     const status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
     mutex.unlock();
+    if (status != kStatus_Success) {
+        record_i2c_error(status, port);
+    }
+
     return get_status(status);
 }
 
@@ -101,14 +137,25 @@ nv::i2c::I2cStatus i2c_read(nv::i2c::Port port, uint8_t address, std::span<uint8
         .dataSize       = buffer.size(),
     };
 
-    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    auto& mutex         = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    auto  mutex_timeout = nv::ipc::Mutex::DefaultTimeout;
+
+    if (nv::ipc::Supervisor::inst().current_task_id() == nv::ipc::TaskId::Timer) {
+        using Usecs   = std::chrono::microseconds;
+        mutex_timeout = Usecs(0);
+    }
     // Acquire mutex
-    auto mutex_status = mutex.lock();
+    auto mutex_status = mutex.lock(mutex_timeout);
     if (mutex_status != nv::ipc::Mutex::Status::Ok) {
         return nv::i2c::I2cStatus::MutexError;
     }
     const status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
     mutex.unlock();
+
+    if (status != kStatus_Success) {
+        record_i2c_error(status, port);
+    }
+
     return get_status(status);
 }
 
@@ -123,8 +170,15 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
     }
 
     auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+
+    auto mutex_timeout = nv::ipc::Mutex::DefaultTimeout;
+
+    if (nv::ipc::Supervisor::inst().current_task_id() == nv::ipc::TaskId::Timer) {
+        using Usecs   = std::chrono::microseconds;
+        mutex_timeout = Usecs(0);
+    }
     // Acquire mutex
-    auto mutex_status = mutex.lock();
+    auto mutex_status = mutex.lock(mutex_timeout);
     if (mutex_status != nv::ipc::Mutex::Status::Ok) {
         return nv::i2c::I2cStatus::MutexError;
     }
@@ -143,6 +197,9 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
     status_t status = LPI2C_MasterTransferBlocking(base, &xfer);
     if (status != kStatus_Success) {
         mutex.unlock();
+
+        record_i2c_error(status, port);
+
         return get_status(status);
     }
 
@@ -154,6 +211,11 @@ nv::i2c::I2cStatus i2c_write_read(nv::i2c::Port      port,
 
     status = LPI2C_MasterTransferBlocking(base, &xfer);
     mutex.unlock();
+
+    if (status != kStatus_Success) {
+        record_i2c_error(status, port);
+    }
+
     return get_status(status);
 }
 

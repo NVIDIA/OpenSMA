@@ -92,7 +92,7 @@ constexpr auto PopulateGpioNsmEventMaskArray(const NsmEventGpioArray& gpioNsmEve
         if (port < maxPortNum) {
             masks[port] |= (1U << pin);  // Set bit at position 'pin'
         }
-        if (port == nv::iox::vrPort) {
+        if (port == nv::gpio::vrPort) {
             masks[maxPortNum] |= (1U << pin);  // Set bit at position 'pin'
         }
     }
@@ -118,7 +118,7 @@ constexpr auto PopulateGpioNsmEventAssertMaskArray(const NsmEventGpioArray& gpio
             masks[port] |= (1U << pin);  // Set bit at position 'pin' if gpioAssertedValue is
                                          // High
         }
-        if (port == nv::iox::vrPort && assertValue == nv::gpio::GpioState::High) {
+        if (port == nv::gpio::vrPort && assertValue == nv::gpio::GpioState::High) {
             masks[maxPortNum] |= (1U << pin);
         }
     }

@@ -17,6 +17,7 @@
  */
 #pragma once
 #include <cstdint>
+#include <cstring>
 #include <array>
 #include "nv/common/utils.h"
 namespace nv::mainbox {
@@ -32,6 +33,7 @@ enum class MainBoxMemoryType : uint8_t
     FaultWdtRecords,
     BoardSerialNumber,
     UsbPortReset,
+    PeerThermWarn,
     End,
 };
 
@@ -42,11 +44,12 @@ struct MainBoxMemoryDesc
     uint32_t          size;
 };
 
-constexpr inline std::array<MainBoxMemoryDesc, 5> MainBoxMemoryDescs = {
+constexpr inline std::array<MainBoxMemoryDesc, 6> MainBoxMemoryDescs = {
     MainBoxMemoryDesc{      MainBoxMemoryType::ElsSelfTest,  0x0, 0x10},
     MainBoxMemoryDesc{  MainBoxMemoryType::FaultWdtRecords, 0x10, 0x10},
     MainBoxMemoryDesc{MainBoxMemoryType::BoardSerialNumber, 0x20, 0x10},
     MainBoxMemoryDesc{     MainBoxMemoryType::UsbPortReset, 0x30, 0x10},
+    MainBoxMemoryDesc{    MainBoxMemoryType::PeerThermWarn, 0x40, 0x04},
 };
 
 static_assert(MainBoxMemoryDescs[0].size + MainBoxMemoryDescs[1].size <= MainBoxMemorySize,

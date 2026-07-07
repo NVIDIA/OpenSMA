@@ -117,10 +117,16 @@ TemplateComparisonError check_two_template_is_same(const TemplateType& template_
                                                    const TemplateType& template_2)
 {
     // Check each field individually and return specific error code
+#ifdef EDGELOCK2GO_CERT
+    if (template_1.template_to_serial_number != template_2.template_to_serial_number) {
+        return TemplateComparisonError::SerialNumberMismatch;
+    }
+#else
     if (template_1.template_to_serial_number != template_2.template_to_serial_number
         || template_1.serial_number != template_2.serial_number) {
         return TemplateComparisonError::SerialNumberMismatch;
     }
+#endif
 
     if (template_1.template_to_dda_ordinal_number != template_2.template_to_dda_ordinal_number
         || template_1.dda_ordinal_number != template_2.dda_ordinal_number) {
@@ -154,6 +160,13 @@ TemplateComparisonError check_two_template_is_same(const TemplateType& template_
         // Note: authority_key_identifier itself is not checked as per original comment
         return TemplateComparisonError::AuthorityKeyIdentifierMismatch;
     }
+
+#ifdef EDGELOCK2GO_CERT
+    if (template_1.template_to_authority_information_access
+        != template_2.template_to_authority_information_access) {
+        return TemplateComparisonError::AuthorityInfoAccessMismatch;
+    }
+#endif
 
     if (template_1.template_to_signature != template_2.template_to_signature) {
         return TemplateComparisonError::SignatureMismatch;

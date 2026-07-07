@@ -64,7 +64,9 @@ extern void                      USB_DeviceIsrEnable(void);
 extern usb_device_class_struct_t g_UsbDeviceMctpGenericConfig;
 
 #if defined(USB_CONFIG_COMPOSITE)
+#if (SYS_USB_HID_CP2112 > 0U)
 extern usb_device_class_struct_t g_UsbDeviceHidGenericConfig;
+#endif
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
 extern usb_device_class_struct_t g_UsbDeviceSpiConfig;
 #endif
@@ -447,7 +449,7 @@ bool Driver::is_vcom_ready()
 
 #endif
 
-#if defined(USB_CONFIG_COMPOSITE)
+#if defined(USB_CONFIG_COMPOSITE) && (SYS_USB_HID_CP2112 > 0U)
 usb_status_t Driver::usb_devicehidcallback(class_handle_t handle, uint32_t event, void* param)
 {
     usb_status_t error = kStatus_USB_InvalidRequest;
@@ -603,11 +605,13 @@ NV_SHARED_DATA usb_device_class_config_struct_t g_UsbDeviceCompositeConfig[] = {
   &g_UsbDeviceMctpGenericConfig,  /* MCTP class information */
     },
 #if defined(USB_CONFIG_COMPOSITE)
+#if (SYS_USB_HID_CP2112 > 0U)
     {
      Driver::usb_devicehidcallback,
      (class_handle_t) nullptr,        /* HID class handle */
         &g_UsbDeviceHidGenericConfig, /* HID class information */
     },
+#endif
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
     {
      Driver::usb_deviceSpicallback,
@@ -675,9 +679,15 @@ NV_PRIVILEGED_FUNCTION uint8_t Driver::init(void* mctp_buffer0,
     else {
         g_UsbDevice.mctp_handle = g_UsbDeviceCompositeConfigList.config[0].classHandle;
 #if defined(USB_CONFIG_COMPOSITE)
+#if (SYS_USB_HID_CP2112 > 0U)
         g_UsbDevice.hid_handle = g_UsbDeviceCompositeConfigList.config[1].classHandle;
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
         g_UsbDevice.spi_handle = g_UsbDeviceCompositeConfigList.config[2].classHandle;
+#endif
+#else /* CP2112/HID disabled: NV_SMA_SPI moves up to config index 1 */
+#if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
+        g_UsbDevice.spi_handle = g_UsbDeviceCompositeConfigList.config[1].classHandle;
+#endif
 #endif
 #endif
 
@@ -685,11 +695,15 @@ NV_PRIVILEGED_FUNCTION uint8_t Driver::init(void* mctp_buffer0,
 #if defined(USB_CONFIG_MCTP)
         s_vcomHandle = g_UsbDeviceCompositeConfigList.config[1].classHandle;
 #endif
+/* Composite config indices shift when the CP2112/HID interface is absent, so
+ * offset the VCOM handle by SYS_USB_HID_CP2112 (1 when HID present, 0 when not). */
 #if defined(USB_CONFIG_COMPOSITE)
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
-        s_vcomHandle = g_UsbDeviceCompositeConfigList.config[3].classHandle;
+        s_vcomHandle = g_UsbDeviceCompositeConfigList.config[2 + SYS_USB_HID_CP2112]
+                           .classHandle;
 #else
-        s_vcomHandle = g_UsbDeviceCompositeConfigList.config[2].classHandle;
+        s_vcomHandle = g_UsbDeviceCompositeConfigList.config[1 + SYS_USB_HID_CP2112]
+                           .classHandle;
 #endif
 #endif
 #endif
@@ -729,6 +743,7 @@ NV_PRIVILEGED_FUNCTION usb_status_t Driver::enable_mctp_rx()
     return result;
 }
 
+#if (SYS_USB_HID_CP2112 > 0U)
 NV_PRIVILEGED_FUNCTION usb_status_t Driver::enable_hid_rx()
 {
     usb_status_t result = kStatus_USB_Success;
@@ -752,6 +767,7 @@ uint8_t Driver::write_hid(uint8_t* data, uint32_t length)
 #endif
     return result;
 }
+#endif  // SYS_USB_HID_CP2112
 
 NV_PRIVILEGED_FUNCTION uint8_t Driver::write_spi(uint8_t* data, uint32_t length)
 {
@@ -934,6 +950,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
 
 #if defined(USB_CONFIG_COMPOSITE)
 
+#if (SYS_USB_HID_CP2112 > 0U)
                 // Initialize HID endpoint with separate buffer
                 const auto HidError = USB_DeviceHidRecv(
                     g_UsbDevice.hid_handle,
@@ -943,6 +960,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
                 if (HidError != kStatus_USB_Success) {
                     error = HidError;
                 }
+#endif
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
                 // Initialize SPI endpoint with separate buffer
                 const auto spiError = USB_DeviceSpiRecv(
@@ -1000,6 +1018,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
 #endif
 
 #if defined(USB_CONFIG_COMPOSITE)
+#if (SYS_USB_HID_CP2112 > 0U)
                 else if (USB_HID_GENERIC_INTERFACE_INDEX == interface) {
                     if (alternateSetting < USB_MCTP_INTERFACE_ALTERNATE_COUNT) {
                         g_UsbDevice
@@ -1009,6 +1028,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
                         }
                     }
                 }
+#endif
 #if defined(USB_DEVICE_CONFIG_VENDOR_SPECIFIC)
                 else if (USB_NV_SMA_SPI_INTERFACE_INDEX == interface) {
                     if (alternateSetting < USB_MCTP_INTERFACE_ALTERNATE_COUNT) {
@@ -1074,7 +1094,7 @@ usb_status_t Driver::usb_devicecallback(usb_device_handle handle, uint32_t event
             // more case TO-BE-IMPLEMENTED
 #endif
 
-#if defined(USB_CONFIG_COMPOSITE)
+#if defined(USB_CONFIG_COMPOSITE) && (SYS_USB_HID_CP2112 > 0U)
         case kUSB_DeviceEventGetHidDescriptor:
             if (param) {
                 /* Get hid descriptor request */

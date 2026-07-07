@@ -30,8 +30,15 @@
 #define BOARD_XTAL0_CLK_HZ      24000000U /*!< Board xtal0 frequency in Hz */
 
 #if ((defined(USB_CONFIG_COMPOSITE)) && (USB_CONFIG_COMPOSITE > 0U))
+/* Gate the SDK HID class driver on the CP2112 (HID) interface flag so it is not
+ * compiled/linked when a project drops the CP2112 interface. SYS_USB_HID_CP2112
+ * is defined in usb_config_wrapper.h (included above). */
 #ifndef USB_DEVICE_CONFIG_HID
+#if (SYS_USB_HID_CP2112 > 0U)
 #define USB_DEVICE_CONFIG_HID (1U)
+#else
+#define USB_DEVICE_CONFIG_HID (0U)
+#endif
 #endif
 #if ((defined(USB_CONFIG_LSTP)) && (USB_CONFIG_LSTP > 0U))
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)

@@ -64,3 +64,13 @@ Xpd712021::Xpd712021(Port port, uint8_t address) : PowerSensor(port, address)
     _temp_coeff        = {TempSlopeM, TempOffsetB, TempExpMult, TempMask};
     _power_input_coeff = {PowerSlopeM, PowerOffsetB, PowerExpMult, PowerMask};
 }
+
+I2cStatus Xpd712021::init()
+{
+    // The XDP712's OT_WARN/OT_FAULT limits, SMBALERT# routing (GPO_CFG), fault/warning masks
+    // and current-sense (RDS(on)) settings all live in the device NVM/MTP, programmed at
+    // manufacturing via the Infineon design file (.xdp, e.g. PG558_XDP712-021) -- so unlike
+    // Lm5066i/Mp5926 there is no ALERT_MASK for the FW to write here. We still clear any stale
+    // boot-time latched faults for a clean status baseline.
+    return clear_faults();
+}

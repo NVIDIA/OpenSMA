@@ -129,6 +129,8 @@ struct Event
     static constexpr EventStructItem I2CCounts            = {0x050c, Level::Info};
     static constexpr EventStructItem I2CRuntPacket        = {0x050d, Level::Info};
     static constexpr EventStructItem I2CRecovery          = {0x050e, Level::Info};
+    static constexpr EventStructItem I2cHscInitFailed     = {0x050f, Level::Error};
+    static constexpr EventStructItem I2cClockPeriods      = {0x0510, Level::Info};
     // I3C
     static constexpr EventStructItem I3CBind                  = {0x0600, Level::Info};
     static constexpr EventStructItem I3CFailedToResetDaaV1    = {0x0601, Level::Error};
@@ -177,6 +179,9 @@ struct Event
     static constexpr EventStructItem I3CDaaMismatchV2         = {0x062d, Level::Error};
     static constexpr EventStructItem I3CIgnoreIbiStateV2      = {0x062e, Level::Info};
     static constexpr EventStructItem I3CIgnoreIbiTypeV2       = {0x062f, Level::Info};
+    static constexpr EventStructItem I3CBusRecovery           = {0x0630, Level::Info};
+    static constexpr EventStructItem I3CBusRecoveryGiveUp     = {0x0631, Level::Info};
+    static constexpr EventStructItem I3CI2CArbLostV2          = {0x0632, Level::Error};
     // MCTP
     static constexpr EventStructItem MctpApPgoodEventTrigger           = {0x0700, Level::Info};
     static constexpr EventStructItem MctpApPgoodGpioState              = {0x0701, Level::Info};
@@ -206,6 +211,9 @@ struct Event
     static constexpr EventStructItem MctpProtocolResetEnd              = {0x0720, Level::Info};
     static constexpr EventStructItem MctpForwardFail                   = {0x0721, Level::Error};
     static constexpr EventStructItem MctpInvalidInterfaceIndex         = {0x0722, Level::Error};
+    static constexpr EventStructItem MctpRoutingInfoUpdateRequester    = {0x0723, Level::Info};
+    static constexpr EventStructItem MctpEnumerateRetry                = {0x0723, Level::Info};
+    static constexpr EventStructItem MctpApProvision                   = {0x0724, Level::Info};
 
     // PLDM
     static constexpr EventStructItem PldmError                     = {0x0800, Level::Error};
@@ -308,6 +316,7 @@ struct Event
     static constexpr EventStructItem StrapVandPeerType   = {0x0F16, Level::Info};
     static constexpr EventStructItem FruBoardSerial      = {0x0F17, Level::Info};
     static constexpr EventStructItem NvlSnSync           = {0x0F18, Level::Info};
+    static constexpr EventStructItem NvlSnSyncBrake      = {0x0F19, Level::Info};
 
     // Voltage Monitor / Leak Detection
     static constexpr EventStructItem LeakDetectIsrNoValidReading  = {0x1000, Level::Info};
@@ -377,6 +386,15 @@ struct Event
     static constexpr EventStructItem SsifTxUnexpectedReadMulti  = {0x1407, Level::Warning};
     static constexpr EventStructItem SsifTxQueueRecvFailed      = {0x1408, Level::Error};
     static constexpr EventStructItem SsifTargetTimeout          = {0x1409, Level::Error};
+
+    // SecureBoot
+    static constexpr EventStructItem SecureBootStateTransition = {0x1500, Level::Info};
+    static constexpr EventStructItem SecureBootFlashWriteFail  = {0x1501, Level::Error};
+    static constexpr EventStructItem SecureBootEventSetFail    = {0x1502, Level::Error};
+    static constexpr EventStructItem SecureBootEventClearFail  = {0x1503, Level::Error};
+    static constexpr EventStructItem SecureBootQueueSendFail   = {0x1504, Level::Error};
+    static constexpr EventStructItem SecureBootQueueRecvFail   = {0x1505, Level::Error};
+    static constexpr EventStructItem SecureBootFatal           = {0x1506, Level::Error};
 
     Event()                        = delete;
     Event(const Event&)            = delete;

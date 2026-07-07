@@ -63,15 +63,6 @@ enum class Register
     Invalid,
 };
 
-/**
- * @note: unUsed and vrPort are the same from the perspective of iox
- *        used to indicate there is NO real gpio associated with this PCA9555 pin
- *        The only difference is from user's perspective, just to make it more readable
- *        all pins defined as unUsed/vrPort always have an internal variable in the iox reg
- * table
- */
-constexpr static nv::gpio::GpioPort vrPort = nv::gpio::InvalidGpioPort;
-
 constexpr static uint8_t regNum = 8;
 constexpr static uint8_t pinNum = 16;
 

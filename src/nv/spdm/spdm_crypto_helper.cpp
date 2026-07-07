@@ -15,16 +15,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
+#include <chrono>
+
 #include "nv/spdm/spdm_cert_chain.h"
 #include "nv/spdm/spdm_crypto_helper.h"
+#include <cstring>
+#include "nv/crypto/key_clear_guard.h"
 #include "sys/common/utils.h"
+#include "nv/debugtoken/debugtoken.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/spdm/task.h"
 #include "nv/nv.h"
 #include "nv/flash/flash.h"
 #include "sys/crypto/crypto.h"
 #include "nv/pldm/task.h"
-#include "nv/spdm/secure_boot.h"
+#include "nv/secure_boot/secure_boot.h"
 #include "nv/vrot/interface/interface.h"
 #include "nv/logger/log.h"
 #include NV_IPC_CONFIG_H  // for nv::vrot::ApList
@@ -32,6 +38,30 @@ using namespace nv;
 namespace nv::spdm::crypto {
 namespace {
 constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+
+// Centralized AP auth request id allocator state. Callers never provide this
+// value; the helper fills it before queueing an AP auth request.
+NV_SHARED_BSS static uint8_t
+    s_ap_auth_request_counter{};  // NOLINT(*-non-const-global-variables)
+
+uint8_t allocate_ap_auth_request_id()
+{
+    // 0 is reserved as the "uninitialized" sentinel, so the returned ID cycles
+    // through 1..255.
+    ++s_ap_auth_request_counter;
+    if (s_ap_auth_request_counter == 0U) {
+        ++s_ap_auth_request_counter;
+    }
+    return s_ap_auth_request_counter;
+}
+
+void release_auth_worker(nv::ipc::Event& event, nv::ipc::CoreId core_id)
+{
+    if (event.set(nv::spdm::Task::EventBits::AuthenticateTaskIdle, core_id)
+        != nv::ipc::Event::Status::Ok) {
+        nv::info("spdm release AuthenticateTaskIdle fail for core %d\n", core_id);
+    }
+}
 }  // namespace
 
 void send_response_back(const CryptoReqResParameters& result)
@@ -65,14 +95,18 @@ void send_response_back(const CryptoReqResParameters& result)
                     *VarPtr);
                 return;
             }
+            // Callback-style AP requests already handled the result.
+            return;
         }
     }
 
     NV_ASSERT(false, "Unexpected response type: %d\n", result.index());
 }
 
-CryptoStatus
-_authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_ap_type)
+CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&                  ap,
+                                           const nv::fw_parser::ap::ParsingApFwType auth_slot,
+                                           nv::ipc::TaskId request_task_id,
+                                           uint8_t         auth_request_id)
 {
     if constexpr (!HasVrotAp) {
         return CryptoStatus::FailUnknown;
@@ -80,32 +114,21 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
 
     auto auth_result = CryptoStatus::Success;
     auto ap_metadata = nv::fw_parser::ap::ApFwMetadata{};
-    // Single-AP assumption baked into the TOT SPDM auth path: the request
-    // parameter doesn't carry an ap_id, so the AP is implicitly the AP with
-    // id `AP0`. When multi-AP arrives the ap_id should be plumbed through
-    // `AuthenticateApFirmwareRequestParameter` and looked up here instead.
-    auto ap_opt = nv::vrot::find_ap(nv::vrot::ApId::AP0, nv::vrot::ApList);
-    if (!ap_opt) {
-        return CryptoStatus::FailApNotFound;
-    }
-    const auto& ap = *ap_opt;
     do {  // NOLINT(cppcoreguidelines-avoid-do-while)
         auto& meta_data_array_view = *std::bit_cast<std::array<uint8_t, sizeof(ap_metadata)>*>(
             &ap_metadata);
         const std::span<uint8_t> ap_metadata_buffer(meta_data_array_view.data(),
                                                     meta_data_array_view.size());
-        // Metadata read: hand the entire region-keyed buffer to vrot in one
-        // shot. Transport-level chunking (per-page transactions) and any
-        // watchdog-feed yields are the platform Ops / driver's responsibility,
-        // not this layer's — see LatticeCpld::read_ufm for the CPLD case.
-        if (nv::vrot::read_metadata(ap, 0, ap_metadata_buffer)
+        if (nv::vrot::read_metadata(
+                ap, nv::vrot::slot_from_parsing(auth_slot), 0, ap_metadata_buffer)
             != nv::vrot::ApOpErrCode::Success) {
             auth_result = CryptoStatus::FailApMetadataRead;
             break;
         }
-        //  auth public key
+        // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
         if (ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[0]
             && ap_metadata.tbs_data.verif_pub_key != ApFwPublicKeys[1]) {
+            // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
             auth_result = CryptoStatus::FailApPublicKeyMismatch;
             break;
         }
@@ -144,7 +167,7 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                 auth_result = CryptoStatus::FailApRollbackProtection;
                 nv::logger::info(nv::logger::Event::SpdmCryptoApRollbackProtectionActive,
                                  nv::logger::EventData{
-                                     std::to_underlying(auth_ap_type),
+                                     std::to_underlying(auth_slot),
                                      ap_metadata.tbs_data.sec_version,
                                      static_cast<uint8_t>(secure_fw_version_on_device),
                                  });
@@ -177,9 +200,8 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                 && ap_metadata.tbs_data.verif_pub_key
                        != ApFwPublicKeys[std::to_underlying(
                            nv::fw_parser::ap::PublicKeyIndex::ProdKeyIndex)]) {
-                auto dt_status = nv::debugtoken::check_debug_token_subtype_enabled(
-                    nv::debugtoken::Type::FlashDebugFw,
-                    nv::debugtoken::DebugTokenSubtypeCpldFw);
+                const auto dt_status = nv::debugtoken::check_flash_debug_fw_token_for_ap(
+                    ap.type);
                 if (dt_status != nv::debugtoken::TokenErrorCode::NoErrorCode) {
                     auth_result = CryptoStatus::FailApImageSigningKeyRevoke;
                     break;
@@ -188,12 +210,18 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
         }
 
         // store the ap metadata when metadata auth is done
-        nv::spdm::secure_boot::SecureBoot::persist_ap_fw_authenticate_data_in_progress(
-            auth_ap_type, ap_metadata.tbs_data);
+        nv::secure_boot::SecureBoot::persist_ap_fw_authenticate_data_in_progress(
+            static_cast<uint8_t>(ap.id), auth_slot, ap_metadata.tbs_data, request_task_id);
+
+        const auto image_count = static_cast<size_t>(ap_metadata.tbs_data.ap_fw_images_count);
+        if (image_count > ap_metadata.tbs_data.hash_table.size()) {
+            auth_result = CryptoStatus::FailParsingFirmware;
+            break;
+        }
 
         // check image hash
         constexpr size_t MetadataSize = sizeof(ap_metadata);
-        for (int i = 0; i < ap_metadata.tbs_data.ap_fw_images_count; i++) {
+        for (size_t i = 0; i < image_count; i++) {
             auto ctx = Sha384Context{};
             if (!ctx.init()) {
                 auth_result = CryptoStatus::FailHashStart;
@@ -202,11 +230,6 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
             // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
             size_t need_to_read_size = ap_metadata.tbs_data.hash_table[i].length;
 
-            // hash_table[i].offset is relative to image_offset; image_offset
-            // is the absolute offset of the sub-image area within the AP
-            // blob. Sub-images live in the firmware-data region (past the
-            // metadata), so subtract MetadataSize to get a fw-data-region-
-            // relative address. Reject malformed images that would underflow.
             const size_t image_blob_offset = ap_metadata.tbs_data.hash_table[i].offset
                                            + ap_metadata.tbs_data.image_offset;
             // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
@@ -214,22 +237,16 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                 auth_result = CryptoStatus::FailParsingFirmware;
                 break;
             }
-            size_t fw_data_offset = image_blob_offset - MetadataSize;
-            // Stream-hash chunk size. This is a RAM/stack-budget trade-off
-            // (a temporary buffer here, plus one SHA384 update per chunk),
-            // not a transport concern — the AP transport's per-page
-            // fragmentation and any WDT-feed yields happen inside the
-            // platform Ops / driver below vrot. Picked as a power of two
-            // that's a multiple of the Lattice CPLD page size so the
-            // vrot::read_fw_data call below stays page-aligned on the
-            // CPLD path.
-            constexpr size_t                     HashStreamChunk = 1024;
+            size_t           fw_data_offset  = image_blob_offset - MetadataSize;
+            constexpr size_t HashStreamChunk = 1024;
             std::array<uint8_t, HashStreamChunk> read_buffer{};
             while (need_to_read_size != 0) {
                 const size_t read_size = std::min(need_to_read_size, HashStreamChunk);
                 auto read_buffer_view  = std::span<uint8_t>(read_buffer).subspan(0, read_size);
-                if (nv::vrot::read_fw_data(
-                        ap, static_cast<uint32_t>(fw_data_offset), read_buffer_view)
+                if (nv::vrot::read_fw_data(ap,
+                                           nv::vrot::slot_from_parsing(auth_slot),
+                                           static_cast<uint32_t>(fw_data_offset),
+                                           read_buffer_view)
                     != nv::vrot::ApOpErrCode::Success) {
                     auth_result = CryptoStatus::FailApImageRead;
                     break;
@@ -263,7 +280,7 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
 
     /*
     log the auth result
-    1. auth_ap_type
+    1. auth_slot
     2. auth_result
     3. ap_metadata.tbs_data.ap_cfg_key_idx
     4. ap_metadata.tbs_data.sec_version
@@ -272,7 +289,7 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
     nv::logger::info(nv::logger::Event::SpdmCryptoApAuthResult,
                      nv::logger::EventData{
                          std::to_underlying(auth_result),
-                         std::to_underlying(auth_ap_type),
+                         std::to_underlying(auth_slot),
                          ap_metadata.tbs_data.ap_cfg_key_idx,
                          ap_metadata.tbs_data.sec_version,
                          ap_metadata.tbs_data.fw_version.major,
@@ -280,23 +297,43 @@ _authenticate_ap_firmware_result(const nv::fw_parser::ap::ParsingApFwType auth_a
                          ap_metadata.tbs_data.fw_version.patch,
                          ap_metadata.tbs_data.fw_version.build,
                      });
-    nv::spdm::secure_boot::SecureBoot::secure_boot_ap_auth_callback(
-        auth_ap_type, auth_result, ap_metadata.tbs_data);
+    // Keep this constexpr-guarded so no-AP builds do not reference secure_boot.
+    if constexpr (HasVrotAp) {
+        return nv::secure_boot::SecureBoot::secure_boot_auth_callback(
+            static_cast<uint8_t>(ap.id),
+            auth_slot,
+            auth_result,
+            ap_metadata.tbs_data,
+            request_task_id,
+            auth_request_id);
+    }
     return auth_result;
-};
+}
 
-CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters)
+CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters,
+                                   uint8_t*               auth_request_id = nullptr)
 {
     // send the request to queue
     auto& crypto_queue = nv::ipc::Queue::make(nv::ipc::QueueId::SpdmCryptoHelper);
 
-    auto spdm_task_envnt = ipc::Event::make(ipc::EventId::SpdmTask);
+    auto       spdm_task_envnt = ipc::Event::make(ipc::EventId::SpdmTask);
+    const auto request_core_id = nv::ipc::get_current_core();
 
     // check if there is another task want spdm to authenticate fw
     auto spdm_idle_check = spdm_task_envnt.wait(
         nv::spdm::Task::AuthenticateTaskIdle, true, false, std::chrono::seconds{1});
     if (!spdm_idle_check) {
         return CryptoStatus::FailSendToSpdm;
+    }
+
+    if (auth_request_id != nullptr) {
+        auto* request = std::get_if<AuthenticateApFirmwareRequestParameter>(
+            &request_parameters);
+        if (request == nullptr) {
+            release_auth_worker(spdm_task_envnt, request_core_id);
+            return CryptoStatus::FailSendToSpdm;
+        }
+        request->auth_request_id = allocate_ap_auth_request_id();
     }
 
     auto& request_parameters_arr_view = *std::bit_cast<
@@ -307,7 +344,14 @@ CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters)
     // send to the queue.
     auto queue_status = crypto_queue.send(ReqItem, std::chrono::seconds{1});
     if (queue_status != nv::ipc::Queue::Status::Ok) {
+        release_auth_worker(spdm_task_envnt, request_core_id);
         return CryptoStatus::FailSendToSpdm;
+    }
+
+    if (auth_request_id != nullptr) {
+        const auto* request = std::get_if<AuthenticateApFirmwareRequestParameter>(
+            &request_parameters);
+        *auth_request_id = request->auth_request_id;
     }
 
     // spdm task is on Core0
@@ -321,43 +365,100 @@ CryptoStatus _send_request_to_spdm(CryptoReqResParameters request_parameters)
     return CryptoStatus::Success;
 }
 
-CryptoStatus
-authenticate_ap_firmware(const nv::fw_parser::ap::ParsingApFwType InputParseingApFwType)
+CryptoStatus authenticate_ap_firmware_with_request_id(
+    const nv::vrot::ApInfo&            ap,
+    nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+    nv::ipc::TaskId                    request_task_id,
+    uint8_t                            auth_request_id)
 {
-    // check if the ap fw feature is enabled
     if constexpr (!HasVrotAp) {
         return CryptoStatus::FailUnknown;
     }
 
-    // start to authenticate the ap firmware
-    (void)nv::flash::Flash::set_data(
-        nv::flash::Key::NpdsAp0FwStatus,
-        static_cast<nv::flash::Data>(nv::fw_parser::ap::ApFwStatus::Auth_In_Progress));
-
-    // check if the input parsing ap fw type is valid
     if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
         && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
         return CryptoStatus::FailUnknown;
     }
+    if (auth_request_id == 0U) {
+        return CryptoStatus::FailUnknown;
+    }
+    const auto current_task_id  = ipc::Supervisor::inst().current_task_id();
+    const auto callback_task_id = request_task_id == nv::ipc::TaskId::Begin ? current_task_id
+                                                                            : request_task_id;
+    if (current_task_id != ipc::TaskId::Spdm) {
+        return CryptoStatus::FailSendToSpdm;
+    }
 
-    // get the current task id
-    nv::ipc::TaskId current_task_id = nv::ipc::TaskId::Begin;
-    current_task_id                 = ipc::Supervisor::inst().current_task_id();
+    return _authenticate_firmware_result(
+        ap, InputParseingApFwType, callback_task_id, auth_request_id);
+}
 
-    // return authenticate result directly if spdm task is on current core
+CryptoStatus
+send_authenticate_firmware_request(const nv::vrot::ApInfo&            ap,
+                                   nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+                                   uint8_t&                           auth_request_id,
+                                   nv::ipc::TaskId                    request_task_id)
+{
+    auth_request_id = 0;
+    if constexpr (!HasVrotAp) {
+        return CryptoStatus::FailUnknown;
+    }
+
+    if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
+        return CryptoStatus::FailUnknown;
+    }
+    const auto current_task_id  = ipc::Supervisor::inst().current_task_id();
+    const auto callback_task_id = request_task_id == nv::ipc::TaskId::Begin ? current_task_id
+                                                                            : request_task_id;
     if (current_task_id == ipc::TaskId::Spdm) {
-        return _authenticate_ap_firmware_result(InputParseingApFwType);
+        return CryptoStatus::FailSendToSpdm;
     }
-    else {
-        // fill the request parameters of ap authenticate
-        CryptoReqResParameters request_parameters{};
-        request_parameters = AuthenticateApFirmwareRequestParameter{
-            .request_core_id       = nv::ipc::get_current_core(),
-            .input_parsing_fw_type = InputParseingApFwType,
-            .request_task_id       = current_task_id};
-        return _send_request_to_spdm(request_parameters);
+
+    CryptoReqResParameters request_parameters{};
+    request_parameters = AuthenticateApFirmwareRequestParameter{
+        .request_core_id       = nv::ipc::get_current_core(),
+        .input_parsing_fw_type = InputParseingApFwType,
+        .ap_id                 = ap.id,
+        .auth_request_id       = 0,
+        .request_task_id       = callback_task_id};
+    return _send_request_to_spdm(request_parameters, &auth_request_id);
+}
+
+CryptoStatus authenticate_ap_firmware(const nv::vrot::ApInfo&            ap,
+                                      nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
+                                      uint8_t&                           auth_request_id,
+                                      nv::ipc::TaskId                    request_task_id)
+{
+    auth_request_id = 0;
+    if constexpr (!HasVrotAp) {
+        return CryptoStatus::FailUnknown;
     }
-};
+
+    if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
+        return CryptoStatus::FailUnknown;
+    }
+    const auto current_task_id  = ipc::Supervisor::inst().current_task_id();
+    const auto callback_task_id = request_task_id == nv::ipc::TaskId::Begin ? current_task_id
+                                                                            : request_task_id;
+    // Run directly on SPDM task; otherwise send IPC request.
+    if (current_task_id == ipc::TaskId::Spdm) {
+        const auto assigned_request_id = allocate_ap_auth_request_id();
+        auth_request_id                = assigned_request_id;
+        return _authenticate_firmware_result(
+            ap, InputParseingApFwType, callback_task_id, assigned_request_id);
+    }
+
+    CryptoReqResParameters request_parameters{};
+    request_parameters = AuthenticateApFirmwareRequestParameter{
+        .request_core_id       = nv::ipc::get_current_core(),
+        .input_parsing_fw_type = InputParseingApFwType,
+        .ap_id                 = ap.id,
+        .auth_request_id       = 0,
+        .request_task_id       = callback_task_id};
+    return _send_request_to_spdm(request_parameters, &auth_request_id);
+}
 
 // this verification will take lot of memory, we will let spdm task to do.
 CryptoStatus
@@ -382,6 +483,153 @@ authenticate_mcu_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingF
 
     // should not reach.
     return CryptoStatus::FailUnknown;
+}
+
+CryptoStatus trng_generate(std::span<uint8_t> output)
+{
+    if (output.size() != UdsKeyBytes) {
+        return CryptoStatus::FailUnknown;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        return sys::crypto::trng_generate(output);
+    }
+
+    CryptoPrimitiveRequestParameters  req = TrngGenerateRequestParameter{};
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    const nv::crypto::KeyClearGuard response_guard{std::span<uint8_t>(res.output)};
+    if (submit_primitive_request(req, res) != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailRandomGen;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+    std::memcpy(output.data(), res.output.data(), UdsKeyBytes);
+    return CryptoStatus::Success;
+}
+
+CryptoStatus puf_wrap(std::span<const uint8_t> key, std::span<uint8_t> wrapped)
+{
+    if (key.size() != UdsKeyBytes || wrapped.size() != PufWrappedBytes) {
+        return CryptoStatus::FailUnknown;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        return sys::crypto::puf_wrap(key, wrapped);
+    }
+
+    CryptoPrimitiveRequestParameters req = PufWrapRequestParameter{
+        .key = {},
+    };
+    auto& request = std::get<PufWrapRequestParameter>(req);
+    std::memcpy(request.key.data(), key.data(), UdsKeyBytes);
+    const nv::crypto::KeyClearGuard request_guard{std::span<uint8_t>(request.key)};
+
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    const nv::crypto::KeyClearGuard response_guard{std::span<uint8_t>(res.output)};
+    if (submit_primitive_request(req, res) != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailPufFail;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+    std::memcpy(wrapped.data(), res.output.data(), PufWrappedBytes);
+    return CryptoStatus::Success;
+}
+
+CryptoStatus puf_unwrap(std::span<const uint8_t> wrapped, std::span<uint8_t> key)
+{
+    if (wrapped.size() != PufWrappedBytes || key.size() != UdsKeyBytes) {
+        return CryptoStatus::FailUnknown;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        return sys::crypto::puf_unwrap(wrapped, key);
+    }
+
+    CryptoPrimitiveRequestParameters req = PufUnwrapRequestParameter{
+        .wrapped = {},
+    };
+    auto& request = std::get<PufUnwrapRequestParameter>(req);
+    std::memcpy(request.wrapped.data(), wrapped.data(), PufWrappedBytes);
+    const nv::crypto::KeyClearGuard request_guard{std::span<uint8_t>(request.wrapped)};
+
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    const nv::crypto::KeyClearGuard response_guard{std::span<uint8_t>(res.output)};
+    if (submit_primitive_request(req, res) != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailPufFail;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+    std::memcpy(key.data(), res.output.data(), UdsKeyBytes);
+    return CryptoStatus::Success;
+}
+
+CryptoStatus aes_256_gcm_encrypt(const nv::crypto::Aes256Key&                        key,
+                                 std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
+                                 std::span<const uint8_t>                            aad,
+                                 std::span<const uint8_t>                            plaintext,
+                                 std::span<uint8_t>                                  ciphertext,
+                                 std::span<uint8_t, nv::crypto::AesGcmTagBytes>      tag)
+{
+    if (ciphertext.size() != plaintext.size()) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        return sys::crypto::aes_256_gcm_encrypt(key, iv, aad, plaintext, ciphertext, tag);
+    }
+
+    if (aad.size() > AesGcmPrimitiveMaxAadBytes
+        || plaintext.size() > AesGcmPrimitiveMaxPlaintextBytes) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+
+    CryptoPrimitiveRequestParameters req = Aes256GcmEncryptRequestParameter{
+        .key            = key,
+        .iv             = {},
+        .aad_size       = aad.size(),
+        .plaintext_size = plaintext.size(),
+        .aad            = {},
+        .plaintext      = {},
+    };
+    auto& request = std::get<Aes256GcmEncryptRequestParameter>(req);
+    std::memcpy(request.iv.data(), iv.data(), request.iv.size());
+    if (!aad.empty()) {
+        std::memcpy(request.aad.data(), aad.data(), aad.size());
+    }
+    if (!plaintext.empty()) {
+        std::memcpy(request.plaintext.data(), plaintext.data(), plaintext.size());
+    }
+    const nv::crypto::KeyClearGuard request_key_guard{std::span<uint8_t>(request.key)};
+    const nv::crypto::KeyClearGuard plaintext_guard{std::span<uint8_t>(request.plaintext)};
+
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailAesGcmEncrypt,
+        .output = {},
+    };
+    const nv::crypto::KeyClearGuard response_guard{std::span<uint8_t>(res.output)};
+    if (submit_primitive_request(req, res) != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailAesGcmEncrypt;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+    if (!ciphertext.empty()) {
+        std::memcpy(ciphertext.data(), res.output.data(), ciphertext.size());
+    }
+    std::memcpy(tag.data(), res.output.data() + plaintext.size(), tag.size());
+    return res.status;
 }
 
 // only support sha-384

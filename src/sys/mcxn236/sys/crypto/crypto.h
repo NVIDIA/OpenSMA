@@ -17,8 +17,10 @@
  */
 #pragma once
 
+#include <span>
 #include <stdint.h>
 #include "fsl_nboot.h"
+#include "nv/crypto/aes_gcm.h"
 #include "nv/spdm/spdm_crypto_helper.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 
@@ -26,6 +28,19 @@ namespace sys::crypto {
 
 nv::spdm::crypto::CryptoStatus
 authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwType);
+
+nv::spdm::crypto::CryptoStatus trng_generate(std::span<uint8_t> output);
+nv::spdm::crypto::CryptoStatus puf_wrap(std::span<const uint8_t> key,
+                                        std::span<uint8_t>       wrapped_key);
+nv::spdm::crypto::CryptoStatus puf_unwrap(std::span<const uint8_t> key_code,
+                                          std::span<uint8_t>       key);
+nv::spdm::crypto::CryptoStatus
+aes_256_gcm_encrypt(const nv::crypto::Aes256Key&                        key,
+                    std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
+                    std::span<const uint8_t>                            aad,
+                    std::span<const uint8_t>                            plaintext,
+                    std::span<uint8_t>                                  ciphertext,
+                    std::span<uint8_t, nv::crypto::AesGcmTagBytes>      tag);
 
 nv::spdm::crypto::CryptoStatus perform_image_auth_ecdsa(nboot_context_t& nbootCtx,
                                                         uint8_t*         imageAddress,

@@ -58,6 +58,12 @@ is
                                       Build    : in out NvU16);
    pragma Import (C, Pldm_Get_Ap_Active_Version, "pldm_get_ap_active_version");
 
+   procedure Pldm_Get_Ap_Active_Comp_Version_String
+     (Version_String : out ARR_NvU8_IDX32;
+      Length         : out NvU8);
+   pragma Import (C, Pldm_Get_Ap_Active_Comp_Version_String,
+                  "pldm_get_ap_active_comp_version_string");
+
    procedure Pldm_Get_Pending_Version (Major    : in out NvU16;
                                        Minor    : in out NvU8;
                                        Patch    : in out NvU16;
@@ -69,6 +75,12 @@ is
                                       Patch    : in out NvU16;
                                       Build    : in out NvU16);
    pragma Import (C, Pldm_Get_Ap_Pending_Version, "pldm_get_ap_pending_version");
+
+   procedure Pldm_Get_Ap_Pending_Comp_Version_String
+     (Version_String : out ARR_NvU8_IDX32;
+      Length         : out NvU8);
+   pragma Import (C, Pldm_Get_Ap_Pending_Comp_Version_String,
+                  "pldm_get_ap_pending_comp_version_string");
 
    procedure Set_Timer (Ns : NvU64);
    pragma Import (C, Set_Timer, "set_timer");

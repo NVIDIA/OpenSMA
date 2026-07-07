@@ -71,7 +71,7 @@ __attribute__((weak)) Ccode handle_get_soc_therm_brake_enabled([[maybe_unused]] 
 // Weak Type-5 Set handlers - return ErrorUnsupportedCmd to indicate feature not available
 // ============================================================================
 
-__attribute__((weak)) Ccode handle_set_max_ac_ramp_rate([[maybe_unused]] float ramp_rate)
+__attribute__((weak)) Ccode handle_set_max_ac_ramp_rate([[maybe_unused]] uint32_t ramp_rate)
 {
     return Ccode::ErrorUnsupportedCmd;  // Feature not available
 }

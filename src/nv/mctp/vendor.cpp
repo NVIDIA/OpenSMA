@@ -27,6 +27,7 @@
 #include "nv/flash/flash.h"
 #include "nv/gpio/driver.h"
 #include "nv/logger/log.h"
+#include "nv/mctp/ap_provision.h"
 #include "nv/mctp/constants.h"
 #include "nv/mctp/driver.h"
 #include "nv/mctp/interface.h"
@@ -35,6 +36,7 @@
 #include "nv/pldm/task.h"
 #include "nv/spdm/cert_library.h"
 #include "nv/spdm/spdm_cert_chain.h"
+#include "nv/vrot/interface/interface.h"
 #include "sys/i2c/utils.h"
 #ifdef NV_COVERAGE
 #include "nv/coverage/coverage.h"
@@ -44,6 +46,12 @@
 
 using namespace nv;
 using namespace mctp;
+
+namespace {
+
+constexpr uint32_t VendorRequestHeaderSize = sizeof(VendorPktReq) - sizeof(VendorPktReq::data);
+
+}  // namespace
 
 bool Vendor::process(const Packet& rx, Packet& tx)
 {
@@ -59,11 +67,13 @@ bool Vendor::process(const Packet& rx, Packet& tx)
                 on_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus     : on_get_gpio_status(rx, tx); break;
-        case VdmCmd::ReadDevIkCsr      : on_read_devik_csr(rx, tx); break;
-        case VdmCmd::ProgramCertificate: on_program_certificate(rx, tx); break;
-        case VdmCmd::RegTableAccess    : result = on_register_table_access(rx, tx); break;
-        case VdmCmd::AddExtTimestamp   : on_add_ext_timestamp(rx, tx); break;
+        case VdmCmd::GetGpioStatus         : on_get_gpio_status(rx, tx); break;
+        case VdmCmd::ReadDevIkCsr          : on_read_devik_csr(rx, tx); break;
+        case VdmCmd::ProgramCertificate    : on_program_certificate(rx, tx); break;
+        case VdmCmd::RegTableAccess        : result = on_register_table_access(rx, tx); break;
+        case VdmCmd::AddExtTimestamp       : on_add_ext_timestamp(rx, tx); break;
+        case VdmCmd::ApProvision           : on_ap_provision(rx, tx); break;
+        case VdmCmd::QueryApProvisionStatus: on_query_ap_provision_status(rx, tx); break;
         case VdmCmd::ScanI2c:
             on_scan_i2c(rx, tx);
             break;
@@ -91,12 +101,14 @@ bool Vendor::action(const Packet& rx, Packet& tx) const
                 action_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus     : break;
-        case VdmCmd::DownloadLog       : break;
-        case VdmCmd::ReadDevIkCsr      : break;
-        case VdmCmd::ProgramCertificate: break;
-        case VdmCmd::AddExtTimestamp   : break;
-        case VdmCmd::ScanI2c           : break;
+        case VdmCmd::GetGpioStatus         : break;
+        case VdmCmd::DownloadLog           : break;
+        case VdmCmd::ReadDevIkCsr          : break;
+        case VdmCmd::ProgramCertificate    : break;
+        case VdmCmd::AddExtTimestamp       : break;
+        case VdmCmd::ApProvision           : break;
+        case VdmCmd::QueryApProvisionStatus: break;
+        case VdmCmd::ScanI2c               : break;
 #if ENABLE_FANCONTROL
         case VdmCmd::FanControl: break;
 #endif
@@ -612,6 +624,36 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     || !check_efuse_programed(SignatureEfuseAddrS)) {
                     break;
                 }
+#ifdef EDGELOCK2GO_CERT
+                // serial number is 16 bytes = 4 uint32_t efuse addresses
+                constexpr size_t FuseArrSizeForSerialNumber = 4;
+                constexpr std::array<uint32_t, FuseArrSizeForSerialNumber>
+                    SerialNumberEfuseAddr = {68, 69, 70, 71};
+
+                // check otp of serial number is not programed
+                auto check_serial_number_efuse_programed =
+                    [&](const std::array<uint32_t, FuseArrSizeForSerialNumber>&
+                            EfuseAddrArray) {
+                        for (const auto EfuseAddr : EfuseAddrArray) {
+                            uint32_t data = 0;
+                            auto     ret  = nv::flash::Flash::read_efuse(EfuseAddr, data);
+                            // encounter error when read efuse
+                            if (ret != nv::flash::Status::Ok) {
+                                vtx.data[1] = OtpL4SerialNumberReadFail;
+                                return false;
+                            }
+                            // already programed
+                            if (data != 0) {
+                                vtx.data[1] = AlreadyExists;
+                                return false;
+                            }
+                        }
+                        return true;
+                    };
+                if (!check_serial_number_efuse_programed(SerialNumberEfuseAddr)) {
+                    break;
+                }
+#endif
 
                 // check l3 exist
                 if (nv::spdm::cert::get_l3_cert_len() == 0) {
@@ -804,6 +846,44 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     break;
                 }
 
+#ifdef EDGELOCK2GO_CERT
+                // program the serial number into efuse
+                // serial number is at the beginning of the certificate template after
+                // template_to_serial_number
+                {
+                    const nv::spdm::ik::DevIkTemplate& template_from_input = *std::bit_cast<
+                        const nv::spdm::ik::DevIkTemplate*>(input_cert_span.data());
+                    const std::array<uint8_t, 16>& serial_number = template_from_input
+                                                                       .serial_number;
+                    // program each 4-byte chunk to the corresponding efuse address
+                    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
+                    for (size_t i = 0; i < SerialNumberEfuseAddr.size(); ++i) {
+                        // convert 4 bytes to uint32_t (big-endian to match certificate format)
+                        const uint32_t
+                            data = (static_cast<uint32_t>(serial_number.at(i * 4)) << 24u)
+                                 | (static_cast<uint32_t>(serial_number.at(i * 4 + 1)) << 16u)
+                                 | (static_cast<uint32_t>(serial_number.at(i * 4 + 2)) << 8u)
+                                 | (static_cast<uint32_t>(serial_number.at(i * 4 + 3)));
+                        if (nv::flash::Flash::program_efuse(SerialNumberEfuseAddr[i], data)
+                            != nv::flash::Status::Ok) {
+                            vtx.data[1] = OtpL4SerialNumberProgrammedFail;
+                            break;
+                        }
+                        uint32_t read_data = 0;
+                        if (nv::flash::Flash::read_efuse(SerialNumberEfuseAddr[i], read_data)
+                            != nv::flash::Status::Ok) {
+                            vtx.data[1] = OtpL4SerialNumberReadFail;
+                            break;
+                        }
+                        if (data != read_data) {
+                            vtx.data[1] = OtpL4SerialNumberCheckFail;
+                            break;
+                        }
+                    }
+                    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
+                }
+#endif
+
             } break;
 
             default:
@@ -988,6 +1068,112 @@ bool Vendor::on_register_table_access(const Packet& rx, Packet& tx)
     return true;
 }
 
+void Vendor::on_ap_provision(const Packet& rx, Packet& tx) const
+{
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vrx           = VendorPktReq::from(rx);
+    auto& vtx           = VendorPktRes::from(tx);
+    vtx.completion_code = Ccode::Success;
+
+    if constexpr (!has_ap_provision(vrot::ApList)) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    if (vtx.msg_version != ap_provision::MsgVersion) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    constexpr auto HeaderSize = sizeof(ap_provision::ProvisionRequestHeader);
+    if (rx.priv.packet_length < VendorRequestHeaderSize + HeaderSize) {
+        vtx.completion_code = Ccode::ErrorInvalidLength;
+        return;
+    }
+
+    const auto ap_id       = static_cast<vrot::ApId>(vrx.data[0]);
+    const auto sub_command = vrx.data[1];
+
+    const auto ap = vrot::find_ap(ap_id, vrot::ApList);
+    if (!ap) {
+        vtx.completion_code = Ccode::ErrorInvalidData;
+        return;
+    }
+    if (!vrot::supports_ap_provision(ap->type)) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    const auto payload_size = rx.priv.packet_length - VendorRequestHeaderSize - HeaderSize;
+    auto       data         = std::span<const uint8_t>(&vrx.data[HeaderSize], payload_size);
+    uint8_t    ap_completion_code{};
+    const auto status = vrot::ap_provision(*ap, sub_command, data, ap_completion_code);
+
+    if (status != vrot::ApOpErrCode::Success) {
+        vtx.completion_code = Ccode::ErrorGeneral;
+    }
+
+    vtx.data[0] = vrx.data[0];
+    vtx.data[1] = vrx.data[1];
+    vtx.data[2] = ap_completion_code;
+    nv::logger::info(nv::logger::Event::MctpApProvision,
+                     {static_cast<uint8_t>(ap_id), sub_command, ap_completion_code});
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse
+                          + sizeof(ap_provision::ProvisionResponse);
+}
+
+void Vendor::on_query_ap_provision_status(const Packet& rx, Packet& tx) const
+{
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vrx           = VendorPktReq::from(rx);
+    auto& vtx           = VendorPktRes::from(tx);
+    vtx.completion_code = Ccode::Success;
+
+    if constexpr (!has_ap_provision(vrot::ApList)) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    if (vtx.msg_version != ap_provision::MsgVersion) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    constexpr auto RequestSize = VendorRequestHeaderSize
+                               + sizeof(ap_provision::QueryStatusRequest);
+    if (rx.priv.packet_length != RequestSize) {
+        vtx.completion_code = Ccode::ErrorInvalidLength;
+        return;
+    }
+
+    const auto ap_id       = static_cast<vrot::ApId>(vrx.data[0]);
+    const auto sub_command = vrx.data[1];
+    const auto ap          = vrot::find_ap(ap_id, vrot::ApList);
+    if (!ap) {
+        vtx.completion_code = Ccode::ErrorInvalidData;
+        return;
+    }
+    if (!vrot::supports_ap_provision(ap->type)) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    uint8_t    provision_info{};
+    const auto status = vrot::query_ap_provision_status(*ap, sub_command, provision_info);
+    if (status != vrot::ApOpErrCode::Success) {
+        vtx.completion_code = Ccode::ErrorGeneral;
+        return;
+    }
+
+    vtx.data[0]           = vrx.data[0];
+    vtx.data[1]           = vrx.data[1];
+    vtx.data[2]           = provision_info;
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse
+                          + sizeof(ap_provision::QueryStatusResponse);
+}
+
 /**
  * Add external timestamp(epoch time with uint64_t format) to log
  *
@@ -1167,6 +1353,7 @@ void Vendor::on_download_coverage(const Packet& rx, Packet& tx) const
 
 void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
 {
+    constexpr uint8_t AllChannels         = 0xFF;
     constexpr uint8_t MaxDutyCyclePercent = 100;
 
     fill_packet_header(rx, tx);
@@ -1176,66 +1363,142 @@ void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
     vtx.completion_code = Ccode::Success;
 
     // version check
-    if (vtx.msg_version != 0x01) {
+    if (vtx.msg_version == 0x01) {
+        // Calculate received data length
+        const uint32_t rx_data_length = rx.priv.packet_length
+                                      - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
+        if (rx_data_length < 3) {
+            vtx.completion_code = Ccode::ErrorInvalidLength;
+            return;
+        }
+
+        const uint8_t index       = vrx.data[0];
+        const uint8_t control     = vrx.data[1];
+        const uint8_t duty_cycle  = vrx.data[2];
+        uint16_t      rpm         = 0;
+        uint16_t      temperature = 0;
+
+        // No response payload for most commands, will override in the case of a response
+        // payload
+        tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+
+        // Validate control and required payload
+        switch (static_cast<FanControlMode>(control)) {
+            case FanControlMode::Disabled:
+                // Directly control PWM hardware (no IPC queue)
+                nv::fancontrol::Driver::stop_fan_pwm(index);
+                break;
+
+            case FanControlMode::Enabled:
+                // Temperature-based fan control not supported (control algorithm removed)
+                vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+                break;
+
+            case FanControlMode::Steady:
+                if (duty_cycle > MaxDutyCyclePercent) {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                }
+                else {
+                    // Directly control PWM hardware (no IPC queue)
+                    nv::fancontrol::Driver::set_fan_pwm(duty_cycle, index);
+                }
+                break;
+
+            case FanControlMode::Rpm:
+                // RPM reading not supported (tach functionality removed)
+                rpm = 0;
+                memcpy(&vtx.data[2], &rpm, sizeof(rpm));
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2 + sizeof(rpm);
+                break;
+
+            case FanControlMode::Temperature:
+                // Temperature reading not supported (control algorithm removed)
+                temperature = 0;
+                memcpy(&vtx.data[2], &temperature, sizeof(temperature));
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2
+                                      + sizeof(temperature);
+                break;
+
+            default: vtx.completion_code = Ccode::ErrorInvalidData; return;
+        }
+    }
+    else if (vtx.msg_version == 0x02) {
+        // Default: no response payload (Set / error / unsupported -> completion code only).
+        tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+
+        // Request payload: data[0] = operation, data[1] = index (min 2 bytes).
+        const uint32_t rx_data_length = rx.priv.packet_length
+                                      - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
+        if (rx_data_length < 2) {
+            vtx.completion_code = Ccode::ErrorInvalidLength;
+            return;
+        }
+
+        const auto    operation = static_cast<FanControlOp>(vrx.data[0]);
+        const uint8_t index     = vrx.data[1];
+        const size_t  fans      = nv::fancontrol::Driver::fan_count();
+
+        switch (operation) {
+            case FanControlOp::GetPwm: {
+                // Response: data[0] = count, data[1..] = duty per fan (1 byte each).
+                uint8_t count = 0;
+                if (index == AllChannels) {
+                    for (size_t i = 0; i < fans; ++i) {
+                        vtx.data[1 + i] = nv::fancontrol::Driver::get_fan_pwm(i);
+                    }
+                    count = fans;
+                }
+                else if (index < fans) {
+                    vtx.data[1] = nv::fancontrol::Driver::get_fan_pwm(index);
+                    count       = 1;
+                }
+                else {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                    return;
+                }
+                vtx.data[0]           = count;
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + count;
+                break;
+            }
+
+            case FanControlOp::SetPwm: {
+                if (rx_data_length < 3) {
+                    vtx.completion_code = Ccode::ErrorInvalidLength;
+                    return;
+                }
+                const uint8_t duty = vrx.data[2];
+                if (duty > MaxDutyCyclePercent) {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                    return;
+                }
+                if (index == AllChannels) {
+                    for (size_t i = 0; i < fans; ++i) {
+                        nv::fancontrol::Driver::set_fan_pwm(duty, i);
+                    }
+                }
+                else if (index < fans) {
+                    nv::fancontrol::Driver::set_fan_pwm(duty, index);
+                }
+                else {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                    return;
+                }
+                break;
+            }
+
+            case FanControlOp::GetTach:
+            case FanControlOp::GetFanMode:
+            case FanControlOp::SetFanMode:
+                // Reserved for phase 2 (tach measurement + fan-curve mode).
+                vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+                break;
+
+            default: vtx.completion_code = Ccode::ErrorInvalidData; return;
+        }
+    }
+    else {
         vtx.completion_code = Ccode::ErrorUnsupportedCmd;
         return;
-    }
-
-    // Calculate received data length
-    const uint32_t rx_data_length = rx.priv.packet_length
-                                  - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
-    if (rx_data_length < 3) {
-        vtx.completion_code = Ccode::ErrorInvalidLength;
-        return;
-    }
-
-    const uint8_t index       = vrx.data[0];
-    const uint8_t control     = vrx.data[1];
-    const uint8_t duty_cycle  = vrx.data[2];
-    uint16_t      rpm         = 0;
-    uint16_t      temperature = 0;
-
-    // No response payload for most commands, will override in the case of a response payload
-    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
-
-    // Validate control and required payload
-    switch (static_cast<FanControlMode>(control)) {
-        case FanControlMode::Disabled:
-            // Directly control PWM hardware (no IPC queue)
-            nv::fancontrol::Driver::stop_fan_pwm(index);
-            break;
-
-        case FanControlMode::Enabled:
-            // Temperature-based fan control not supported (control algorithm removed)
-            vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-            break;
-
-        case FanControlMode::Steady:
-            if (duty_cycle > MaxDutyCyclePercent) {
-                vtx.completion_code = Ccode::ErrorInvalidData;
-            }
-            else {
-                // Directly control PWM hardware (no IPC queue)
-                nv::fancontrol::Driver::set_fan_pwm(duty_cycle, index);
-            }
-            break;
-
-        case FanControlMode::Rpm:
-            // RPM reading not supported (tach functionality removed)
-            rpm = 0;
-            memcpy(&vtx.data[2], &rpm, sizeof(rpm));
-            tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2 + sizeof(rpm);
-            break;
-
-        case FanControlMode::Temperature:
-            // Temperature reading not supported (control algorithm removed)
-            temperature = 0;
-            memcpy(&vtx.data[2], &temperature, sizeof(temperature));
-            tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 2
-                                  + sizeof(temperature);
-            break;
-
-        default: vtx.completion_code = Ccode::ErrorInvalidData; return;
     }
 }
 #else

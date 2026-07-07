@@ -42,6 +42,7 @@ enum SensorModel : uint8_t
     Sensor_Tmp1075 = 3,
     Sensor_Nct70   = 4,
     Sensor_Nct75   = 5,
+    Sensor_Tmp432  = 6,
 };
 
 // I2C Temperature Sensor configuration structure

@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 #pragma once
+#include "nv/ipc/event.h"
 #include "nv/spi/common.h"
 #include "sys/spi/spi.h"
-#include "nv/ipc/event.h"
 using namespace std::chrono_literals;
 namespace nv::spi {
 constexpr uint8_t MaxBytesPerTransaction = 32;
@@ -53,6 +53,14 @@ using SpbTransBuffer = std::array<uint8_t, MaxBytesPerTransaction>;
 enum class SpbStatus : uint32_t
 {
     Ok,
+    // Packet rewrite error
+    SendInvalidMctpPkt,
+    RecvInvalidSpiPkt,
+    // Spi event error
+    SetRxEventFail,
+    EventClearFail,
+
+    InterruptHandleError,
     PollCmdTimeout,
     MbxEventTimeout,
     PostedReadError,
@@ -67,19 +75,13 @@ enum class SpbStatus : uint32_t
     GetEcMsgAvailNotAck,
     GetEcMsgAvailNotLen,
     GetAckNotEcMsgAvail,
+
     // mailbox_write error
     RequestWriteError,
     ReadyToReadError,
     FinishedReadError,
     RequestResetError,
-    // Packet rewrite error
-    SendInvalidMctpPkt,
-    RecvInvalidSpiPkt,
-    // Spi event error
-    SetRxEventFail,
-    EventClearFail,
 
-    InterruptHandleError,
     MbxReadFailInTask,
     // Likely not happen
     InvalidParameter,

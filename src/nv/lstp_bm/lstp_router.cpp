@@ -19,6 +19,7 @@
 
 #include "nv/lstp/lstp_parser.h"
 #include "nv/lstp_bm/lstp_router.h"
+#include "nv/spi/instance_bm.h"
 
 // USB buffers and received lengths are owned by the bare-metal USB stack.
 #include "usb_buffers.h"
@@ -73,9 +74,71 @@ void LstpRouter::send_error(std::span<uint8_t>& buffer, LstpStatus status)
     }
 }
 
-LstpStatus LstpRouter::receive_spi([[maybe_unused]] std::span<uint8_t>& buffer)
+LstpStatus LstpRouter::receive_spi(std::span<uint8_t>& buffer)
 {
-    return LstpStatus::NotSupported;
+    static_assert(nv::lstp::LstpSpiMaxCs == nv::spi::bm::SpiMaxCsPins,
+                  "LstpSpiMaxCs and nv::spi::bm::SpiMaxCsPins must match");
+
+    // LSTP allows only one outstanding request per channel, so the SPI port
+    // should never be busy here. If the host violates that, silently drop the
+    // packet rather than racing a Busy response against the real in-flight
+    // response.
+    auto&      req_hdr = from<LstpHdr>(buffer.data());
+    const auto port = static_cast<nv::spi::Port>(LstpChannels.at(req_hdr.channel_id).info.id);
+    if (nv::spi::bm::SpiManager::is_busy(port)) {
+        return LstpStatus::SilentDrop;
+    }
+
+    auto result = LstpParser::parse_spi_request(buffer);
+    if (!result) {
+        return result.error();
+    }
+
+    auto&                  req        = result.value();
+    nv::spi::bm::SpiStatus spi_status = nv::spi::bm::SpiManager::transfer(
+        port, req.cs, req.read_length, req.write_data, req.flags);
+
+    return LstpStatus_from(spi_status);
+}
+
+void LstpRouter::send_spi(nv::spi::Port port)
+{
+    uint8_t channel_id;
+    for (channel_id = static_cast<uint8_t>(LstpChannelType::Management);
+         channel_id < LstpNumChannels;
+         channel_id++) {
+        const auto& channel_info = LstpChannels.at(channel_id).info;
+        if ((channel_info.type == LstpChannelType::Spi)
+            && (static_cast<nv::spi::Port>(channel_info.id) == port)) {
+            break;
+        }
+    }
+    if (channel_id >= LstpNumChannels) {
+        return;
+    }
+
+    nv::spi::bm::SpiResult& result   = nv::spi::bm::SpiManager::get_result(port);
+    const LstpStatus        status   = LstpStatus_from(result.status);
+    const uint16_t          read_len = static_cast<uint16_t>(result.read_length);
+
+    auto& tx_buf             = g_lstp.tx_buffers[channel_id];
+    auto& resp_hdr           = from<LstpHdr>(tx_buf.buffer);
+    resp_hdr.channel_id      = channel_id;
+    resp_hdr.cmd_status_code = static_cast<uint8_t>(status) | LstpResponseBit;
+
+    if ((status == LstpStatus::Success) && (read_len > 0) && (read_len <= LstpMaxPayloadSize)) {
+        resp_hdr.len_lsb = read_len & LSB_MASK;
+        resp_hdr.len_msb = read_len >> BYTE1_SHIFT;
+        tx_buf.length    = sizeof(LstpHdr) + read_len;
+        memcpy(tx_buf.buffer + sizeof(LstpHdr), result.buffer.data(), read_len);
+    }
+    else {
+        resp_hdr.len_lsb = 0;
+        resp_hdr.len_msb = 0;
+        tx_buf.length    = sizeof(LstpHdr);
+    }
+
+    USB_SET_LSTP_TX_PENDING(g_lstp, channel_id);
 }
 
 LstpStatus LstpRouter::receive_i2c([[maybe_unused]] std::span<uint8_t>& buffer)

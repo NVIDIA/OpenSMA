@@ -5,7 +5,7 @@
 #include <cstdint>
 
 #include "sys/uart/common.h"
-#include "nv/vruart/common.h"
+#include "nv/vcom/vruart/common.h"
 
 namespace sys::uart {
 

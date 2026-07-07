@@ -99,34 +99,9 @@ using T4TaskIdAndPriorityResponse = std::
 
 struct [[gnu::packed]] T4ErrorCounterResponse
 {
+    nv::perf_mon::OobBusType       type;
     uint8_t                        latached_error;
     nv::perf_mon::OobBusErrorCount error_count;
-};
-
-/**
- *  The Data Types below are used for getting Error Counter Telemetry
- */
-using DsMcpInterface                 = pdk::mctp::platforms::Interface;
-using DsOobBusError                  = nv::perf_mon::OobBus;
-using DsInterfaceError               = std::tuple<DsMcpInterface, DsOobBusError>;
-constexpr auto T4DsInterfaceErrorNum = 13;
-/**
- * @brief DsInterfaceErrorTable defines the OoBerror for each interface
- */
-constexpr inline std::array<DsInterfaceError, T4DsInterfaceErrorNum> DsInterfaceErrorTable = {
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c0, nv::perf_mon::OobBus::DsI2c0},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c1, nv::perf_mon::OobBus::DsI2c1},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c2, nv::perf_mon::OobBus::DsI2c2},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c3, nv::perf_mon::OobBus::DsI2c3},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c4, nv::perf_mon::OobBus::DsI2c4},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c5, nv::perf_mon::OobBus::DsI2c5},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c6, nv::perf_mon::OobBus::DsI2c6},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI2c7, nv::perf_mon::OobBus::DsI2c7},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI3c0, nv::perf_mon::OobBus::DsI3c0},
-    DsInterfaceError{pdk::mctp::platforms::Interface::DsI3c1, nv::perf_mon::OobBus::DsI3c1},
-    DsInterfaceError{  pdk::mctp::platforms::Interface::Spi0,   nv::perf_mon::OobBus::Spi0},
-    DsInterfaceError{  pdk::mctp::platforms::Interface::Spi1,   nv::perf_mon::OobBus::Spi1},
-    DsInterfaceError{  pdk::mctp::platforms::Interface::Spi2,   nv::perf_mon::OobBus::Spi2},
 };
 
 // Bridge and Port Recovery Request Data Structure
@@ -141,8 +116,8 @@ struct [[gnu::packed]] BridgePortRecoveryResp
 {
     uint8_t  next_reset_target;      // Next Reset Target (NvU8) - Offset 0
     uint8_t  reserved;               // Reserved (NvU8) - Offset 1
-    uint16_t time_since_last_reset;  // Time since last Reset request in msec (NvU16) - Offset
-                                     // 2-3
+    uint16_t time_since_last_reset;  // Time since last Reset request in msec
+                                     // (NvU16) - Offset 2-3
 };
 
 enum T4WriteProtectionMode : uint8_t
@@ -177,13 +152,14 @@ NsmStatus platform_write_protection_gpio(uint8_t function, uint8_t mode);
 // CPLD Register Table Request Data Structure
 struct [[gnu::packed]] CpldRegisterTableReq
 {
-    uint8_t segment_index;  // Segment Index (0x00-0xFE for segment, 0xFF for no more segments)
+    uint8_t segment_index;  // Segment Index (0x00-0xFE for segment, 0xFF for no
+                            // more segments)
 };
 
 struct [[gnu::packed]] CpldRegisterTableResp
 {
-    uint8_t next_segment;  // Next Segment (0x00-0xFE for next segment, 0xFF for no more
-                           // segments)
+    uint8_t next_segment;  // Next Segment (0x00-0xFE for next segment, 0xFF for
+                           // no more segments)
     // Variable length segment data follows after this structure
     uint8_t segment_data[Cpld_User_Reg::CPLD_USER_REG_SIZE];  // Variable length segment data
                                                               // follows after this structure

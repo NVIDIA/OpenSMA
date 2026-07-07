@@ -44,6 +44,51 @@ Mp29540::Mp29540(Port port, uint8_t address) : PowerSensor(port, address)
     _vin_coeff = {VinSlopeM, VinOffsetB, VinExpMult, VinMask};
 }
 
+I2cStatus Mp29540::init()
+{
+    // SMBALERT_MASK1 (1Bh) lives on Page 0 and is a 16-bit field where each bit ENABLES a
+    // source to assert ALT_P# (1 = no mask / assert, 0 = masked -- note this is inverted vs.
+    // standard PMBus). Unmask the over-temperature warning (bit10, OT_WARN_MASK) and
+    // over-temperature protection/fault (bit11, OTP_MASK) so a thermal event pulls ALT_P# ->
+    // HSCC_SMBUS_ALT_N -> NSM GPIO event.
+    constexpr uint16_t OtWarnUnmask = 1u << 10;  // OT_WARN_MASK
+    constexpr uint16_t OtpUnmask    = 1u << 11;  // OTP_MASK (OT fault)
+    // SMBALERT_MASK1 (1Bh) is MP29540-specific. HSC parts mask alerts at a different register
+    // (ALERT_MASK 0xD8), so this address is intentionally NOT in the shared
+    // PowerSensor::Register enum.
+    constexpr uint8_t SmbAlertMask1Reg = 0x1B;
+
+    uint8_t original_page = 0;
+    auto    status        = get_current_page(original_page);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+
+    status = switch_to_page(Page0);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+
+    uint16_t mask = 0;
+    status        = read_reg_16bits(SmbAlertMask1Reg, mask);
+    if (status == I2cStatus::Ok) {
+        mask   |= (OtWarnUnmask | OtpUnmask);
+        status  = write_reg_16bits(SmbAlertMask1Reg, mask);
+    }
+
+    // Always restore the caller's page, even if the mask read/write failed.
+    const I2cStatus restore_status = switch_to_page(original_page);
+    if (status != I2cStatus::Ok) {
+        return status;
+    }
+    if (restore_status != I2cStatus::Ok) {
+        return restore_status;
+    }
+
+    // Clear any stale boot-time latched faults for a clean status baseline.
+    return clear_faults();
+}
+
 I2cStatus Mp29540::read_vout(uint32_t& microvolts)
 {
     // 1. Calculate VOUT_DIVIDER using helper function (handles all page switching)

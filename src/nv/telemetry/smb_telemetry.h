@@ -50,6 +50,8 @@ public:
 
     static constexpr uint8_t StartAddress = 0x50;
 
+    // Cache window starts at StartAddress (0x50). Sized to cover the largest project register
+    // map (p7612_hgx extends past 0xC8 to a CX9 telemetry slot at 0xE8 + 4 = 0xEC).
     static constexpr size_t CacheSize = 160;
 
 private:

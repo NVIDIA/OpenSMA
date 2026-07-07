@@ -38,5 +38,19 @@ public:
      * @param address I2C slave address of the LM5066I
      */
     Lm5066i(Port port, uint8_t address);
+
+    /**
+     * Boot-time setup (overrides PowerSensor::init()). Programs the LM5066i protection
+     * registers that must differ from the hardware defaults. Called once per detected
+     * device from DeviceManager::identify_power_sensors().
+     */
+    I2cStatus init();
+
+    /**
+     * Write OT_FAULT_LIMIT (0x4F). When the measured temperature exceeds this value the
+     * LM5066I switches off the external MOSFET (real over-temperature protection)
+     * @param limit over-temperature fault threshold in degrees Celsius
+     */
+    I2cStatus write_ot_fault_limit(uint8_t limit);
 };
 }  // namespace nv::i2c

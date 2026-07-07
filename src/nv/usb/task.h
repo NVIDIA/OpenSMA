@@ -21,6 +21,12 @@
 
 #include "sys/usb/usb_config_wrapper.h"
 
+// Default the CP2112/HID interface flag to enabled for platforms whose USB
+// config wrapper does not define it
+#ifndef SYS_USB_HID_CP2112
+#define SYS_USB_HID_CP2112 (1U)
+#endif
+
 namespace nv::usb {
 // Magic value to indicate USB port reset in mailbox
 constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
@@ -99,12 +105,14 @@ public:
     void               lstp_receive();
     uint8_t            lstp_transmit();
 
-    [[noreturn]] void  main();
-    void               mctp_receive();
+    [[noreturn]] void main();
+    void              mctp_receive();
+#if (SYS_USB_HID_CP2112 > 0U)
     static usb::Status set_hid_rx_event();
     void               hid_receive();
-    uint8_t            transmit();
-    void               update_routing_table();
+#endif
+    uint8_t transmit();
+    void    update_routing_table();
 
     inline uint32_t enable_bit(uint32_t bits, uint32_t event_bit) { return bits | event_bit; }
     inline uint32_t disable_bit(uint32_t bits, uint32_t event_bit) { return bits & ~event_bit; }
@@ -128,7 +136,9 @@ protected:
         std::array<uint8_t, mctp::PktBufDataLen - sizeof(MctpHeader)> msg;
     };
 
-    HidSmb               _hid_smb;
+#if (SYS_USB_HID_CP2112 > 0U)
+    HidSmb _hid_smb;
+#endif
     nv::lstp::LstpRouter _lstp_router;
     ipc::Event&          _event;
     ipc::Queue&          _tx;

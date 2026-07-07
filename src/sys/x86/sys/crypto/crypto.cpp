@@ -36,4 +36,32 @@ nv::spdm::crypto::CryptoStatus authenticate_firmware(
     return nv::spdm::crypto::CryptoStatus::Success;
 }
 
+nv::spdm::crypto::CryptoStatus trng_generate([[maybe_unused]] std::span<uint8_t> output)
+{
+    return nv::spdm::crypto::CryptoStatus::FailRandomGen;
+}
+
+nv::spdm::crypto::CryptoStatus puf_wrap([[maybe_unused]] std::span<const uint8_t> key,
+                                        [[maybe_unused]] std::span<uint8_t>       wrapped_key)
+{
+    return nv::spdm::crypto::CryptoStatus::FailPufFail;
+}
+
+nv::spdm::crypto::CryptoStatus puf_unwrap([[maybe_unused]] std::span<const uint8_t> key_code,
+                                          [[maybe_unused]] std::span<uint8_t>       key)
+{
+    return nv::spdm::crypto::CryptoStatus::FailPufFail;
+}
+
+nv::spdm::crypto::CryptoStatus
+aes_256_gcm_encrypt([[maybe_unused]] const nv::crypto::Aes256Key&                        key,
+                    [[maybe_unused]] std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
+                    [[maybe_unused]] std::span<const uint8_t>                            aad,
+                    [[maybe_unused]] std::span<const uint8_t>                       plaintext,
+                    [[maybe_unused]] std::span<uint8_t>                             ciphertext,
+                    [[maybe_unused]] std::span<uint8_t, nv::crypto::AesGcmTagBytes> tag)
+{
+    return nv::spdm::crypto::CryptoStatus::FailAesGcmEncrypt;
+}
+
 }  // namespace sys::crypto

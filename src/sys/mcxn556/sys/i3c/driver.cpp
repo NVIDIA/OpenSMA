@@ -235,7 +235,8 @@ void nv::i3c::Driver::deinit()
         return;
     }
     I3C_MasterDeinit(_base);
-    _is_init = false;
+    _is_init  = false;
+    _daa_done = false;
     nv::logger::info(nv::logger::Event::I3cDriverInit, {static_cast<uint8_t>(_port), false});
 }
 
@@ -410,6 +411,7 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
                      {static_cast<uint8_t>(_port), count, address_list.size()});
         return false;
     }
+    _daa_done = true;
     return true;
 }
 
@@ -522,7 +524,42 @@ nv::i3c::Driver::Status nv::i3c::Driver::transfer(void* args, uint8_t& length)
             task.delay(10ms);
         }
     }
+
+    if (status == Status::Busy) {
+        try_recover();
+    }
+    // Could recovery again if transfer success
+    else if (status == Status::Success) {
+        _consecutive_recoveries = 0;
+    }
     return status;
+}
+
+void nv::i3c::Driver::try_recover()
+{
+    if (!_daa_done) {
+        return;
+    }
+    const uint32_t              mstatus = _i3c_m_handle.base->MSTATUS;
+    const nv::logger::EventData data    = {static_cast<uint8_t>(_port),
+                                           static_cast<uint8_t>(_i3c_m_handle.state),
+                                           static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                                           static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                                           static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                                           static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+                                           static_cast<uint8_t>(_consecutive_recoveries & 0xFF),
+                                           0};
+    if (_consecutive_recoveries < MaxConsecutiveRecoveries) {
+        nv::logger::info(nv::logger::Event::I3CBusRecovery, data);
+        I3C_MasterTransferAbortEDMA(_i3c_m_handle.base, &_i3c_m_handle);
+        deinit();
+        init();
+        _consecutive_recoveries++;
+    }
+    else if (_consecutive_recoveries == MaxConsecutiveRecoveries) {
+        nv::logger::info(nv::logger::Event::I3CBusRecoveryGiveUp, data);
+        _consecutive_recoveries++;
+    }
 }
 
 void nv::i3c::Driver::on_ibi(void* args)
@@ -566,6 +603,33 @@ nv::i2c::I2cStatus nv::i3c::Driver::i2c(uint8_t            address,
     else {
         /// TODO quick write/read
     }
+
+    /// Arbitration lost: dump the first 16 bytes of the write buffer (what we
+    /// were trying to send) as two 8-byte events. Throttled: nv::logger::info
+    /// writes flash, so an arblost storm could brick the MCU.
+    if (result == nv::i2c::I2cStatus::ArbLost && _i2c_arblost_log_count < ErrorLogThreshold) {
+        _i2c_arblost_log_count++;
+        nv::logger::info(nv::logger::Event::I3CI2CArbLostV2,
+                         {write_buffer[0],
+                          write_buffer[1],
+                          write_buffer[2],
+                          write_buffer[3],
+                          write_buffer[4],
+                          write_buffer[5],
+                          write_buffer[6],
+                          write_buffer[7]});
+        /// bytes 8..15
+        nv::logger::info(nv::logger::Event::I3CI2CArbLostV2,
+                         {write_buffer[8],
+                          write_buffer[9],
+                          write_buffer[10],
+                          write_buffer[11],
+                          write_buffer[12],
+                          write_buffer[13],
+                          write_buffer[14],
+                          write_buffer[15]});
+    }
+
     return result;
 }
 
@@ -755,6 +819,15 @@ nv::i3c::Driver::Status nv::i3c::Driver::to_driver_status(uint32_t status)
         case kStatus_I3C_Nak    : return nv::i3c::Driver::Status::Nack;
         case kStatus_I3C_Timeout: return nv::i3c::Driver::Status::Timeout;
         default                 : return nv::i3c::Driver::Status::Error;
+    }
+}
+
+nv::perf_mon::OobBus nv::i3c::Driver::i3c_port_to_oob_bus(Port port)
+{
+    switch (port) {
+        case Port::Zero: return nv::perf_mon::OobBus::I3cPort0; break;
+        case Port::One : return nv::perf_mon::OobBus::I3cPort1; break;
+        default        : return nv::perf_mon::OobBus::End; break;
     }
 }
 

@@ -433,6 +433,27 @@ Status LeakDetect::find_sensor_index(uint8_t sensorId, uint8_t& sensorIdx) const
     return Status::NoMatchedSensorId;
 }
 
+Status LeakDetect::set_error_injection([[maybe_unused]] SensorId sensorId,
+                                       [[maybe_unused]] Reading  adcReading)
+{
+    // Compatibility stub for the shared VoltMon API. The legacy ADC flow is too
+    // complex to support ADC faking and is already being phased out.
+    return Status::NoMatchedSensorId;
+}
+
+Status LeakDetect::clear_error_injection([[maybe_unused]] SensorId sensorId)
+{
+    // Compatibility stub for the shared VoltMon API. The legacy ADC flow is too
+    // complex to support ADC faking and is already being phased out.
+    return Status::NoMatchedSensorId;
+}
+
+void LeakDetect::clear_error_injection()
+{
+    // Compatibility stub for the shared VoltMon API. The legacy ADC flow is too
+    // complex to support ADC faking and is already being phased out.
+}
+
 Status LeakDetect::set_thresholds(uint8_t sensorIdx, const ThresholdLeakDet& config)
 {
     // coverity[unsigned_compare] - LeakDetectSensorNum is not 0 once compiled

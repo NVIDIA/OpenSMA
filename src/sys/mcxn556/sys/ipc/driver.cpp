@@ -452,6 +452,11 @@ bool sys::ipc::task::Driver::can_cross_core_access(nv::ipc::EventId event_id)
         std::get<1>(nv::ipc::EventInfos.at(nv::common::to_underlying(event_id))));
 }
 
+bool sys::ipc::task::Driver::can_cross_core_access(nv::ipc::TaskId task_id)
+{
+    return can_cross_core_access(nv::ipc::get_core_from_task(task_id));
+}
+
 nv::ipc::CoreId sys::ipc::task::Driver::get_core_from_client(nv::mctp::Client client)
 {
     return get_core_from_task(

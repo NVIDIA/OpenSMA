@@ -16,13 +16,13 @@
  * limitations under the License.
  */
 #pragma once
-#include <span>
-#include <optional>
 #include <functional>
+#include <optional>
+#include <span>
 
-#include "nv/i2c/port.h"
 #include "nv/i2c/common.h"
 #include "nv/i2c/eeprom_cache.h"
+#include "nv/i2c/port.h"
 #include "nv/i2c/recovery.h"
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
@@ -30,8 +30,8 @@
 #include "nv/ipc/timer.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/router.h"
-#include "sys/i2c/i2c.h"
 #include "nv/perf_mon/perf_mon.h"
+#include "sys/i2c/i2c.h"
 namespace nv::i2c {
 
 class Task : public nv::ipc::Task
@@ -41,6 +41,17 @@ public:
     static constexpr uint8_t DynAddr                 = 0;
     static constexpr uint8_t ByteMask                = 0xFF;
     static constexpr uint8_t MaxSMBusBlockReadLength = 33;
+
+    enum class Error : uint8_t
+    {
+        Ok,
+        CtrlBusBusy,
+        CtrlNak,
+        CtrlArbLost,
+        CtrlError,
+        CtrlTimeout,
+        TargetRxError,
+    };
 
     struct Config
     {
@@ -173,6 +184,7 @@ public:
         return _cache.value().get();
     }
     void set_cache(EepromCache<nv::ipc::EepromSize>& cache) { _cache = cache; }
+    void handle_erot_recovery(uint8_t reg, uint8_t value);
 
 private:
     /// add 1 byte for PEC
@@ -231,7 +243,7 @@ private:
     void handle_update_routing_table();
     void forward(nv::mctp::Packet& packet, uint8_t command_code);
     bool transmit(const I2cPacket& packet);
-    void handle_error(I2cStatus status);
+    void handle_error(I2cStatus status, uint8_t src_id = UINT8_MAX);
     void set_tmp_sensor();
     void handle_i2c_request(std::span<uint8_t> buffer);
     bool handle_eeprom_cache_request(const I2cRequest&  request,

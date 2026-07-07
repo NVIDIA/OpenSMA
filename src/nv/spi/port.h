@@ -26,6 +26,13 @@ enum class Port : uint8_t
     Zero = Begin,
     One,
     Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
     End
 };
 

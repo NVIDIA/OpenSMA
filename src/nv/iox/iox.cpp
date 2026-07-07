@@ -68,10 +68,10 @@ Iox::Iox(I2CAddress address, const std::array<PinConfig, pinNum>& configs)
         auto& hiPortPin = pins.at(i + 8);
 
         // init non-privileged access for gpio pins
-        if (loPortPin.port != vrPort) {
+        if (loPortPin.port != nv::gpio::vrPort) {
             nv::gpio::Driver::init_nonpriv_access(loPortPin.port, loPortPin.pin);
         }
-        if (hiPortPin.port != vrPort) {
+        if (hiPortPin.port != nv::gpio::vrPort) {
             nv::gpio::Driver::init_nonpriv_access(hiPortPin.port, hiPortPin.pin);
         }
 
@@ -202,7 +202,7 @@ Status Iox::access_reg_input_port(Operation op, Register reg, uint8_t& data, uin
             auto pin  = pins.at(i + offset).pin;
 
             nv::gpio::GpioState val{};
-            if (port != vrPort) {
+            if (port != nv::gpio::vrPort) {
                 get_gpio(port, pin, val);
                 // clear the bit in the data
                 data &= ~(1 << i);
@@ -305,7 +305,7 @@ Status Iox::access_reg(Operation op, Register reg, uint8_t& data, uint8_t num)
 Status Iox::set_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::GpioState val)
 {
     // return immediately if the gpio is virtual
-    if (port == vrPort) {
+    if (port == nv::gpio::vrPort) {
         return Status::Ok;
     }
 
@@ -320,7 +320,7 @@ Status Iox::set_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::G
 Status Iox::get_gpio(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, nv::gpio::GpioState& val)
 {
     // Virtual GPIO has no hardware pin to read; preserve caller-supplied value
-    if (port == vrPort) {
+    if (port == nv::gpio::vrPort) {
         return Status::Ok;
     }
 
@@ -341,7 +341,7 @@ Status Iox::config_gpio(const PinConfig& config)
     auto pin  = config.pin;
 
     // return immediately if the gpio is virtual
-    if (port == vrPort) {
+    if (port == nv::gpio::vrPort) {
         return Status::Ok;
     }
 

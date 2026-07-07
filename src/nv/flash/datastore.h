@@ -34,6 +34,7 @@ enum class Key : uint32_t
     NpdsExtTimestampMSB,
     NpdsExtTimestampTick,
     NpdsAllowInitBackgroundCopy,
+    NpdsBackgroundCopyComponentId,  ///< Latest background-copy component ID for progress query
     NpdsBootTimeFromFmcEndToMctpReady,
     NpdsBootReasonOriginal,
     NpdsI2cDynamicAddrForOcpDevice0,
@@ -51,6 +52,7 @@ enum class Key : uint32_t
     NpdsAp0FwStatus,                 ///< AP0 FW status
     NpdsAp1FwStatus,                 ///< AP1 FW status
     NpdsFmcNumericVersion,           ///< FMC numeric version (e.g. 3 for V3, 4 for V4)
+    NpdsAp0ProvisionStatus,          ///< AP0 provision status
     NpdsEnd,
     NpdsInvalid,
     // here is for active ap fw authenticate data
@@ -159,7 +161,7 @@ enum class Key : uint32_t
     PdsSoCPowerSmoothEnabled,  ///< SoC Power Smoothing enabled: 0=disabled, 1=enabled
     PdsSoCPowerSmoothCurrentPresetIndex,  ///< Current preset index (0-3)
     PdsSoCPowerBrakeEnabled,              ///< Power brake enabled: 0=disabled, 1=enabled
-    PdsMaxACPowerRampRate,                ///< Max AC power ramp rate (float stored as uint32_t)
+    PdsMaxACPowerRampRate,  ///< Max AC power ramp rate (uint32_t, W/s; 0 = disabled)
     // ADC Calibration data (32 points: each uint32_t =
     // [expected_dac_code:16][actual_adc_code:16])
     // ADC Calibration data (26 points: 0V to 2.5V in 100mV steps)

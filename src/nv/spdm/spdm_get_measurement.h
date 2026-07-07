@@ -75,7 +75,7 @@ typedef enum
 {
     MeasGetNumMeas = 0,        // illegal index, when requested, response is num meas
     MeasVersion,               // Index 1: Measurement Block Version
-    MeasApType,                // Index 2: AP Type (CPD/NON)
+    MeasApType,                // Index 2: AP Type (CPD/LPU/NON)
     MeasReservedIndex3,        // Index 3: Reserved
     MeasReservedIndex4,        // Index 4: Reserved
     MeasReservedIndex5,        // Index 5: Reserved

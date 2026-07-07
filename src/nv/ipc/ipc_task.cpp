@@ -17,7 +17,9 @@
  */
 #include "nv/ipc/ipc_task.h"
 #include "nv/ipc/driver.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/common/preproc.h"
+#include "nv/common/utils.h"
 #include "nv/logger/log.h"
 #include "nv/ipc/streambuffer.h"
 #include <cstring>
@@ -191,26 +193,53 @@ Status Task::handle_data_read(uint32_t read_size)
         _queue_request.queue_id     = static_cast<ipc::QueueId>(wire.queue_id);
         _is_queue_item_data_pending = true;
     }
-    // Case 2: Event request (variant_index == 1)
+    // Case 2: Event or TaskNotify request (variant_index == 1)
     else if (variant_index == 1) {
         ipc_bm::EventRequestWire wire{};
         std::memcpy(&wire, _buffer.data(), sizeof(wire));
 
-        auto event_id = static_cast<ipc::EventId>(wire.event_id);
-        if (!nv::common::is_in_range(event_id)) {
-            return task::Status::InvalidParameter;
+        const uint32_t raw_id       = wire.event_id;
+        const auto     event_id_end = nv::common::to_underlying(ipc::EventId::End);
+        const auto     task_id_end  = nv::common::to_underlying(ipc::TaskId::End);
+
+        if (raw_id < event_id_end) {
+            const auto event_id = static_cast<ipc::EventId>(raw_id);
+            if (!nv::common::is_in_range(event_id)) {
+                return task::Status::InvalidParameter;
+            }
+            if (wire.is_set != 0) {
+                auto event_status = ipc::Event::make(event_id).set(wire.bits);
+                if (event_status != ipc::Event::Status::Ok) {
+                    return task::Status::EventSetFailed;
+                }
+            }
+            else {
+                auto event_status = ipc::Event::make(event_id).clear(wire.bits);
+                if (event_status != ipc::Event::Status::Ok) {
+                    return task::Status::EventClearFailed;
+                }
+            }
         }
-        if (wire.is_set != 0) {
-            auto event_status = ipc::Event::make(event_id).set(wire.bits);
-            if (event_status != ipc::Event::Status::Ok) {
-                return task::Status::EventSetFailed;
+        else if (raw_id < event_id_end + task_id_end) {
+            const auto task_id = static_cast<ipc::TaskId>(raw_id - event_id_end);
+            if (!nv::common::is_in_range(task_id)) {
+                return task::Status::InvalidParameter;
+            }
+            if (wire.is_set != 0) {
+                auto notify_status = ipc::TaskNotify::send(task_id, wire.bits);
+                if (notify_status != ipc::TaskNotify::Status::Ok) {
+                    return task::Status::Error;
+                }
+            }
+            else {
+                auto notify_status = ipc::TaskNotify::clear(task_id, wire.bits);
+                if (notify_status != ipc::TaskNotify::Status::Ok) {
+                    return task::Status::Error;
+                }
             }
         }
         else {
-            auto event_status = ipc::Event::make(event_id).clear(wire.bits);
-            if (event_status != ipc::Event::Status::Ok) {
-                return task::Status::EventClearFailed;
-            }
+            return task::Status::InvalidParameter;
         }
     }
     else {
@@ -262,36 +291,44 @@ Task::handle_queue_data(const ipc::Queue::ConstItem& item, ipc::QueueId queue_id
     return task::Status::Ok;
 }
 
-Status Task::handle_event_data(ipc::EventId event_id, bool is_set, uint32_t event_bits)
+Status
+Task::handle_event_data(std::variant<ipc::EventId, ipc::TaskId> id, bool is_set, uint32_t bits)
 {
-    // Check if the c2c handle is set
     auto handle = Driver::get_c2c_handle(true);
     if (handle == nullptr) {
         return nv::ipc::task::Status::C2CHandleNotSet;
     }
 
-    // Build wire-format request that Core1 bare-metal can parse.
-    // Cannot use std::variant<EventRequest> directly because its binary layout
-    // (variant index position) is compiler-dependent and may not match
-    // the EventRequestWire format that Core1 expects.
+    uint32_t request_event_id = 0;
+    std::visit(
+        [&request_event_id](auto&& arg) {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, ipc::EventId>) {
+                request_event_id = static_cast<uint32_t>(nv::common::to_underlying(arg));
+            }
+            else if constexpr (std::is_same_v<T, ipc::TaskId>) {
+                request_event_id = static_cast<uint32_t>(
+                    nv::common::to_underlying(ipc::EventId::End)
+                    + nv::common::to_underlying(arg));
+            }
+        },
+        id);
+
     ipc_bm::EventRequestWire bm_request = {};
     bm_request.variant_index            = 1;  // EventRequest
     bm_request.is_set                   = is_set ? 1 : 0;
-    bm_request.bits                     = event_bits;
-    bm_request.event_id                 = static_cast<uint32_t>(event_id);
+    bm_request.bits                     = bits;
+    bm_request.event_id                 = request_event_id;
 
-    // Wrap in Request-sized container for write_event_request() SVC path.
     static_assert(sizeof(Request) >= sizeof(bm_request), "Request too small for wire format");
     Request request{};
     std::memcpy(&request, &bm_request, sizeof(bm_request));
 
-    // Write Event request to c2c
     auto status = sys::ipc::task::Driver::write_event_request(request);
     if (status != task::Status::Ok) {
         return status;
     }
 
-    // Notify the peer core that the write is done
     status = sys::ipc::task::Mcmgr::trigger_event_force(
         nv::ipc::get_peer_core(),
         task::EventType::Communication,

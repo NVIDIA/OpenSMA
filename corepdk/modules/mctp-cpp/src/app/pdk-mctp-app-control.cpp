@@ -117,25 +117,24 @@ void Control::on_get_vendor_msg_support(const Packet& rx, Packet& tx) const
     auto& ctx           = Control::PktRes::from(tx);
     auto& crx           = Control::PktReq::from(rx);
     ctx.completion_code = platforms::Ccode::Success;
-    // TODO: verify this format
     if (crx.data[0] == 0) {
-        ctx.data[0] = 0x00;             // Vendor ID Set Selector
-        ctx.data[1] = 0x01;             // IANI - Vendor ID Data Length (4)
-        ctx.data[2] = VendorIaniByte2;  // MSB NVIDIA = 0x1647
-        ctx.data[3] = VendorIaniByte1;  //
-        ctx.data[4] = 0x00;             //
-        ctx.data[5] = 0x00;             //
-        ctx.data[6] = 0x00;             // no command set versioning
-        ctx.data[7] = 0x00;             //
+        ctx.data[0] = 0x01;                // Next Vendor ID Set Selector
+        ctx.data[1] = VendorIdFormatIana;  // IANA Enterprise Number
+        ctx.data[2] = VendorIanaIdByte0;   // NVIDIA = 0x00001647, MSB first
+        ctx.data[3] = VendorIanaIdByte1;
+        ctx.data[4] = VendorIanaIdByte2;
+        ctx.data[5] = VendorIanaIdByte3;
+        ctx.data[6] = 0x00;  // no command set versioning
+        ctx.data[7] = 0x00;
         platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse + 8);
     }
     else if (crx.data[0] == 1) {
-        ctx.data[0] = 0x01;            // Vendor ID Set Selector
-        ctx.data[1] = 0x00;            // PCI - Vendor ID Data Length (2)
-        ctx.data[2] = VendorPciByte2;  // NVIDIA = 0x10DE
-        ctx.data[3] = VendorPciByte1;  //
-        ctx.data[4] = 0x00;            // no command set versioning
-        ctx.data[5] = 0x00;            //
+        ctx.data[0] = NoMoreCapability;   // Next Vendor ID Set Selector
+        ctx.data[1] = VendorIdFormatPci;  // PCI Vendor ID
+        ctx.data[2] = VendorPciIdByte0;   // NVIDIA = 0x10DE, MSB first
+        ctx.data[3] = VendorPciIdByte1;
+        ctx.data[4] = 0x00;  // no command set versioning
+        ctx.data[5] = 0x00;
         platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse + 6);
     }
     else {
@@ -164,6 +163,7 @@ void Control::on_allocate_endpoint_id(const Packet& rx, Packet& tx)
                  index++) {
                 _routing_map.at(index).is_need_enumerate = false;
                 _routing_map.at(index).is_enumerated     = false;
+                _routing_map.at(index).is_set_eid_sent   = false;
                 _routing_map.at(index).assigned_eid      = 0;
                 _routing_map.at(index).client            = static_cast<platforms::Interface>(
                     platforms::Interface::End);
@@ -248,8 +248,15 @@ void Control::on_routing_info_update(const Packet& rx, Packet& tx)
         ctx.completion_code = platforms::Ccode::ErrorInvalidData;
         return;
     }
-    // check if the update eid already exists in the routing table
+    // check if the update eid is any current eid of this endpoint
     const uint8_t update_eid = crx.data[3];
+    for (const auto current_eid : _router.ec.cur_eid) {
+        if (update_eid == current_eid) {
+            ctx.completion_code = platforms::Ccode::ErrorInvalidData;
+            return;
+        }
+    }
+    // check if the update eid already exists in the routing table
     for (auto& info : _routing_map) {
         if (info.assigned_eid == update_eid) {
             ctx.completion_code = platforms::Ccode::ErrorInvalidData;
@@ -280,7 +287,8 @@ void Control::on_routing_info_update(const Packet& rx, Packet& tx)
     _additional_eid_count++;
 
     // use platform specific driver to update routing info
-    platforms::on_routing_info_update_plat();
+    platforms::on_routing_info_update_plat(
+        rx.hdr.src_eid, platforms::get_packet_interface(rx), update_eid);
 
     ctx.completion_code = platforms::Ccode::Success;
 }
@@ -394,6 +402,7 @@ bool Control::remove_routing_entry(uint8_t index)
 
     _routing_map.at(index).is_need_enumerate = false;
     _routing_map.at(index).is_enumerated     = false;
+    _routing_map.at(index).is_set_eid_sent   = false;
 
     return true;
 }
@@ -405,6 +414,7 @@ bool Control::add_routing_entry(uint8_t index)
     }
 
     _routing_map.at(index).is_need_enumerate = true;
+    _routing_map.at(index).is_set_eid_sent   = false;
     _num_enumerate_eid                       = 0;
     return true;
 }

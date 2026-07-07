@@ -25,6 +25,7 @@
 #include "sys/adc/adc.h"
 #include "nv/common/system.h"
 #include "nv/logger/log.h"
+#include "nv/mainbox/mailbox.h"
 #include "nv/mctp/nsm_type_ff.h"
 #include "nv/flash/flash.h"
 #include "sys/lpcac/lpcac.h"
@@ -33,7 +34,6 @@
 
 #include <array>
 #include <algorithm>
-#include <bit>
 #include <chrono>
 
 #include <FreeRTOS.h>
@@ -127,11 +127,12 @@ using AdcCalibrationPoints = std::array<nv::mctp::AdcCalibrationPoint,
                                         nv::mctp::ADC_CALIBRATION_NUM_POINTS>;
 
 // Forward declaration for flash save (implemented later)
-void save_calibration_to_flash(const AdcCalibrationPoints& points);
+bool save_calibration_to_flash(const AdcCalibrationPoints& points);
 bool load_calibration_from_flash(AdcCalibrationPoints& points);
 
 /// @brief Save calibration results to flash (PDS)
-void save_calibration_to_flash(const AdcCalibrationPoints& points)
+/// @return false if any @c Flash::set_data call fails
+bool save_calibration_to_flash(const AdcCalibrationPoints& points)
 {
     for (uint8_t i = 0; i < nv::mctp::ADC_CALIBRATION_NUM_POINTS; i++) {
         const auto&    pt     = points.at(i);
@@ -139,11 +140,17 @@ void save_calibration_to_flash(const AdcCalibrationPoints& points)
                               | static_cast<uint32_t>(pt.actual_adc_code);
         const auto key = static_cast<nv::flash::Key>(
             static_cast<uint32_t>(nv::flash::Key::PdsAdcCalibrationData0) + i);
-        (void)nv::flash::Flash::set_data(key, packed);
+        if (nv::flash::Flash::set_data(key, packed) != nv::flash::Status::Ok) {
+            return false;
+        }
     }
 
     // Commit completion marker last so power loss cannot advertise partial data as complete.
-    (void)nv::flash::Flash::set_data(nv::flash::Key::PdsAdcCalibrationComplete, 1U);
+    if (nv::flash::Flash::set_data(nv::flash::Key::PdsAdcCalibrationComplete, 1U)
+        != nv::flash::Status::Ok) {
+        return false;
+    }
+    return true;
 }
 
 bool load_calibration_from_flash(AdcCalibrationPoints& points)
@@ -175,10 +182,13 @@ bool load_calibration_from_flash(AdcCalibrationPoints& points)
 // ADC Calibration Test Mode - Public API
 // ============================================================================
 
-void execute_adc_calibration()
+AdcCalibrationExecuteResult execute_adc_calibration()
 {
     AdcCalibrationPoints points{};
-    (void)nv::flash::Flash::set_data(nv::flash::Key::PdsAdcCalibrationComplete, 0U);
+    if (nv::flash::Flash::set_data(nv::flash::Key::PdsAdcCalibrationComplete, 0U)
+        != nv::flash::Status::Ok) {
+        return AdcCalibrationExecuteResult::PdsWriteFailure;
+    }
 
     for (auto& pt : points) {
         pt.expected_dac_code = 0;
@@ -196,14 +206,19 @@ void execute_adc_calibration()
             nv::logger::error(nv::logger::Event::SocPwrSmoothingAdcCalibDacWriteFail,
                               nv::logger::data_from_two_u32(static_cast<uint32_t>(idx),
                                                             static_cast<uint32_t>(dac_code)));
-            return;
+            return AdcCalibrationExecuteResult::I2cFailure;
         }
         vTaskDelay(pdMS_TO_TICKS(ADC_CALIB_STEP_DELAY_MS));
         points.at(idx).actual_adc_code = PowerSmoothing::get_last_adc_raw();
     }
-    write_ad5693_dac(0);  // Reset DAC to 0V
+    if (!write_ad5693_dac(0)) {  // Reset DAC to 0V
+        return AdcCalibrationExecuteResult::I2cFailure;
+    }
 
-    save_calibration_to_flash(points);
+    if (!save_calibration_to_flash(points)) {
+        return AdcCalibrationExecuteResult::PdsWriteFailure;
+    }
+    return AdcCalibrationExecuteResult::Success;
 }
 
 void get_adc_calibration_results(nv::mctp::NsmTFFGetAdcCalibResultsRes& response)
@@ -285,6 +300,11 @@ uint16_t PowerSmoothing::get_last_edpp_dac_raw()
 uint16_t PowerSmoothing::get_last_isink_dac_raw()
 {
     return power_manager.public_connectors.last_isink_dac_raw;
+}
+
+void PowerSmoothing::set_peer_thermal_warning(bool assert)
+{
+    power_manager.set_peer_thermal_warning(assert);
 }
 
 // The controller runs every 100us. It is not feasible to increase the RTOS tick
@@ -379,18 +399,14 @@ ConstantPowerMode PowerSmoothing::GetOffsetPolicyState()
              : ConstantPowerMode::ConstantPowerModeOff;
 }
 
-void PowerSmoothing::SetMaxACRampRate(float rate)
+void PowerSmoothing::SetMaxACRampRate(uint32_t rate_w_per_s)
 {
-    power_manager.config.max_ac_ramp_rate = rate;
-
-    // Automatically enable/disable offset policies based on ramp rate
-    // Non-zero rate enables policies, zero rate disables them
-    const bool enabled                               = (rate != 0.0f);
-    power_manager.config.isink_offset_policy.enabled = enabled;
-    power_manager.config.edpp_offset_policy.enabled  = enabled;
+    power_manager.config.max_ac_ramp_rate = rate_w_per_s;
+    // Max AC ramp rate is currently only stored for Type-5 GET/SET.
+    // Enable the SoC power smoothing offset policies explicitly via SetOffsetPolicyState().
 }
 
-float PowerSmoothing::GetMaxACRampRate()
+uint32_t PowerSmoothing::GetMaxACRampRate()
 {
     return power_manager.config.max_ac_ramp_rate;
 }
@@ -435,10 +451,10 @@ bool PowerSmoothing::PersistSoCPowerSmoothCurrentPresetIndex(uint8_t preset_id)
     return persist_key_value(nv::flash::Key::PdsSoCPowerSmoothCurrentPresetIndex, value);
 }
 
-// Persist max AC power ramp rate to PDS (float stored as uint32_t via bit_cast)
-bool PowerSmoothing::PersistMaxACPowerRampRate(float rate)
+// Persist max AC power ramp rate to PDS (uint32_t W/s; matches NSM device mode payload)
+bool PowerSmoothing::PersistMaxACPowerRampRate(uint32_t rate_w_per_s)
 {
-    const auto value = std::bit_cast<nv::flash::Data>(rate);
+    const auto value = static_cast<nv::flash::Data>(rate_w_per_s);
     return persist_key_value(nv::flash::Key::PdsMaxACPowerRampRate, value);
 }
 
@@ -469,12 +485,11 @@ void PowerSmoothing::LoadPersistedSettings()
                                                          : PowerBrakeState::PowerBrakeDisabled);
     }
 
-    // Load Max AC Power Ramp Rate
+    // Load Max AC Power Ramp Rate (stored as uint32_t W/s)
     if (load_key_value(nv::flash::Key::PdsMaxACPowerRampRate, value)) {
-        const auto rate = std::bit_cast<float>(value);
         // Set ramp rate directly without triggering auto-enable logic
         // (the enabled state was already loaded above)
-        power_manager.config.max_ac_ramp_rate = rate;
+        power_manager.config.max_ac_ramp_rate = value;
     }
 
     // Load Current Preset Index
@@ -491,6 +506,12 @@ void PowerSmoothing::LoadPersistedSettings()
         const bool enabled = (value == 1);
         PowerSmoothing::SetThermBrakePolicyState(enabled ? ThermBrakeState::ThermBrakeEnabled
                                                          : ThermBrakeState::ThermBrakeDisabled);
+    }
+    std::array<uint8_t, 4> peer_thermal_warning{};
+    nv::mainbox::read_mailbox(nv::mainbox::MainBoxMemoryType::PeerThermWarn,
+                              peer_thermal_warning);
+    if (peer_thermal_warning[0] == 1) {
+        set_peer_thermal_warning(peer_thermal_warning[1]);
     }
 }
 
@@ -531,6 +552,10 @@ void PowerSmoothing::initialize()
 
     // Apply default preset to power_manager.config immediately
     power_manager.config = preset_manager.GetCfgForApply(DEFAULT_PRESET, power_manager.config);
+    power_manager.config.power_brake_policy.enabled  = DefaultPowerBrakePolicyEnabled;
+    power_manager.config.therm_brake_policy.enabled  = DefaultThermBrakePolicyEnabled;
+    power_manager.config.isink_offset_policy.enabled = DefaultOffsetPolicyEnabled;
+    power_manager.config.edpp_offset_policy.enabled  = DefaultOffsetPolicyEnabled;
 
     // Note: ADC sampling and persisted settings are loaded in periodic_update()
     // after scheduler is running and flash task is active

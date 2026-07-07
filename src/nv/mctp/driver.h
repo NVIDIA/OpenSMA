@@ -79,6 +79,10 @@ public:
         ProtocolReset,
         NsmEventCmd,
         SmbusCacheRefresh,
+        // Generic project-customizable command dispatched in the MCTP task context:
+        // the command loop invokes the weak mctp_customize_1() hook, which a project
+        // overrides with its own work. Add MctpCustomize2/... if more are needed.
+        MctpCustomize1,
         End,
     };
 
@@ -101,6 +105,7 @@ protected:
     void on_receive(Client client);                     ///< Receive from client
     void forward(Client client, const Packet& tx);      ///< Forward to client
     void dump_packet(const Packet& pkt, uint32_t len);  ///< Dump packet to UART
+    bool on_get_eid_probe_response(const Packet& pkt, bool is_multi);
     void on_forward_message(ipc::Queue::Item& rx_item);
     void on_receive_application(nv::ipc::Queue& queue, ipc::Queue::Item& rx_item);
     void on_enumerate();
@@ -122,6 +127,7 @@ protected:
     Nsm                                       _nsm;
     Validator                                 _validator;
     bool                                      _is_send_notify{};
+    uint8_t                                   _enumerate_retry_count{};
     std::array<EndpointStatus, EndpointCount> _endpoint_status{};
 
     Buffer               _tx_buf{};
@@ -137,6 +143,7 @@ protected:
     ipc::Queue&                           _spdm_queue;
     ipc::Queue&                           _cmd_queue;
     ipc::Queue&                           _router_queue;
+    ipc::Timer&                           _enum_start_timer;
     ipc::Timer&                           _enum_done_timer;
     std::array<ipc::Timer, EndpointCount> _endpoint_status_change_timers;
     ipc::Task&                            _task;
@@ -161,6 +168,7 @@ public:  // static api section
     static void   protocol_reset();
     static bool   is_allow_bridge(const Packet& pkt);
     static void   wdt_notify();
+    static void   on_enumeration_start_timer([[maybe_unused]] ipc::Timer& id);
     static void   on_enumeration_done_timer([[maybe_unused]] ipc::Timer& id);
     static void   on_endpoint_status_change_timer(ipc::Timer& id);
     static void   on_apgood_engage_timer([[maybe_unused]] ipc::Timer& id);

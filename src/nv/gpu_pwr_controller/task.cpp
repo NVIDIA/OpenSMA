@@ -35,7 +35,7 @@ void Task::make()
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
-    task.setup(stack.span(), Priv, Priority::Norm, Task::entrypoint);
+    task.setup(stack.span(), Priv, Priority::GpuPwrController, Task::entrypoint);
 }
 
 void Task::entrypoint(void* params)

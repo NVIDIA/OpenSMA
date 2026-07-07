@@ -26,6 +26,7 @@
 #include "usb_device.h"
 #include "usb_device_class.h"
 #include "usb_device_config.h"
+#include "usb_config_wrapper.h"
 
 /* MCTP descriptor */
 #define USB_DEVICE_SPECIFIC_BCD_VERSION (0x0200U)
@@ -214,7 +215,7 @@
 #define USB_HID_GENERIC_IN_BUFFER_LENGTH  (64U)
 #define USB_HID_GENERIC_OUT_BUFFER_LENGTH (64U)
 #define USB_HID_GENERIC_INTERFACE_COUNT   (1U)
-#define USB_HID_GENERIC_INTERFACE_INDEX   (1U)
+#define USB_HID_GENERIC_INTERFACE_INDEX   (USB_MCTP_INTERFACE_COUNT)
 #define USB_HID_GENERIC_ENDPOINT_COUNT    (2U)
 #define USB_HID_GENERIC_ENDPOINT_IN       (3U)
 #define USB_HID_GENERIC_ENDPOINT_OUT      (3U)
@@ -238,7 +239,7 @@
 
 /* NV_SMA_SPI class */
 #define USB_NV_SMA_SPI_INTERFACE_COUNT           (1U)
-#define USB_NV_SMA_SPI_INTERFACE_INDEX           (2U)
+#define USB_NV_SMA_SPI_INTERFACE_INDEX           (USB_MCTP_INTERFACE_COUNT + SYS_USB_HID_CP2112)
 #define USB_NV_SMA_SPI_ENDPOINT_COUNT            (2U)
 #define USB_NV_SMA_SPI_ENDPOINT_IN               (2U)
 #define USB_NV_SMA_SPI_ENDPOINT_OUT              (1U)
@@ -280,6 +281,7 @@ usb_status_t
 USB_DeviceGetStringDescriptor(usb_device_handle                          handle,
                               usb_device_get_string_descriptor_struct_t* stringDescriptor);
 
+#if (SYS_USB_HID_CP2112 > 0U)
 usb_status_t USB_DeviceGetHidDescriptor(usb_device_handle                       handle,
                                         usb_device_get_hid_descriptor_struct_t* hidDescriptor);
 
@@ -290,6 +292,7 @@ usb_status_t USB_DeviceGetHidReportDescriptor(
 usb_status_t USB_DeviceGetHidPhysicalDescriptor(
     usb_device_handle                                handle,
     usb_device_get_hid_physical_descriptor_struct_t* hidPhysicalDescriptor);
+#endif /* SYS_USB_HID_CP2112 */
 
 #ifdef __cplusplus
 }

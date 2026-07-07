@@ -55,6 +55,8 @@ protected:
     bool on_register_table_access(const Packet& rx, Packet& tx);
     void on_add_ext_timestamp(const Packet& rx, Packet& tx);
     void on_scan_i2c(const Packet& rx, Packet& tx) const;
+    void on_ap_provision(const Packet& rx, Packet& tx) const;
+    void on_query_ap_provision_status(const Packet& rx, Packet& tx) const;
     void on_download_coverage(const Packet& rx, Packet& tx) const;
     void on_fan_control(const Packet& rx, Packet& tx) const;
 

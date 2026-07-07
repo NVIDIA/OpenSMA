@@ -28,37 +28,6 @@
 
 namespace nv::lstp {
 
-inline LstpStatus LstpStatus_from(bool success)
-{
-    return success ? LstpStatus::Success : LstpStatus::Error;
-}
-
-inline LstpStatus LstpStatus_from(i2c::I2cStatus status)
-{
-    switch (status) {
-        case i2c::I2cStatus::Ok        : return LstpStatus::Success;
-        case i2c::I2cStatus::Error     : return LstpStatus::Error;
-        case i2c::I2cStatus::Busy      : return LstpStatus::Busy;
-        case i2c::I2cStatus::Nak       : return LstpStatus::Nak;
-        case i2c::I2cStatus::Timeout   : return LstpStatus::Timeout;
-        case i2c::I2cStatus::ArbLost   : return LstpStatus::ArbLost;
-        case i2c::I2cStatus::MutexError: return LstpStatus::Error;
-    }
-
-    return LstpStatus::Error;
-}
-
-inline LstpStatus LstpStatus_from(nv::gpio::Status status)
-{
-    switch (status) {
-        case nv::gpio::Status::Ok          : return LstpStatus::Success;
-        case nv::gpio::Status::Error       : return LstpStatus::Error;
-        case nv::gpio::Status::InvalidParam: return LstpStatus::NotSupported;
-    }
-
-    return LstpStatus::Error;
-}
-
 constexpr std::array<nv::gpio::InterruptDetection, 6> LstpToGpioIrq = {
     nv::gpio::InterruptDetection::InterruptDisabled,  // IrqDisabled
     nv::gpio::InterruptDetection::InterruptRising,    // Rising
@@ -182,15 +151,15 @@ private:
 
     /**
      * @brief Helper to read GPIO channel config and append to response buffer
-     * @param req_offset Requested offset from the read request
-     * @param req_length Requested length from the read request
+     * @param config_offset Requested offset within the GPIO config blob
+     * @param config_length Requested length within the GPIO config blob (0 = max)
      * @param resp_buffer The response buffer to write to
      * @param resp_offset Current offset in response buffer (updated on success)
      * @return The status of the operation
      */
     LstpStatus
-    read_gpio_config_helper(uint16_t                                      req_offset,
-                            uint16_t                                      req_length,
+    read_gpio_config_helper(size_t                                        config_offset,
+                            size_t                                        config_length,
                             std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_buffer,
                             size_t&                                       resp_offset);
 
@@ -206,11 +175,28 @@ private:
      * @param channel_id Channel ID
      * @param cfg The configuration to write
      * @param cfg_size The size of the configuration
+     * @param req_buffer The original request buffer (forwarded to channel-specific
+     *                   tasks when applicable, e.g. GPIO config writes)
      * @return The status of the operation
      */
     LstpStatus write_channel_config_helper(uint8_t                channel_id,
                                            LstpChannelConfigBlob& cfg,
-                                           size_t                 cfg_size);
+                                           size_t                 cfg_size,
+                                           std::span<uint8_t>&    req_buffer);
+
+    /**
+     * @brief Apply a GPIO channel config write from a management-channel packet.
+     * @param req_buffer The full LSTP request buffer
+     * @return The status of the operation
+     */
+    LstpStatus write_gpio_config_helper(std::span<uint8_t>& req_buffer);
+
+    /**
+     * @brief Read configuration lock state (header-only request, 1-byte response)
+     * @param buffer The buffer with the request data
+     * @return The status of the operation
+     */
+    LstpStatus read_lock(std::span<uint8_t> buffer);
 
     /**
      * @brief Receive a message from the SPI channel

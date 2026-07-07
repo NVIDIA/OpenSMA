@@ -80,4 +80,13 @@ enum class GpioOpenDrain : uint16_t
     Enable  = 1,
 };
 
+/**
+ * @note: unUsed and vrPort are the same from the perspective of iox
+ *        used to indicate there is NO real gpio associated with this PCA9555 pin
+ *        The only difference is from user's perspective, just to make it more readable
+ *        all pins defined as unUsed/vrPort always have an internal variable in the iox reg
+ * table
+ */
+constexpr static GpioPort vrPort = InvalidGpioPort;
+
 }  // namespace nv::gpio

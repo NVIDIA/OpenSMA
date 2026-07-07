@@ -47,6 +47,18 @@ public:
      * @param address I2C device address
      */
     Xpd712021(Port port, uint8_t address);
+
+    /**
+     * @brief Boot-time setup (overrides PowerSensor::init()).
+     *
+     * Unlike the LM5066I/MP5926 (whose ALERT_MASK is written by FW at boot), the XDP712's
+     * configuration — OT_WARN/OT_FAULT limits, SMBALERT# routing (GPO_CFG), fault/warning
+     * masks and current-sense (RDS(on)) settings — is programmed into the device NVM/MTP at
+     * manufacturing via the Infineon design file (.xdp), so there is no ALERT_MASK to write.
+     * This only clears any stale boot-time latched faults for a clean status baseline.
+     * @return I2cStatus from CLEAR_FAULTS
+     */
+    I2cStatus init();
 };
 
 }  // namespace nv::i2c

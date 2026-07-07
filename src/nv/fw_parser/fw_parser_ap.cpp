@@ -2,7 +2,7 @@
 #include "nv/fw_parser/fw_parser_ap.h"
 
 #include "nv/flash/flash.h"
-#include "nv/spdm/secure_boot.h"
+#include "nv/secure_boot/authenticate_data.h"
 #include "nv/spdm/spdm_crypto_helper.h"
 namespace nv::fw_parser::ap {
 namespace {
@@ -14,15 +14,15 @@ bool check_input_parsing_ap_fw_type_valid(const ParsingApFwType input_parsing_ap
     }
     return true;
 }
-bool get_ap_metadata_data_from_flash(
-    const ParsingApFwType                                input_parsing_ap_fw_type,
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData& authenticate_data,
-    ApFwParsingErrorCode&                                auth_status)
+bool get_ap_metadata_data_from_flash(const ParsingApFwType input_parsing_ap_fw_type,
+                                     nv::secure_boot::AuthenticateData& authenticate_data,
+                                     ApFwParsingErrorCode&              auth_status)
 {
     if (!check_input_parsing_ap_fw_type_valid(input_parsing_ap_fw_type)) {
         auth_status = ApFwParsingErrorCode::InvalidParsingApFwType;
         return false;
     }
+
     auto npds_key = input_parsing_ap_fw_type == ParsingApFwType::ActiveSlot
                       ? nv::flash::Key::NpdsActiveApFwAuthenticateData
                       : nv::flash::Key::NpdsUpdateApFwAuthenticateData;
@@ -44,8 +44,8 @@ bool get_ap_metadata_data_from_flash(
 std::expected<ApFwMetadata::TbsData, ApFwParsingErrorCode>
 get_ap_metadata_data(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -56,8 +56,8 @@ get_ap_metadata_data(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<ApFwVersion, ApFwParsingErrorCode>
 get_ap_fw_version(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -68,8 +68,8 @@ get_ap_fw_version(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<uint8_t, ApFwParsingErrorCode>
 get_ap_sec_version(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -80,8 +80,8 @@ get_ap_sec_version(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<uint8_t, ApFwParsingErrorCode>
 get_ap_build_type(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -92,8 +92,8 @@ get_ap_build_type(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<std::array<uint8_t, 16>, ApFwParsingErrorCode>
 get_ap_comp_version_str(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -104,8 +104,8 @@ get_ap_comp_version_str(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<PublicKeyIndex, ApFwParsingErrorCode>
 get_ap_signing_key_index(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -132,8 +132,8 @@ get_ap_signing_key_index(const ParsingApFwType input_parsing_ap_fw_type)
 std::expected<uint8_t, ApFwParsingErrorCode>
 get_ap_fw_images_count(const ParsingApFwType input_parsing_ap_fw_type)
 {
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);
@@ -150,8 +150,8 @@ get_ap_hash_table_entry(const ParsingApFwType input_parsing_ap_fw_type, uint8_t 
         return std::unexpected<ApFwParsingErrorCode>(
             ApFwParsingErrorCode::InvalidHashTableEntryIndex);
     }
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData authenticate_data{};
-    ApFwParsingErrorCode                                auth_status{};
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    ApFwParsingErrorCode              auth_status{};
     if (!get_ap_metadata_data_from_flash(
             input_parsing_ap_fw_type, authenticate_data, auth_status)) {
         return std::unexpected<ApFwParsingErrorCode>(auth_status);

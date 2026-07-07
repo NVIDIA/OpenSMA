@@ -28,6 +28,8 @@ enum class SlaveFunction : uint8_t
     Begin,
     Mctp = Begin,  ///< Default MCTP/SMBus handling
     Eeprom,        ///< EEPROM cache bridge
+    Erot,          ///< OCP Recovery 2-byte writes from a downstream EROT (push-based
+                   ///< boot-completion notification, see EROT_RECOVERY_DESIGN.md)
     End
 };
 

@@ -17,6 +17,7 @@
  */
 #include "nv/vrot/platform/cpld.h"
 
+#include <algorithm>
 #include <chrono>
 
 #include "nv/flash/flash.h"
@@ -133,8 +134,10 @@ ApOpErrCode CpldOps::check_booted(const ApInfo& /*ap*/)
     return ApOpErrCode::Success;
 }
 
-ApOpErrCode
-CpldOps::read_metadata(const ApInfo& /*ap*/, uint32_t metadata_offset, std::span<uint8_t> data)
+ApOpErrCode CpldOps::read_metadata(const ApInfo& /*ap*/,
+                                   uint8_t /*slot*/,
+                                   uint32_t           metadata_offset,
+                                   std::span<uint8_t> data)
 {
     // CPLD metadata lives in UFM; address is relative to the start of the
     // metadata region (0 .. sizeof(ApFwMetadata)).
@@ -172,8 +175,10 @@ CpldOps::read_metadata(const ApInfo& /*ap*/, uint32_t metadata_offset, std::span
     return ApOpErrCode::Success;
 }
 
-ApOpErrCode
-CpldOps::read_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<uint8_t> data)
+ApOpErrCode CpldOps::read_fw_data(const ApInfo& ap,
+                                  uint8_t /*slot*/,
+                                  uint32_t           fw_data_offset,
+                                  std::span<uint8_t> data)
 {
     // CPLD firmware data lives in the offset region; address is relative to
     // the start of the firmware-data region. ap.fw_offset is unused (see
@@ -207,6 +212,7 @@ CpldOps::read_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<uint8
 }
 
 ApOpErrCode CpldOps::write_metadata(const ApInfo& /*ap*/,
+                                    uint8_t /*slot*/,
                                     uint32_t                 metadata_offset,
                                     std::span<const uint8_t> data)
 {
@@ -223,8 +229,11 @@ ApOpErrCode CpldOps::write_metadata(const ApInfo& /*ap*/,
         data.data(), static_cast<uint32_t>(data.size()), metadata_offset, false));
 }
 
-ApOpErrCode
-CpldOps::write_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<const uint8_t> data)
+ApOpErrCode CpldOps::write_fw_data(const ApInfo& ap,
+                                   uint8_t /*slot*/,
+                                   uint32_t                 fw_data_offset,
+                                   std::span<const uint8_t> data,
+                                   bool /*background_copy*/)
 {
     // CPLD firmware data lives in the offset region; address is relative to
     // the start of the firmware-data region. ap.fw_offset is unused (see
@@ -271,15 +280,13 @@ CpldOps::set_debug_token_feature(const ApInfo& /*ap*/, DebugTokenFeature feature
     return from_i2c(i2c::LatticeCpld::inst().write_debug_bit(value));
 }
 
-ApOpErrCode CpldOps::request_authentication(const ApInfo& /*ap*/)
+ApOpErrCode CpldOps::request_authentication(const ApInfo& ap, uint8_t& auth_request_id)
 {
-    // TOT exposes the single-AP `authenticate_ap_firmware(ParsingApFwType)`
-    // API that doesn't take an ApInfo. The newer multi-AP
-    // `authenticate_firmware(ApInfo, ParsingApFwType)` form will be wired in
-    // once the LPU/multi-AP groundwork lands; for CPLD-only projects today
-    // the AP is implicit.
     auto status = nv::spdm::crypto::authenticate_ap_firmware(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
+        ap,
+        nv::fw_parser::ap::ParsingApFwType::UpdateSlot,
+        auth_request_id,
+        nv::ipc::TaskId::Begin);
     return (status == nv::spdm::crypto::CryptoStatus::Success) ? ApOpErrCode::Success
                                                                : ApOpErrCode::Fail;
 }

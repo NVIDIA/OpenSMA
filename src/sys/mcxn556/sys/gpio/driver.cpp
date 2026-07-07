@@ -124,7 +124,21 @@ Status Driver::init_nonpriv_access(GpioPort port, GpioPin pin)
 
     GPIO_Type* inst = get_gpio_instance(port);
     GPIO_EnablePinControlNonPrivilege(inst, (1U << pin));
-    GPIO_EnableInterruptControlNonPrivilege(inst, 1);
+    GPIO_EnableInterruptControlNonPrivilege(inst, (1U << pin));
+
+    return Status::Ok;
+}
+
+Status Driver::init_nonsecure_access(GpioPort port, GpioPin pin)
+{
+    if (!is_pin_valid(port, pin)) {
+        nv::info("port %d Pin %d not valid\n", port, pin);
+        return Status::InvalidParam;
+    }
+
+    GPIO_Type* inst = get_gpio_instance(port);
+    GPIO_EnablePinControlNonSecure(inst, (1U << pin));
+    GPIO_EnableInterruptControlNonSecure(inst, (1U << pin));
 
     return Status::Ok;
 }

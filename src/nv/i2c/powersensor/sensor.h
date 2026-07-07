@@ -51,6 +51,7 @@ public:
     enum Register
     {
         ClearFaults     = 0x03,
+        OtFaultLimit    = 0x4F,
         OtWarnLimit     = 0x51,
         StatusWord      = 0x79,
         ReadVin         = 0x88,
@@ -60,6 +61,7 @@ public:
     };
 
     PowerSensor(Port port, uint8_t address);
+    I2cStatus init();
     I2cStatus clear_faults();
     I2cStatus read_faults(uint16_t& faults);
     I2cStatus read_ot_warn_limit(uint8_t& limit);

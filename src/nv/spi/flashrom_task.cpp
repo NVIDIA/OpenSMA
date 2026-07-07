@@ -18,8 +18,9 @@
 #include "nv/spi/flashrom_task.h"
 
 #include "nv/bootloader.h"
-#include "nv/nv.h"
 #include "nv/logger/log.h"
+#include "nv/nv.h"
+#include "nv/spi/task.h"
 
 using namespace nv::spi;
 using namespace std::chrono_literals;
@@ -35,7 +36,7 @@ void FlashromTask::make(Config config)
 
         // NOLINTNEXTLINE(*-reinterpret-cast)
         const std::span<uint8_t> priv(reinterpret_cast<uint8_t*>(&task), sizeof(FlashromTask));
-        task.setup(stack.span(), priv, Priority::Norm, FlashromTask::entrypoint);
+        task.setup(stack.span(), priv, Priority::SPI, FlashromTask::entrypoint);
     }
 }
 
@@ -59,6 +60,11 @@ FlashromTask::FlashromTask(Config config) noexcept
                    config.cs1_port_id,
                    config.cs1_pin_id);
     _flashrom.init();
+
+    auto oob_bus = nv::perf_mon::Driver::flexcomm_port_to_oobBus(
+        static_cast<uint8_t>(config.flexcomm_id));
+    nv::perf_mon::Driver::set_oob_bus_valid(oob_bus);
+    nv::perf_mon::Driver::set_oob_bus_type(oob_bus, nv::perf_mon::OobBusType::Spi);
 }
 
 [[noreturn]] void FlashromTask::start()

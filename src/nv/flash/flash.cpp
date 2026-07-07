@@ -34,6 +34,7 @@ bool log_status_error(Status status)
     return (nv::common::bit(status) & nv::common::to_underlying<Status>(Status::StatusLogMask))
          > 0;
 }
+
 }  // namespace
 
 Status
@@ -179,10 +180,9 @@ Status Flash::get_data(Key key, Data& data, nv::ipc::Queue::Usecs timeout)
     return status;
 }
 
-Status Flash::get_ap_fw_authenticate_data(
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData& authenticate_data,
-    Key                                                  key,
-    nv::ipc::Queue::Usecs                                timeout)
+Status Flash::get_ap_fw_authenticate_data(nv::secure_boot::AuthenticateData& authenticate_data,
+                                          Key                                key,
+                                          nv::ipc::Queue::Usecs              timeout)
 {
     if (key != Key::NpdsActiveApFwAuthenticateData
         && key != Key::NpdsUpdateApFwAuthenticateData) {
@@ -190,8 +190,7 @@ Status Flash::get_ap_fw_authenticate_data(
     }
 
     auto authenticate_data_buffer = std::span<uint8_t>(
-        std::bit_cast<uint8_t*>(&authenticate_data),
-        sizeof(nv::spdm::secure_boot::SecureBoot::AuthenticateData));
+        std::bit_cast<uint8_t*>(&authenticate_data), sizeof(nv::secure_boot::AuthenticateData));
     size_t needed_size  = authenticate_data_buffer.size();
     size_t start_offset = 0;
     Status status       = Status::Ok;
@@ -221,10 +220,10 @@ Status Flash::get_ap_fw_authenticate_data(
     return status;
 }
 
-Status Flash::set_ap_fw_authenticate_data(
-    const nv::spdm::secure_boot::SecureBoot::AuthenticateData& authenticate_data,
-    Key                                                        key,
-    nv::ipc::Queue::Usecs                                      timeout)
+Status
+Flash::set_ap_fw_authenticate_data(const nv::secure_boot::AuthenticateData& authenticate_data,
+                                   Key                                      key,
+                                   nv::ipc::Queue::Usecs                    timeout)
 {
     if (key != Key::NpdsActiveApFwAuthenticateData
         && key != Key::NpdsUpdateApFwAuthenticateData) {
@@ -233,7 +232,7 @@ Status Flash::set_ap_fw_authenticate_data(
 
     auto authenticate_data_buffer = std::span<const uint8_t>(
         std::bit_cast<const uint8_t*>(&authenticate_data),
-        sizeof(nv::spdm::secure_boot::SecureBoot::AuthenticateData));
+        sizeof(nv::secure_boot::AuthenticateData));
     size_t needed_size  = authenticate_data_buffer.size();
     size_t start_offset = 0;
     Status status       = Status::Ok;
@@ -756,9 +755,6 @@ Status Flash::read_enf_cnsa(uint32_t& enf_cnsa, nv::ipc::Queue::Usecs timeout)
     return Status::Ok;
 }
 
-// Customer data may be programmed before jump to application
-// Disable this API to avoid unintentional use
-#if 0
 Status Flash::write_cfpa_customer(const std::span<uint8_t>& buffer,
                                   uint32_t                  offset,
                                   nv::ipc::Queue::Usecs     timeout)
@@ -774,4 +770,3 @@ Status Flash::write_cfpa_customer(const std::span<uint8_t>& buffer,
     auto                status = Task::request(request, response, timeout);
     return status;
 }
-#endif

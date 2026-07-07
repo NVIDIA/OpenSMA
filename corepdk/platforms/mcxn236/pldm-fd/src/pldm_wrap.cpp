@@ -18,6 +18,7 @@
 #include "pldm_wrap.h"
 #include "nv/pldm/common.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <optional>
@@ -71,12 +72,13 @@ void send_authenticate_ap_firmware_result<nv::ipc::TaskId::Pldm>(
     // send the auth result to pldm
     pldm::Request request{
         .type   = nv::pldm::RequestType::AuthApFinish,
-        .length = 1,
+        .length = 2,
         .rsv1   = 0,
         .rsv2   = 0,
     };
 
     request.buffer[0] = static_cast<uint8_t>(response.auth_result);
+    request.buffer[1] = response.auth_request_id;
 
     if (pldm::Task::to_pldm(ipchandler::Id::Spdm, request) == false) {
         nv::info("to_pldm fail\n");
@@ -96,6 +98,35 @@ constexpr auto ApComponentIdList = make_component_id_list(nv::vrot::ApList);
 constexpr std::optional<nv::vrot::ApInfo> find_ap_info(NvU16 component_id)
 {
     return nv::vrot::find_ap_by_component_id(component_id, nv::vrot::ApList);
+}
+
+constexpr size_t PldmVersionStringMaxLength = 32;
+
+void get_ap_comp_version_string(NvU8*                              version_string,
+                                NvU8&                              length,
+                                nv::fw_parser::ap::ParsingApFwType parsing_type)
+{
+    std::memset(version_string, 0, PldmVersionStringMaxLength);
+    length = 0;
+
+    if constexpr (nv::vrot::ApList.empty()) {
+        return;
+    }
+
+    auto comp_version = nv::fw_parser::ap::get_ap_comp_version_str(parsing_type);
+    if (!comp_version.has_value()) {
+        return;
+    }
+
+    const auto string_end = std::find(comp_version->begin(), comp_version->end(), NvU8{0});
+    const auto source_len = static_cast<size_t>(string_end - comp_version->begin());
+    const auto copy_len   = std::min(source_len, PldmVersionStringMaxLength - 1);
+    if (copy_len == 0) {
+        return;
+    }
+
+    std::copy_n(comp_version->begin(), copy_len, version_string);
+    length = static_cast<NvU8>(copy_len);
 }
 
 static_assert(nv::vrot::ApList.size() < NV_PLDM_MAX_COMPONENT_SIZE,
@@ -225,7 +256,7 @@ void pldm_write(NvU16                                          comp_id,
             }
             // Only write the actual valid data size, not the entire buffer
             // to avoid writing residual data from previous transfers.
-            const std::span<const uint8_t> valid_data(buffer.data(), size);
+            const std::span<uint8_t> valid_data(buffer.data(), size);
 
             // PLDM streams the AP image as a single linear sequence starting
             // at offset 0. The AP firmware layout puts the first
@@ -234,21 +265,24 @@ void pldm_write(NvU16                                          comp_id,
             // per chunk, splitting across the boundary if a chunk straddles.
             constexpr auto MetadataSize = static_cast<NvU32>(
                 sizeof(nv::fw_parser::ap::ApFwMetadata));
-            auto cur_data   = valid_data;
-            auto cur_offset = offset;
-            auto status     = nv::vrot::ApOpErrCode::Success;
+            auto              cur_data    = valid_data;
+            auto              cur_offset  = offset;
+            auto              status      = nv::vrot::ApOpErrCode::Success;
+            constexpr uint8_t update_slot = nv::vrot::ApSlotUseUpdate;
             if (cur_offset < MetadataSize) {
                 const auto bytes_to_boundary = MetadataSize - cur_offset;
                 const auto split             = std::min(static_cast<NvU32>(cur_data.size()),
                                             bytes_to_boundary);
-                status = nv::vrot::write_metadata(*ap_info, cur_offset, cur_data.first(split));
+                status                       = nv::vrot::write_metadata(
+                    *ap_info, update_slot, cur_offset, cur_data.first(split));
                 if (status == nv::vrot::ApOpErrCode::Success && split < cur_data.size()) {
                     cur_data = cur_data.subspan(split);
-                    status   = nv::vrot::write_fw_data(*ap_info, 0, cur_data);
+                    status   = nv::vrot::write_fw_data(*ap_info, update_slot, 0, cur_data);
                 }
             }
             else {
-                status = nv::vrot::write_fw_data(*ap_info, cur_offset - MetadataSize, cur_data);
+                status = nv::vrot::write_fw_data(
+                    *ap_info, update_slot, cur_offset - MetadataSize, cur_data);
             }
 
             if (status != nv::vrot::ApOpErrCode::Success) {
@@ -384,6 +418,15 @@ void pldm_get_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bui
 
 void pldm_get_ap_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
 {
+    major = 0;
+    minor = 0;
+    patch = 0;
+    build = 0;
+
+    if constexpr (nv::vrot::ApList.empty()) {
+        return;
+    }
+
     auto tbs_data = nv::fw_parser::ap::get_ap_fw_version(
         nv::fw_parser::ap::ParsingApFwType::ActiveSlot);
     if (tbs_data.has_value()) {
@@ -392,12 +435,12 @@ void pldm_get_ap_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& 
         patch = tbs_data->patch;
         build = tbs_data->build;
     }
-    else {
-        major = 0;
-        minor = 0;
-        patch = 0;
-        build = 0;
-    }
+}
+
+void pldm_get_ap_active_comp_version_string(NvU8* version_string, NvU8& length)
+{
+    get_ap_comp_version_string(
+        version_string, length, nv::fw_parser::ap::ParsingApFwType::ActiveSlot);
 }
 
 void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
@@ -452,12 +495,17 @@ void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bu
 
 void pldm_get_ap_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
 {
+    major = 0;
+    minor = 0;
+    patch = 0;
+    build = 0;
+
+    if constexpr (nv::vrot::ApList.empty()) {
+        return;
+    }
+
     flash::Data status{};
-    major             = 0;
-    minor             = 0;
-    patch             = 0;
-    build             = 0;
-    auto flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, status);
+    auto        flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, status);
     if (flash_status != flash::Status::Ok
         || status != static_cast<flash::Data>(nv::fw_parser::ap::ApFwStatus::Update_Complete)) {
         return;
@@ -471,6 +519,26 @@ void pldm_get_ap_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16&
         patch = tbs_data->patch;
         build = tbs_data->build;
     }
+}
+
+void pldm_get_ap_pending_comp_version_string(NvU8* version_string, NvU8& length)
+{
+    std::memset(version_string, 0, PldmVersionStringMaxLength);
+    length = 0;
+
+    if constexpr (nv::vrot::ApList.empty()) {
+        return;
+    }
+
+    flash::Data status{};
+    auto        flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, status);
+    if (flash_status != flash::Status::Ok
+        || status != static_cast<flash::Data>(nv::fw_parser::ap::ApFwStatus::Update_Complete)) {
+        return;
+    }
+
+    get_ap_comp_version_string(
+        version_string, length, nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
 }
 
 void set_timer(NvU64 ns)
@@ -727,8 +795,7 @@ void get_uuid_info(NvU8* data)
 
 void request_authentication(NvU16 comp_id, NvU32& auth_request_id)
 {
-    // get current tick
-    get_ticks(auth_request_id);
+    auth_request_id = 0;
 
     if (comp_id == sys::flash::config::McuComponentId) {
         auto status = nv::spdm::crypto::authenticate_mcu_firmware(
@@ -739,14 +806,17 @@ void request_authentication(NvU16 comp_id, NvU32& auth_request_id)
     }
     else {
         if constexpr (nv::vrot::ApList.size() > 0) {
-            auto rc = nv::vrot::ap::request_authentication(comp_id);
+            uint8_t    ap_auth_request_id = 0;
+            const auto rc = nv::vrot::ap::request_authentication(comp_id, ap_auth_request_id);
             if (rc == nv::vrot::ApOpErrCode::UnknownComponent) {
                 nv::info("request_authentication: no AP info for component id 0x%x\n", comp_id);
                 return;
             }
             if (rc != nv::vrot::ApOpErrCode::Success) {
                 // need error handling
+                return;
             }
+            auth_request_id = ap_auth_request_id;
         }
     }
 }

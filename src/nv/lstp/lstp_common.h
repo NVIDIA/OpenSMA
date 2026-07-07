@@ -24,6 +24,8 @@
 #include <type_traits>
 #include <variant>
 
+#include "nv/spi/spi_types.h"
+#include "nv/i2c/i2c_types.h"
 #include "nv/gpio/common.h"
 #include "sys/common/common.h"
 
@@ -93,6 +95,54 @@ enum class LstpStatus : uint8_t
     IrqInterrupt = 0xFF,  // Used for interrupt-driven communication
 };
 
+inline LstpStatus LstpStatus_from(bool success)
+{
+    return success ? LstpStatus::Success : LstpStatus::Error;
+}
+
+inline LstpStatus LstpStatus_from(i2c::I2cStatus status)
+{
+    switch (status) {
+        case i2c::I2cStatus::Ok        : return LstpStatus::Success;
+        case i2c::I2cStatus::Error     : return LstpStatus::Error;
+        case i2c::I2cStatus::Busy      : return LstpStatus::Busy;
+        case i2c::I2cStatus::Nak       : return LstpStatus::Nak;
+        case i2c::I2cStatus::Timeout   : return LstpStatus::Timeout;
+        case i2c::I2cStatus::ArbLost   : return LstpStatus::ArbLost;
+        case i2c::I2cStatus::MutexError: return LstpStatus::Error;
+        default                        : return LstpStatus::Error;
+    }
+
+    return LstpStatus::Error;
+}
+
+inline LstpStatus LstpStatus_from(nv::gpio::Status status)
+{
+    switch (status) {
+        case nv::gpio::Status::Ok          : return LstpStatus::Success;
+        case nv::gpio::Status::Error       : return LstpStatus::Error;
+        case nv::gpio::Status::InvalidParam: return LstpStatus::NotSupported;
+        default                            : return LstpStatus::Error;
+    }
+
+    return LstpStatus::Error;
+}
+
+inline LstpStatus LstpStatus_from(nv::spi::bm::SpiStatus status)
+{
+    switch (status) {
+        case nv::spi::bm::SpiStatus::Ok            : return LstpStatus::Success;
+        case nv::spi::bm::SpiStatus::Busy          : return LstpStatus::Busy;
+        case nv::spi::bm::SpiStatus::EventTimeout  : return LstpStatus::Timeout;
+        case nv::spi::bm::SpiStatus::EventClearFail: return LstpStatus::Error;
+        case nv::spi::bm::SpiStatus::EventXferFail : return LstpStatus::Error;
+        case nv::spi::bm::SpiStatus::Error         : return LstpStatus::Error;
+        default                                    : return LstpStatus::Error;
+    }
+
+    return LstpStatus::Error;
+}
+
 struct [[gnu::packed]] LstpHdr
 {
     uint8_t channel_id;
@@ -134,8 +184,9 @@ enum class LstpManagementCommand : uint8_t
     ReadConfig  = 0x08,
     WriteConfig = 0x09,
     Lock        = 0x0A,
+    ReadLock    = 0x0B,
     Start       = ReadConfig,
-    End         = Lock
+    End         = ReadLock
 };
 
 struct [[gnu::packed]] LstpManagementConfig
@@ -144,11 +195,22 @@ struct [[gnu::packed]] LstpManagementConfig
     uint8_t num_channels;
 };
 
+enum class LstpLockState : uint8_t
+{
+    Unlocked = 0x00,
+    Locked   = 0x01,
+};
+
+struct [[gnu::packed]] LstpReadLockResponse
+{
+    LstpLockState lock_state;
+};
+
 /*****************************************************
  * LSTP SPI Channel
  *****************************************************/
 
-constexpr uint8_t LstpSpiMaxCs   = 4U;
+constexpr uint8_t LstpSpiMaxCs   = 2U;
 constexpr uint8_t LstpSpiCmdMask = 0xFU;
 
 enum class LstpSpiCommand : uint8_t
@@ -161,10 +223,24 @@ enum class LstpSpiCommand : uint8_t
     End         = 0x07,
 };
 
+enum LstpSpiCommandFlags : uint8_t
+{
+    CsDeassert = 0x10,
+    CsAssert   = 0x20,
+    // Bit 6 selects which CS pin to operate on for this transfer.
+    // 0 = CS0, 1 = CS1. One bit is sufficient because LstpSpiMaxCs == 2.
+    CsSelect = 0x40,
+};
+
 struct [[gnu::packed]] LstpSpiChannelConfig
 {
     uint8_t  channel_num_cs;
     uint32_t freq_hz;
+};
+
+struct [[gnu::packed]] LstpSpiReadRequest
+{
+    uint32_t read_len;
 };
 
 /*****************************************************
@@ -236,7 +312,9 @@ struct [[gnu::packed]] LstpGpioPinInfo
     gpio::GpioPort port;
     gpio::GpioPin  pin;
     LstpGpioConfig config;
-    bool           allow_set_irq = false;  // optional field in PinConfigs, default false
+    bool           allow_set_irq      = false;  // Do not enable for GPIOs owned by other tasks
+    bool allow_lstp_direction_control = false;  // Do not enable for GPIOs owned by other tasks
+                                                // or system critical GPIOs
 };
 
 enum class LstpGpioIrqConfig : uint8_t
@@ -298,6 +376,45 @@ struct [[gnu::packed]] LstpGpioIrqEventRequest
     GpioIndex     gpio_index;
     LstpGpioState value;
 };
+
+inline LstpGpioDirection LstpGpioDirection_from(nv::gpio::Direction dir)
+{
+    return (dir == nv::gpio::Direction::Output) ? LstpGpioDirection::Output
+                                                : LstpGpioDirection::Input;
+}
+
+inline nv::gpio::Direction GpioDirection_from(LstpGpioDirection dir)
+{
+    return (dir == LstpGpioDirection::Output) ? nv::gpio::Direction::Output
+                                              : nv::gpio::Direction::Input;
+}
+
+inline nv::gpio::GpioState GpioState_from(LstpGpioState state)
+{
+    return (state == LstpGpioState::High) ? nv::gpio::GpioState::High
+                                          : nv::gpio::GpioState::Low;
+}
+
+inline nv::gpio::GpioOpenDrain GpioOpenDrain_from(LstpGpioOutputDriveConfig cfg)
+{
+    return (cfg == LstpGpioOutputDriveConfig::OpenDrain) ? nv::gpio::GpioOpenDrain::Enable
+                                                         : nv::gpio::GpioOpenDrain::Disable;
+}
+
+inline nv::gpio::GpioPullDir GpioPullDir_from(LstpGpioBiasPullConfig cfg)
+{
+    switch (cfg) {
+        case LstpGpioBiasPullConfig::PullUp  : return nv::gpio::GpioPullDir::PullUp;
+        case LstpGpioBiasPullConfig::PullDown: return nv::gpio::GpioPullDir::PullDown;
+        default                              : return nv::gpio::GpioPullDir::Disabled;
+    }
+}
+
+inline nv::gpio::GpioPullStrength GpioPullStrength_from(uint16_t bias_pull_strength)
+{
+    return (bias_pull_strength == 0) ? nv::gpio::GpioPullStrength::Low
+                                     : nv::gpio::GpioPullStrength::High;
+}
 
 /*****************************************************
  * LSTP I2C Channel
@@ -509,4 +626,35 @@ constexpr uint8_t GetFirstChannelId(const std::array<LstpChannelEntry, N>& chann
     return channels.size();
 }
 
+template<size_t N>
+constexpr bool projectHasVirtualGpios(const std::array<LstpGpioPinInfo, N>& pin_configs)
+{
+    return std::any_of(pin_configs.begin(), pin_configs.end(), [](const auto& pin_info) {
+        return pin_info.port == nv::gpio::vrPort;
+    });
+}
+
+/** Interim ReadLock state until persistent lock is wired up. */
+template<size_t N>
+constexpr LstpLockState ReadLockState(const std::array<LstpGpioPinInfo, N>& pin_configs)
+{
+    for (const auto& pin_info : pin_configs) {
+        if (pin_info.allow_lstp_direction_control) {
+            return LstpLockState::Unlocked;
+        }
+    }
+    return LstpLockState::Locked;
+}
+template<size_t N>
+constexpr size_t LstpChannelTypeCount(const std::array<LstpChannelEntry, N>& channels,
+                                      const LstpChannelType                  channel_type)
+{
+    size_t count = 0;
+    for (const auto& entry : channels) {
+        if (entry.info.type == channel_type) {
+            count++;
+        }
+    }
+    return count;
+}
 }  // namespace nv::lstp

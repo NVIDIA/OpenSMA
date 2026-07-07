@@ -35,6 +35,13 @@ public:
 
     typedef std::array<uint8_t, SnSize> SnBuffer;
 
+    enum class SnSyncCommand : uint8_t
+    {
+        SerialNumber = 0,
+        ThermWarning = 1,
+        Invalid      = 0xff
+    };
+
     enum class SnSyncStatus : uint8_t
     {
         Success,

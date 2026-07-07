@@ -71,6 +71,7 @@ public:
     // Check if queue, event can be accessed cross core
     static bool can_cross_core_access(nv::ipc::QueueId queue_id);
     static bool can_cross_core_access(nv::ipc::EventId event_id);
+    static bool can_cross_core_access(nv::ipc::TaskId task_id);
 
     // Get the CoreId from the mctp client
     static nv::ipc::CoreId get_core_from_client(nv::mctp::Client client);

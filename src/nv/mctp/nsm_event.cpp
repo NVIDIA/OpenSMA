@@ -178,7 +178,7 @@ void nv::mctp::Nsm::GpioEventTrigger(nv::gpio::GpioPort port,
                                      GpioEventSource    gpioSource)
 {
     uint8_t portIndex = port;
-    if (port == nv::iox::vrPort) {
+    if (port == nv::gpio::vrPort) {
         static_assert(nv::ipc::GpioNsmEventMask.size() == sys::gpio::PortsNumber + 1,
                       "GpioNsmEventSetup size must be equal to nv::gpio::PortsNumber");
         portIndex = sys::gpio::PortsNumber;
@@ -266,6 +266,6 @@ bool nv::mctp::Nsm::VirtualGpioEventTrigger(std::span<const uint8_t> vpins,
         }
     }
 
-    GpioEventTrigger(nv::iox::vrPort, bitmap, VirtualGpio);
+    GpioEventTrigger(nv::gpio::vrPort, bitmap, VirtualGpio);
     return true;
 }

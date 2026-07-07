@@ -20,6 +20,7 @@
 #include <span>
 
 #include "nv/lstp/lstp_common.h"
+#include "nv/spi/port.h"
 
 namespace nv::lstp::bm {
 
@@ -45,6 +46,12 @@ public:
      * @param status The status to report in the error response
      */
     static void send_error(std::span<uint8_t>& buffer, LstpStatus status);
+
+    /**
+     * @brief Send a response for a SPI message
+     * @param port The SPI port
+     */
+    static void send_spi(nv::spi::Port port);
 
 private:
     /**

@@ -19,19 +19,36 @@
 #include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/spdm/spdm_crypto_helper.h"
 #include "nv/flash/flash.h"
-#include "nv/i2c/lattice_driver.h"
+#include "nv/vrot/interface/types.h"
+#include NV_IPC_CONFIG_H  // for nv::vrot::ApList
 #include <bit>
+
+namespace {
+constexpr std::array<uint8_t, 4> NonApType = {'N', 'O', 'N', 0x00};
+constexpr std::array<uint8_t, 4> CpdApType = {'C', 'P', 'D', 0x00};
+constexpr std::array<uint8_t, 4> LpuApType = {'L', 'P', 'U', 0x00};
+
+constexpr std::array<uint8_t, 4> ap_type_string(nv::vrot::ApType type)
+{
+    switch (type) {
+        case nv::vrot::ApType::Cpld: return CpdApType;
+        case nv::vrot::ApType::Lpu : return LpuApType;
+        default                    : return NonApType;
+    }
+}
+}  // namespace
+
 namespace nv::spdm::ap_measurement {
+static_assert(nv::vrot::ApList.size() <= 1,
+              "SPDM AP measurements currently support at most one AP in ApList");
+
 void get_ap_type(std::array<uint8_t, 4>& ap_type)
 {
-    // Todo: add logic to support non-CPLD AP type
-    if constexpr (CPLD_ProgramN_Pin_Enabled) {
-        constexpr std::array<uint8_t, 4> CpdApType = {'C', 'P', 'D', 0x00};
-        ap_type                                    = CpdApType;
-    }
-    else {
-        constexpr std::array<uint8_t, 4> NonApType = {'N', 'O', 'N', 0x00};
-        ap_type                                    = NonApType;
+    ap_type = NonApType;
+
+    for (const auto& ap : nv::vrot::ApList) {
+        ap_type = ap_type_string(ap.type);
+        break;
     }
 }
 

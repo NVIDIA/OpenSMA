@@ -24,6 +24,7 @@
 #include "nv/common/utils.h"
 #include "nv/flash/flash.h"
 #include "nv/nv.h"
+#include "nv/flash/pds_pwr_smoothing_defaults.h"
 
 using namespace nv::flash;
 
@@ -194,10 +195,10 @@ void Pds::get_default_value(PdsDataArray& table)
 
     // SoC Power Smoothing default settings
     // These defaults are used on first boot or when PDS is reset
-    set_default(Key::PdsSoCPowerSmoothEnabled, 0);             // Disabled by default
+    set_default(Key::PdsSoCPowerSmoothEnabled, nv_pds_default_soc_offset_policy_enabled());
     set_default(Key::PdsSoCPowerSmoothCurrentPresetIndex, 0);  // Default preset 0
-    set_default(Key::PdsSoCPowerBrakeEnabled, 0);              // Disabled by default
-    set_default(Key::PdsMaxACPowerRampRate, 0);                // 0.0f (bit_cast compatible)
+    set_default(Key::PdsSoCPowerBrakeEnabled, nv_pds_default_soc_power_brake_enabled());
+    set_default(Key::PdsMaxACPowerRampRate, 0);  // 0 W/s (disabled)
 
     // Leak Detection thresholds (0 = use config.h defaults)
     for (auto k = static_cast<uint32_t>(Key::PdsLeakDetSlot0Part0);
@@ -205,7 +206,7 @@ void Pds::get_default_value(PdsDataArray& table)
          k++) {
         set_default(static_cast<Key>(k), 0);
     }
-    set_default(Key::PdsSoCThermBrakeEnabled, 1);  // Enabled by default
+    set_default(Key::PdsSoCThermBrakeEnabled, nv_pds_default_soc_therm_brake_enabled());
 
     for (auto k = static_cast<uint32_t>(Key::PdsPwrSmoothCalib0);
          k <= static_cast<uint32_t>(Key::PdsPwrSmoothCalib14);
@@ -337,6 +338,10 @@ Status Pds::recover_corrupted_power_info(PdsInfo& pds_info)
                 data_valid = false;
                 break;
             }
+            continue;
+        }
+        else if (i == static_cast<uint32_t>(Key::PdsMaxACPowerRampRate)) {
+            // Max AC ramp rate is uint32_t W/s, not a boolean setting.
             continue;
         }
         else if (pds_info._pds_buffer.at(idx).data != 0

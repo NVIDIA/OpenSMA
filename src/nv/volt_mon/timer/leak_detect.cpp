@@ -209,6 +209,10 @@ Status LeakDetect::process_reading(uint8_t sensorId, Reading adcReading)
         return Status::InvalidSensorId;
     }
 
+    if (errorInjectionOverrides.at(sensorId).enabled) {
+        adcReading = errorInjectionOverrides.at(sensorId).reading;
+    }
+
     auto&      _sensor   = sensor.at(sensorId);
     const auto lastState = _sensor.state;
     _sensor.reading      = adcReading;
@@ -297,6 +301,23 @@ void LeakDetect::update_virtual_gpio(uint8_t sensorId, VrGpioState state)
                                       nv::logger::OutputDirection::Flash);
         }
     }
+    else if constexpr (nv::ipc::EnableLstp) {
+        // LSTP virtual GPIO: pin indices live in ioxPin (see project leak_detect config).
+        auto&                        _sensor = sensor.at(sensorId);
+        const std::array<uint8_t, 2> pinVals = get_alert_pin_vals(state);
+
+        for (size_t i = 0; i < pinVals.size(); ++i) {
+            const auto status = nv::gpio::Driver::write_virtual_physical_gpio(
+                nv::gpio::vrPort, _sensor.ioxPin.at(i), pinVals.at(i));
+            if (status != nv::gpio::Status::Ok) {
+                nv::logger::error_no_wait(
+                    nv::logger::Event::LeakDetectVrgpioUpdateFail,
+                    {sensorId, 0xff, _sensor.ioxPin.at(i), 0xff, static_cast<uint8_t>(state)},
+                    nv::logger::OutputDirection::Flash);
+                break;
+            }
+        }
+    }
 }
 
 void LeakDetect::update_hardware_gpio(HwGpioState level)
@@ -340,6 +361,44 @@ Status LeakDetect::find_sensor_index(uint8_t sensorId, uint8_t& sensorIdx) const
         }
     }
     return Status::NoMatchedSensorId;
+}
+
+Status LeakDetect::set_error_injection(SensorId sensorId, Reading adcReading)
+{
+    uint8_t    sensorIdx = 0;
+    const auto status    = find_sensor_index(sensorId, sensorIdx);
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    auto& errInjection   = errorInjectionOverrides.at(sensorIdx);
+    errInjection.enabled = true;
+    errInjection.reading = adcReading;
+
+    return Status::Ok;
+}
+
+Status LeakDetect::clear_error_injection(SensorId sensorId)
+{
+    uint8_t    sensorIdx = 0;
+    const auto status    = find_sensor_index(sensorId, sensorIdx);
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    auto& errInjection   = errorInjectionOverrides.at(sensorIdx);
+    errInjection.enabled = false;
+    errInjection.reading = 0;
+
+    return Status::Ok;
+}
+
+void LeakDetect::clear_error_injection()
+{
+    for (auto& errInjection : errorInjectionOverrides) {
+        errInjection.enabled = false;
+        errInjection.reading = 0;
+    }
 }
 
 Status LeakDetect::set_thresholds(uint8_t sensorIdx, const ThresholdLeakDet& config)

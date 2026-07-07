@@ -47,6 +47,14 @@ public:
     Mp29540(Port port, uint8_t address);
 
     /**
+     * Configure the device after detection: unmask the over-temperature warning (OT_WARN,
+     * bit10) and over-temperature protection/fault (OTP, bit11) in SMBALERT_MASK1 (1Bh) so a
+     * thermal event asserts ALT_P# (-> HSCC_SMBUS_ALT_N -> NSM GPIO event).
+     * @return I2cStatus indicating success or failure
+     */
+    nv::i2c::I2cStatus init();
+
+    /**
      * Read OT warning limit
      * @param limit Reference to store the limit in degrees Celsius (°C)
      * @return I2cStatus indicating success or failure

@@ -570,9 +570,13 @@ public:
     using platforms::Control::_start_eid;
     using platforms::Control::EidPoolSize;
     using platforms::Control::EidSize;
-    uint8_t IaniVendorIdByte1 = 0x47;
-    uint8_t IaniVendorIdByte2 = 0x16;
-    uint8_t NoMoreCapability  = 0xFF;
+    uint8_t IanaNextVendorIdSetSelector = 0x01;
+    uint8_t IanaVendorIdFormat          = 0x01;
+    uint8_t IanaVendorIdByte0           = 0x00;
+    uint8_t IanaVendorIdByte1           = 0x00;
+    uint8_t IanaVendorIdByte2           = 0x16;
+    uint8_t IanaVendorIdByte3           = 0x47;
+    uint8_t NoMoreCapability            = 0xFF;
     using platforms::Control::on_allocate_endpoint_id;
     using platforms::Control::on_discovery_notify;
     using platforms::Control::on_endpoint_discovery;
@@ -584,8 +588,9 @@ public:
     using platforms::Control::on_get_vendor_msg_support;
     using platforms::Control::on_prepare_endpoint_discovery;
     using platforms::Control::on_set_endpoint_id;
-    uint8_t PciVendorId1Byte1 = 0xDE;
-    uint8_t PciVendorId1Byte2 = 0x10;
+    uint8_t PciVendorIdFormat = 0x00;
+    uint8_t PciVendorIdByte0  = 0x10;
+    uint8_t PciVendorIdByte1  = 0xDE;
     using platforms::Control::PhyAddrSize;
     using platforms::Control::PortNum;
     using platforms::Control::RoutingEntryNum;
@@ -1087,14 +1092,16 @@ UBS_TEST(Control, OnGetVendorMsgSupportTest)
     control.on_get_vendor_msg_support(rx0, tx);
     ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
                   static_cast<uint8_t>(platforms::Ccode::Success));
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[0]), 0x00);
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[1]), 0x01);
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[0]), control.IanaNextVendorIdSetSelector);
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[1]), control.IanaVendorIdFormat);
     ensure::is_eq(static_cast<uint8_t>(ctx.data[2]),
-                  static_cast<uint8_t>(control.IaniVendorIdByte1));
+                  static_cast<uint8_t>(control.IanaVendorIdByte0));
     ensure::is_eq(static_cast<uint8_t>(ctx.data[3]),
-                  static_cast<uint8_t>(control.IaniVendorIdByte2));
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[4]), 0x00);
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[5]), 0x00);
+                  static_cast<uint8_t>(control.IanaVendorIdByte1));
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[4]),
+                  static_cast<uint8_t>(control.IanaVendorIdByte2));
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[5]),
+                  static_cast<uint8_t>(control.IanaVendorIdByte3));
     ensure::is_eq(static_cast<uint8_t>(ctx.data[6]), 0x00);
     ensure::is_eq(static_cast<uint8_t>(ctx.data[7]), 0x00);
     ensure::is_eq(
@@ -1125,12 +1132,12 @@ UBS_TEST(Control, OnGetVendorMsgSupportTest)
     control.on_get_vendor_msg_support(rx1, tx);
     ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
                   static_cast<uint8_t>(platforms::Ccode::Success));
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[0]), 0x01);
-    ensure::is_eq(static_cast<uint8_t>(ctx.data[1]), 0x00);
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[0]), control.NoMoreCapability);
+    ensure::is_eq(static_cast<uint8_t>(ctx.data[1]), control.PciVendorIdFormat);
     ensure::is_eq(static_cast<uint8_t>(ctx.data[2]),
-                  static_cast<uint8_t>(control.PciVendorId1Byte1));
+                  static_cast<uint8_t>(control.PciVendorIdByte0));
     ensure::is_eq(static_cast<uint8_t>(ctx.data[3]),
-                  static_cast<uint8_t>(control.PciVendorId1Byte2));
+                  static_cast<uint8_t>(control.PciVendorIdByte1));
     ensure::is_eq(static_cast<uint8_t>(ctx.data[4]), 0x00);
     ensure::is_eq(static_cast<uint8_t>(ctx.data[5]), 0x00);
     ensure::is_eq(
@@ -1671,4 +1678,70 @@ UBS_TEST(Control, OnUpdateRoutingInfoTest)
     control.on_routing_info_update(rx10, tx);
     ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
                   static_cast<uint8_t>(platforms::Ccode::ErrorInsufficientSpace));
+    control._additional_eid_count = 0;  // reset additional eid count after test
+    // update eid is an current eid
+    platforms::set_cur_eid(
+        control.router(), static_cast<uint8_t>(platforms::Interface::UsI2c), 0x0B);
+    platforms::set_cur_eid(
+        control.router(), static_cast<uint8_t>(platforms::Interface::UsUsb), 0x0C);
+    app::Packet const rx11{
+        .priv =
+            {
+                   .packet_length    = 0,
+                   .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c),
+                   .reserved0        = 0,
+                   },
+        .hdr =
+            {
+                   .hdr_ver   = 0,
+                   .rsvd      = 0,
+                   .dst_eid   = 0x01,
+                   .src_eid   = 0x02,
+                   .msg_tag   = 0x1,
+                   .tag_owner = 0,
+                   .pkt_seq   = 0,
+                   .eom       = 1,
+                   .som       = 1,
+                   },
+        .msg = {0x00,
+                   0x00, static_cast<uint8_t>(app::Cmd::RoutingInfoUpdate),
+                   0x01, 0x00,
+                   0x01, 0x0B,
+                   0x52}
+    };
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
+    control.on_routing_info_update(rx11, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::ErrorInvalidData));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
+    app::Packet const rx12{
+        .priv =
+            {
+                   .packet_length    = 0,
+                   .packet_interface = static_cast<uint8_t>(platforms::Interface::UsUsb),
+                   .reserved0        = 0,
+                   },
+        .hdr =
+            {
+                   .hdr_ver   = 0,
+                   .rsvd      = 0,
+                   .dst_eid   = 0x01,
+                   .src_eid   = 0x02,
+                   .msg_tag   = 0x1,
+                   .tag_owner = 0,
+                   .pkt_seq   = 0,
+                   .eom       = 1,
+                   .som       = 1,
+                   },
+        .msg = {0x00,
+                   0x00, static_cast<uint8_t>(app::Cmd::RoutingInfoUpdate),
+                   0x01, 0x00,
+                   0x01, 0x0C,
+                   0x52}
+    };
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
+    control.on_routing_info_update(rx12, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::ErrorInvalidData));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
 };

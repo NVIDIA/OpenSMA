@@ -20,6 +20,18 @@
 #include "nv/gpio/driver.h"
 #include "nv/logger/common.h"
 #include "nv/logger/log.h"
+#if __has_include("nhp_config.h")
+#include "nhp_config.h"
+#else
+// nhp_config.h is project-specific and only ships with projects that
+// actually integrate AHS (px9oe, p3957_cxx, p5166_mp). Host-side builds
+// such as the x86 testrunner still compile this TU for unit tests; in
+// that case there is no hardware to drive, so default to the
+// platform-handles-pins behaviour.
+namespace nv::nhp {
+constexpr bool EnableFwHssmPinControl = false;
+}  // namespace nv::nhp
+#endif
 #include NV_IPC_CONFIG_H
 
 #ifndef ENABLE_CLK_EN_L_REVERSE_POLARITY
@@ -205,71 +217,96 @@ void E1sHotSwap::updateStateMachine(bool pgood, bool prsntL, bool perstL, bool t
  * Sets the power, clock, reset, and LED pins based on the current
  * state of the hot swap state machine. Each state has specific pin
  * configurations to ensure proper drive operation and safety.
+ *
+ * When nv::nhp::EnableFwHssmPinControl is true firmware drives the
+ * power / clock / reset GPIOs from the HSSM state machine. When it is
+ * false the platform delegates that pin sequencing to external hardware
+ * (CPLD or backplane); LED indication is still driven by firmware in
+ * every state so the per-state LED pattern is preserved.
  */
-void E1sHotSwap::update_pins(bool perstL)
+void E1sHotSwap::update_pins([[maybe_unused]] bool perstL)
 {
     switch (state) {
         case DriveDisabled: {
             // Hold everything off - safe state for drive removal
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
-            set_pin(pinout.clk_en_l_port,
-                    pinout.clk_en_l_pin,
-                    High,
-                    EnableClkEnLReversePolarity);                 // Clocks disabled
-            set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable disabled
-            set_leds(false, false);                                  // LEDs off
+            if constexpr (nv::nhp::EnableFwHssmPinControl) {
+                set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
+                set_pin(pinout.clk_en_l_port,
+                        pinout.clk_en_l_pin,
+                        High,
+                        EnableClkEnLReversePolarity);                    // Clocks disabled
+                set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);     // Power disable not
+                                                                         // asserted
+                set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable
+                                                                         // disabled
+            }
+            set_leds(false, false);  // LEDs off
             break;
         }
         case WaitPgood: {
             // Power enabled, waiting for power good signal
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still asserted
-            set_pin(pinout.clk_en_l_port,
-                    pinout.clk_en_l_pin,
-                    High,
-                    EnableClkEnLReversePolarity);                 // Clocks still disabled
-            set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+            if constexpr (nv::nhp::EnableFwHssmPinControl) {
+                set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still
+                                                                        // asserted
+                set_pin(pinout.clk_en_l_port,
+                        pinout.clk_en_l_pin,
+                        High,
+                        EnableClkEnLReversePolarity);                   // Clocks still disabled
+                set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);    // Power disable not
+                                                                        // asserted
+                set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+            }
             set_leds(true, false);  // Amber LED on to indicate power
             break;
         }
         case WaitClkStable: {
             // Power and clock enabled, waiting for stabilization
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still asserted
-            set_pin(pinout.clk_en_l_port,
-                    pinout.clk_en_l_pin,
-                    Low,
-                    EnableClkEnLReversePolarity);                 // Clocks enabled
-            set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+            if constexpr (nv::nhp::EnableFwHssmPinControl) {
+                set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset still
+                                                                        // asserted
+                set_pin(pinout.clk_en_l_port,
+                        pinout.clk_en_l_pin,
+                        Low,
+                        EnableClkEnLReversePolarity);                   // Clocks enabled
+                set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);    // Power disable not
+                                                                        // asserted
+                set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+            }
             set_leds(true, false);  // Amber LED on to indicate power
             break;
         }
         case DriveOn: {
             // Power, clock, and PCIe fully enabled
-            const PinState perstL_value = (EnablePerstLActiveHigh) ? High : HiZ;
-            const PinState perstL_state = (perstL) ? perstL_value : Low;
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, perstL_state);  // PCIe reset
-                                                                             // deasserted
-            set_pin(pinout.clk_en_l_port,
-                    pinout.clk_en_l_pin,
-                    Low,
-                    EnableClkEnLReversePolarity);                 // Clocks enabled
-            set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
-                                                                    // (host control)
+            if constexpr (nv::nhp::EnableFwHssmPinControl) {
+                const PinState perstL_value = (EnablePerstLActiveHigh) ? High : HiZ;
+                const PinState perstL_state = (perstL) ? perstL_value : Low;
+                set_pin(pinout.perst_l_port, pinout.perst_l_pin, perstL_state);  // PCIe reset
+                                                                                 // deasserted
+                set_pin(pinout.clk_en_l_port,
+                        pinout.clk_en_l_pin,
+                        Low,
+                        EnableClkEnLReversePolarity);                   // Clocks enabled
+                set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);    // Power disable not
+                                                                        // asserted
+                set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, Low);  // Power enable active
+                                                                        // (host control)
+            }
             set_leds(false, true);  // Blue LED on to indicate drive is on
             break;
         }
         case Fault: {
             // Fault state - hold everything off for safety
-            set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
-            set_pin(pinout.clk_en_l_port,
-                    pinout.clk_en_l_pin,
-                    High,
-                    EnableClkEnLReversePolarity);                 // Clocks disabled
-            set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);  // Power disable not asserted
-            set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable disabled
+            if constexpr (nv::nhp::EnableFwHssmPinControl) {
+                set_pin(pinout.perst_l_port, pinout.perst_l_pin, Low);  // PCIe reset asserted
+                set_pin(pinout.clk_en_l_port,
+                        pinout.clk_en_l_pin,
+                        High,
+                        EnableClkEnLReversePolarity);                    // Clocks disabled
+                set_pin(pinout.pwrdis_port, pinout.pwrdis_pin, Low);     // Power disable not
+                                                                         // asserted
+                set_pin(pinout.pwren_l_port, pinout.pwren_l_pin, High);  // Power enable
+                                                                         // disabled
+            }
             set_leds(false, false);  // LEDs off to indicate fault
             break;
         }

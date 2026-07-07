@@ -102,9 +102,10 @@ public:
     static void              SetOffsetPolicyState(ConstantPowerMode mode);
     static ConstantPowerMode GetOffsetPolicyState();
 
-    // Max AC Ramp Rate control (automatically enables/disables offset policies)
-    static void  SetMaxACRampRate(float rate);
-    static float GetMaxACRampRate();
+    // Max AC Ramp Rate control (Type-5 GET/SET storage only).
+    // Enable offset policies separately via SetOffsetPolicyState().
+    static void     SetMaxACRampRate(uint32_t rate_w_per_s);
+    static uint32_t GetMaxACRampRate();
 
     // ========================================================================
     // Persistence API (PDS read/write for settings that survive power cycles)
@@ -114,7 +115,7 @@ public:
     static bool PersistSoCPowerSmoothEnabled(bool enabled);
     static bool PersistSoCPowerBrakeEnabled(bool enabled);
     static bool PersistSoCPowerSmoothCurrentPresetIndex(uint8_t preset_id);
-    static bool PersistMaxACPowerRampRate(float rate);
+    static bool PersistMaxACPowerRampRate(uint32_t rate_w_per_s);
     static bool PersistSoCThermBrakeEnabled(bool enabled);
 
     // Load all persisted settings from PDS and apply them
@@ -166,6 +167,10 @@ public:
     static uint16_t get_last_edpp_dac_raw();
     static uint16_t get_last_isink_dac_raw();
 
+    // Set/Clear the status of the thermal warning pin in the power manager
+    // Called from peripheral code that detects the thermal warning status
+    static void set_peer_thermal_warning(bool assert);
+
 private:
     // ========================================================================
     // Internal State (previously global variables)
@@ -187,11 +192,19 @@ private:
 // ADC Calibration Test Mode - Public API (non-member functions)
 // ============================================================================
 
+/// @brief Outcome of @ref execute_adc_calibration (mapped to NSM completion codes by caller).
+enum class AdcCalibrationExecuteResult : uint8_t
+{
+    Success         = 0,
+    I2cFailure      = 1,
+    PdsWriteFailure = 2,
+};
+
 /// @brief Execute the full ADC calibration (blocking, ~130ms).
 /// Resets state, then runs all 26 steps (0V to 2.5V, 100mV increments) with 5ms delays.
 /// Results are saved to flash upon completion.
 /// Must be called from a task with sufficient stack (e.g. MCTP task, not Tmr Svc).
-void execute_adc_calibration();
+[[nodiscard]] AdcCalibrationExecuteResult execute_adc_calibration();
 
 /// @brief Get ADC calibration results
 /// Populates response struct from flash-backed calibration data.

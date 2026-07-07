@@ -58,6 +58,26 @@ enum class DeviceType : uint8_t
     MP29540
 };
 
+/**
+ * Hardware strap on the IC's CL pin.
+ *
+ * Many HSC ICs (LM5066I, MP5926, ...) use a CL pin to select an internal
+ * current-sense gain / threshold. The pin is wired per board strata and
+ * cannot change at runtime, so each project's PowerSensorListConfig declares
+ * the value used by its hardware.
+ *
+ * Per-IC mapping:
+ *   - MP5926:   Gnd → SENSE_GAIN = 12; Vdd → SENSE_GAIN = 24
+ *   - LM5066I:  Gnd → 50 mV CL threshold; Vdd → 26 mV CL threshold
+ *               (today encoded directly via PowerSensorDirectFormatCoeff)
+ */
+enum class HscClPin : uint8_t
+{
+    Unset = 0,
+    Gnd   = 1,
+    Vdd   = 2,
+};
+
 struct PowerSensorDirectFormatCoeff
 {
     float    m        = 0.0f;
@@ -84,6 +104,11 @@ struct PowerSensorListConfig
     nv::mctp::T3Voltage               vin_sensor_id;    // NSM Type 3 Voltage input sensor ID
     nv::mctp::PowerSensorFaults       alert_sensor_id;  // NSM Type 3 Alert sensor ID
     PowerSensorDirectFormatCoeff      power_input_coeff;
+    float                             rsense_milliohm;
+    HscClPin                          cl_pin;
 };
+
+uint8_t lm5066i_ot_fault_limit_celsius();
+uint8_t lm5066i_ot_warn_limit_celsius();
 
 }  // namespace nv::i2c::power

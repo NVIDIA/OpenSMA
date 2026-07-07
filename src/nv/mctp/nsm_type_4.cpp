@@ -54,40 +54,6 @@ static_assert(T4TaskExecutionTimeEntryNum <= nv::perf_mon::TaskExecutionTimeEntr
               "T4TaskExecutionTimeEntryNum cannot be greater than "
               "nv::perf_mon::TaskExecutionTimeEntryNum");
 
-using OobBusT4Tags = std::tuple<nv::perf_mon::OobBus, uint8_t>;
-constexpr std::array<OobBusT4Tags, nv::perf_mon::OobBusTypeNum> t4TagsForOobBusMap{
-
-    OobBusT4Tags{ nv::perf_mon::OobBus::UsI2c,            DIAG_I2C_UPSTREAM_ERROR},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c0, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 0},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c1, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 1},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c2, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 2},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c3, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 3},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c4, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 4},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c5, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 5},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c6, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 6},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI2c7, DIAG_I2C0_DOWNSTREAM_BUS_ERROR + 7},
-
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI3c0,            DIAG_I3C0_BUS_ERROR + 0},
-    OobBusT4Tags{nv::perf_mon::OobBus::DsI3c1,            DIAG_I3C0_BUS_ERROR + 1},
-
-    OobBusT4Tags{  nv::perf_mon::OobBus::Spi0, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 0},
-    OobBusT4Tags{  nv::perf_mon::OobBus::Spi1, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 1},
-    OobBusT4Tags{  nv::perf_mon::OobBus::Spi2, DIAG_SPI0_DOWNSTREAM_BUS_ERROR + 2},
-};
-
-constexpr bool verifyT4TagsForOobBusMap()
-{
-    // in case  OobBusTypeNum increases the T4 tag will be zero
-    const auto& last_item = t4TagsForOobBusMap.at(t4TagsForOobBusMap.size() - 1);
-    const auto  last_tag  = std::get<1>(last_item);
-    return last_tag != 0;
-}
-
-static_assert(verifyT4TagsForOobBusMap(),
-              "nv::perf_mon::OobBusTypeNum does not match with 't4TagsForOobBusMap' elements,"
-              " perhaps nv::perf_mon::OobBusTypeNum has been increased and then"
-              " 't4TagsForOobBusMap' requires adjustment");
-
 Ccode appendRecord_firmware_version(TelemetryRecordArray& devDiagTelemetryArray)
 {
     std::array<char, NvMctpVersionLength> fw_version{};
@@ -160,6 +126,7 @@ Ccode appendRecord_error_counter_telemetry(uint8_t               telemetry_tagid
 {
     T4ErrorCounterResponse response{};
     response.latached_error = nv::perf_mon::Driver::get_latached_error(oobBus);
+    response.type           = nv::perf_mon::Driver::get_oob_bus_type(oobBus);
     // get counters for all error types
     for (uint8_t error_type = 0; error_type < nv::perf_mon::error_type_num; ++error_type) {
         response.error_count.at(error_type) = nv::perf_mon::Driver::get_transaction_error(
@@ -174,18 +141,10 @@ Ccode appendRecord_error_counter_telemetry(uint8_t               telemetry_tagid
     return Ccode::Success;
 }
 
-uint8_t find_t4_tag_id(nv::perf_mon::OobBus oobBusIdReq)
-{
-    for (const auto& [oobBusId, t4_tag_id] : nv::mctp::t4TagsForOobBusMap) {
-        if (oobBusIdReq == oobBusId) {
-            return static_cast<uint8_t>(t4_tag_id);
-        }
-    }
-    return static_cast<uint8_t>(perf_mon::OobBus::End);
-}
-
 Ccode appendRecord_all_error_counter_telemetries(TelemetryRecordArray& devDiagTelemetryArray)
 {
+    constexpr uint8_t MAX_ERROR_COUNTER_TAG = static_cast<uint8_t>(DIAG_I2C0_BUS_ERROR)
+                                            + static_cast<uint8_t>(perf_mon::OobBus::End) - 1;
     Ccode   rcCode           = Ccode::Success;
     uint8_t telemetry_tag_id = 0;
 
@@ -196,13 +155,8 @@ Ccode appendRecord_all_error_counter_telemetries(TelemetryRecordArray& devDiagTe
         if (false == nv::perf_mon::Driver::is_oob_bus_valid(oobBus)) {
             continue;
         }
-        telemetry_tag_id = find_t4_tag_id(oobBus);
-        bool valid       = true;
-        if (telemetry_tag_id == static_cast<uint8_t>(perf_mon::OobBus::End)) {
-            nv::error("The Error Counter id '%d' is not defined in the T4 Tags table\n",
-                      oobBusId);
-            valid = false;
-        }
+        telemetry_tag_id = DIAG_I2C0_BUS_ERROR + oobBusId;
+        const bool valid = (telemetry_tag_id <= MAX_ERROR_COUNTER_TAG) ? true : false;
         if ((rcCode = appendRecord_error_counter_telemetry(
                  telemetry_tag_id, oobBus, devDiagTelemetryArray, valid))
             != Ccode::Success) {

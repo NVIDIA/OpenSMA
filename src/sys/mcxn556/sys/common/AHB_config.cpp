@@ -237,6 +237,22 @@ static void DMAConfig(uint32_t dma_index, uint32_t channel, nv::ipc::CoreId core
             EDMA_Init(DMA1, &DMA1_config);
         }
     }
+    if (core_id == nv::ipc::CoreId::Core1) {
+        if (dma_index == 0) {
+            DMA0_config.enableMasterIdReplication = true;
+            // coverity[cert_ctr50_cpp_violation] - will not exceed array bounds
+            DMA0_config.channelConfig[channel] = &channelConfig;
+            EDMA_Deinit(DMA0);
+            EDMA_Init(DMA0, &DMA0_config);
+        }
+        else if (dma_index == 1) {
+            DMA1_config.enableMasterIdReplication = true;
+            // coverity[cert_ctr50_cpp_violation] - will not exceed array bounds
+            DMA1_config.channelConfig[channel] = &channelConfig;
+            EDMA_Deinit(DMA1);
+            EDMA_Init(DMA1, &DMA1_config);
+        }
+    }
 }
 
 static void I3CConfig(nv::ipc::HardwareId hardware_id, nv::ipc::CoreId core_id)
@@ -358,6 +374,20 @@ static void HardwareConfig(nv::ipc::HardwareId hardware_id)
         case nv::ipc::HardwareId::eDMA_0_CH15: DMAConfig(0, 15, core_id); return;
         case nv::ipc::HardwareId::eDMA_1_CH0 : DMAConfig(1, 0, core_id); return;
         case nv::ipc::HardwareId::eDMA_1_CH1 : DMAConfig(1, 1, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH2 : DMAConfig(1, 2, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH3 : DMAConfig(1, 3, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH4 : DMAConfig(1, 4, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH5 : DMAConfig(1, 5, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH6 : DMAConfig(1, 6, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH7 : DMAConfig(1, 7, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH8 : DMAConfig(1, 8, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH9 : DMAConfig(1, 9, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH10: DMAConfig(1, 10, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH11: DMAConfig(1, 11, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH12: DMAConfig(1, 12, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH13: DMAConfig(1, 13, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH14: DMAConfig(1, 14, core_id); return;
+        case nv::ipc::HardwareId::eDMA_1_CH15: DMAConfig(1, 15, core_id); return;
         case nv::ipc::HardwareId::FLEXCOMM0  :
         case nv::ipc::HardwareId::FLEXCOMM1  :
         case nv::ipc::HardwareId::FLEXCOMM2  :

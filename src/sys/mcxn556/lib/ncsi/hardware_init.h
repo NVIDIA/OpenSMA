@@ -19,6 +19,8 @@
 #ifndef NV_ECM_HARDWARE_INIT_H
 #define NV_ECM_HARDWARE_INIT_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -47,14 +49,22 @@ extern "C" {
  * @brief Initialize ENET hardware for RMII mode
  *
  * This function initializes:
- * - RMII interface pins
- * - ENET clock (50MHz from PLL0)
- *
- * Note: PHY runs in default auto-negotiation mode (no MDIO control).
+ * - RMII interface pins (plus MDIO when NCSI_USE_PHY_MDIO is set)
+ * - ENET clock configuration (PLL0/div for production; PHY-sourced on devkit)
+ * - MDIO interface for PHY communication (NCSI_USE_PHY_MDIO only)
  *
  * Should be called before ETH_ADAPTER_Init()
  */
 void ECM_InitEnetHardware(void);
+
+// System clock frequency used for ENET / MDIO timing
+extern uint32_t BOARD_PhySysClock;
+
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+// PHY address; hardcoded at build time (BOARD_LAN8741_PHY_ADDR, default 0x00
+// for FRDM-MCXN947). No runtime MDIO scan exists.
+extern uint8_t BOARD_PhyAddress;
+#endif
 #endif  // USB_DEVICE_CONFIG_CDC_ECM
 
 /**

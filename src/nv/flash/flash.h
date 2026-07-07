@@ -22,7 +22,7 @@
 #include "nv/flash/common.h"
 #include "nv/flash/datastore.h"
 #include "nv/ipc/queue.h"
-#include "nv/spdm/secure_boot.h"
+#include "nv/secure_boot/authenticate_data.h"
 namespace nv::flash {
 
 class Flash
@@ -50,14 +50,14 @@ public:
                            const Data&           data,
                            nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
 
-    static Status get_ap_fw_authenticate_data(
-        nv::spdm::secure_boot::SecureBoot::AuthenticateData& authenticate_data,
-        Key                                                  key,
-        nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
-    static Status set_ap_fw_authenticate_data(
-        const nv::spdm::secure_boot::SecureBoot::AuthenticateData& authenticate_data,
-        Key                                                        key,
-        nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
+    static Status
+    get_ap_fw_authenticate_data(nv::secure_boot::AuthenticateData& authenticate_data,
+                                Key                                key,
+                                nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
+    static Status
+    set_ap_fw_authenticate_data(const nv::secure_boot::AuthenticateData& authenticate_data,
+                                Key                                      key,
+                                nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
 
     static Status get_data_from_kernel(Key key, Data& data);
 
@@ -121,12 +121,10 @@ public:
     // Only used for logging fault
     static Status init_on_fault();
 
-#if 0
     static Status
     write_cfpa_customer(const std::span<uint8_t>& buffer,
                         uint32_t                  offset,
                         nv::ipc::Queue::Usecs     timeout = nv::ipc::Queue::Usecs::max());
-#endif
 };
 
 }  // namespace nv::flash

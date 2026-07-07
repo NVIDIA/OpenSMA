@@ -17,26 +17,27 @@
  */
 #pragma once
 #include "nv/flash/common.h"
-#include "nv/spdm/secure_boot.h"
+#include "nv/secure_boot/authenticate_data.h"
 namespace nv::flash {
 struct AuthenticateData
 {
-    bool                                                is_on_set_data = false;
-    nv::spdm::secure_boot::SecureBoot::AuthenticateData active_ap_fw_authenticate_data{};
+    bool                              is_on_set_data = false;
+    nv::secure_boot::AuthenticateData active_ap_fw_authenticate_data{};
 };
 class Npds
 {
 public:
     Npds() = default;
-    Status            get_data(Key key, Data& data);
-    Status            set_data(Key key, const Data data);
+    Status get_data(Key key, Data& data);
+    Status set_data(Key key, const Data data);
+
     AuthenticateData& get_ap_fw_authenticate_data_index(Key key);
 
+    static constexpr size_t AuthDataSlots = !nv::vrot::ApList.empty() ? 2U : 0;
+
 private:
-    NpdsDataArray _npds_buffer{};
-    // 0 is for active ap fw authenticate data
-    // 1 is for update ap fw authenticate data
-    std::array<AuthenticateData, 2> _ap_fw_authenticate_data{};
+    NpdsDataArray                               _npds_buffer{};
+    std::array<AuthenticateData, AuthDataSlots> _ap_fw_authenticate_data{};
 };
 
 }  // namespace nv::flash

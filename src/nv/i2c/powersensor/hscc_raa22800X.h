@@ -38,5 +38,13 @@ public:
      * @param address I2C slave address of the RNS RAA22800X
      */
     Raa22800X(Port port, uint8_t address);
+
+    /**
+     * Configure the device after detection. RAA22800X SMBALERT_MASK (1Bh) defaults to 0x00
+     * (nothing masked), so OT_WARN (STATUS_TEMPERATURE bit6) and OT_FAULT (bit7) already
+     * assert SMBALERT#/nPMALERT out of reset; this just clears any latched boot faults.
+     * @return I2cStatus indicating success or failure
+     */
+    nv::i2c::I2cStatus init();
 };
 }  // namespace nv::i2c

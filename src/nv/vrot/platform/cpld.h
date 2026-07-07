@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <span>
+#include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/vrot/interface/types.h"
 #include "nv/spdm/crypto_status.h"
 
@@ -32,14 +33,23 @@ struct CpldOps
                                          nv::spdm::crypto::CryptoStatus result);
     static ApOpErrCode release_reset(const ApInfo& ap);
     static ApOpErrCode check_booted(const ApInfo& ap);
-    static ApOpErrCode
-    read_metadata(const ApInfo& ap, uint32_t metadata_offset, std::span<uint8_t> data);
-    static ApOpErrCode
-    read_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<uint8_t> data);
-    static ApOpErrCode
-    write_metadata(const ApInfo& ap, uint32_t metadata_offset, std::span<const uint8_t> data);
-    static ApOpErrCode
-    write_fw_data(const ApInfo& ap, uint32_t fw_data_offset, std::span<const uint8_t> data);
+    static ApOpErrCode read_metadata(const ApInfo&      ap,
+                                     uint8_t            slot,
+                                     uint32_t           metadata_offset,
+                                     std::span<uint8_t> data);
+    static ApOpErrCode read_fw_data(const ApInfo&      ap,
+                                    uint8_t            slot,
+                                    uint32_t           fw_data_offset,
+                                    std::span<uint8_t> data);
+    static ApOpErrCode write_metadata(const ApInfo&            ap,
+                                      uint8_t                  slot,
+                                      uint32_t                 metadata_offset,
+                                      std::span<const uint8_t> data);
+    static ApOpErrCode write_fw_data(const ApInfo&            ap,
+                                     uint8_t                  slot,
+                                     uint32_t                 fw_data_offset,
+                                     std::span<const uint8_t> data,
+                                     bool                     background_copy);
 
     static ApOpErrCode fw_update_prepare(const ApInfo& ap);
     static ApOpErrCode fw_update_callback(const ApInfo&                  ap,
@@ -54,7 +64,7 @@ struct CpldOps
     // override or refuse authentication (e.g. an AP that uses a different
     // attestation mechanism, or a project that wants to gate auth on
     // additional preconditions).
-    static ApOpErrCode request_authentication(const ApInfo& ap);
+    static ApOpErrCode request_authentication(const ApInfo& ap, uint8_t& auth_request_id);
     static uint8_t     get_write_fail_retry(const ApInfo& ap);
 };
 

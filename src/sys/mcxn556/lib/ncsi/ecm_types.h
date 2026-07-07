@@ -51,6 +51,8 @@ enum AppEvent : uint32_t
     kAPP_HidRxReady  = 4,  // HID report received from USB
     kAPP_AcmRxReady  = 5,  // ACM data received from USB (UART bridge)
     kAPP_LstpRxReady = 6,  // LSTP packet received from USB
+    kAPP_Spi0        = 7,  // SPI0 transaction complete
+    kAPP_Spi1        = 8,  // SPI1 transaction complete
 };
 
 // Application event helper macros

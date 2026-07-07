@@ -29,6 +29,18 @@ namespace nv::i2c::power {
 // Value for read_hsc_gpio_strap() / read_hsc_variant(): scan all HSC device columns.
 constexpr uint8_t SCAN_ALL_DEVICES = 0xff;
 
+/**
+ * Returns the HSC device column (slot) index to scan, or SCAN_ALL_DEVICES (0xff)
+ * to scan all columns. Called once at the start of identify_power_sensors().
+ *
+ * The shared default in device_manager.cpp is __attribute__((weak)) and always
+ * returns SCAN_ALL_DEVICES. Projects that have a board strap selecting between
+ * device columns (e.g. East/West) must provide a strong override
+ * **in the same namespace** (nv::i2c::power); a definition that lands in the
+ * global namespace will not override the weak symbol.
+ */
+uint8_t read_hsc_gpio_strap();
+
 // PMBus standard register addresses used by DeviceManager
 namespace PmbusReg {
 constexpr uint8_t MFR_ID    = 0x99;  // Manufacturer ID (Block Read, 3-4 bytes)
@@ -47,6 +59,8 @@ struct IdentifiedDevice
     nv::mctp::T3Voltage               vout_sensor_id;   // NSM Type 3 Voltage Output sensor ID
     nv::mctp::T3Voltage               vin_sensor_id;    // NSM Type 3 Voltage Input sensor ID
     nv::mctp::PowerSensorFaults       alert_sensor_id;  // NSM Type 3 Alert sensor ID
+    float                             rsense_milliohm;
+    HscClPin                          cl_pin;
 };
 
 /**
@@ -169,10 +183,10 @@ public:
 
 private:
     // ========== Multi-Device Storage ==========
-    std::array<IdentifiedDevice, MAX_HSC_DEVICES> hsc_devices_;
+    std::array<IdentifiedDevice, MAX_HSC_DEVICES> hsc_devices_{};
     uint8_t                                       hsc_count_ = 0;
 
-    std::array<IdentifiedDevice, MAX_HSCC_DEVICES> hscc_devices_;
+    std::array<IdentifiedDevice, MAX_HSCC_DEVICES> hscc_devices_{};
     uint8_t                                        hscc_count_ = 0;
 
     /**
@@ -191,7 +205,9 @@ private:
                         nv::mctp::Type3PowerSensors       power_id,
                         nv::mctp::T3Voltage               vout_id,
                         nv::mctp::T3Voltage               vin_id,
-                        nv::mctp::PowerSensorFaults       alert_id);
+                        nv::mctp::PowerSensorFaults       alert_id,
+                        float                             rsense_milliohm,
+                        HscClPin                          cl_pin);
     void add_hscc_device(uint8_t                           address,
                          DeviceType                        type,
                          PowerSensorDirectFormatCoeff      power_input_coeff,

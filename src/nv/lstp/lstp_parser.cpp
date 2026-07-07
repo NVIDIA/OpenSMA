@@ -61,14 +61,92 @@ LstpChannelType LstpParser::parse_channel_type(std::span<uint8_t>& req_buffer)
         static_assert(static_cast<uint8_t>(LstpManagementCommand::Start)
                       > static_cast<uint8_t>(LstpSpiCommand::End));
         static_assert(static_cast<uint8_t>(LstpManagementCommand::End) <= LstpSpiCmdMask);
-        if ((hdr.channel_id == 0)
-            && (hdr.cmd_status_code & LstpSpiCmdMask)
-                   <= static_cast<uint8_t>(LstpSpiCommand::End)) {
-            channel_type = LstpChannelType::Spi;
+        constexpr uint8_t kFirstSpiChannel = GetFirstChannelId(LstpChannels,
+                                                               LstpChannelType::Spi);
+        if constexpr (kFirstSpiChannel < LstpNumChannels) {
+            if ((hdr.channel_id == 0)
+                && (hdr.cmd_status_code & LstpSpiCmdMask)
+                       <= static_cast<uint8_t>(LstpSpiCommand::End)) {
+                hdr.channel_id = kFirstSpiChannel;
+                channel_type   = LstpChannelType::Spi;
+            }
         }
     }
 
     return channel_type;
+}
+
+std::expected<LstpParser::SpiRequest, LstpStatus>
+LstpParser::parse_spi_request(std::span<uint8_t>& req_buffer)
+{
+    auto&        req_hdr    = from<LstpHdr>(req_buffer.data());
+    const size_t req_offset = sizeof(LstpHdr);
+
+    const uint16_t payload_len = req_hdr.len_lsb | (req_hdr.len_msb << BYTE1_SHIFT);
+    // TODO: Add multipacket support
+    // NOLINTNEXTLINE: expected to not work if EnableLstp is false
+    if (payload_len > LstpMaxPayloadSize) {
+        return std::unexpected(LstpStatus::Error);
+    }
+
+    SpiRequest req{
+        .channel_id  = req_hdr.channel_id,
+        .cs          = (req_hdr.cmd_status_code & LstpSpiCommandFlags::CsSelect)
+                         ? nv::spi::bm::CsPins::Cs1
+                         : nv::spi::bm::CsPins::Cs0,
+        .read_length = 0,
+        .write_data  = {},
+        .flags       = nv::spi::bm::NoFlag,
+    };
+
+    auto cmd = static_cast<LstpSpiCommand>(req_hdr.cmd_status_code & LstpSpiCmdMask);
+
+    switch (cmd) {
+        case LstpSpiCommand::Read: {
+            if (req_offset + sizeof(LstpSpiReadRequest) > LstpMaxPayloadSize) {
+                return std::unexpected(LstpStatus::Error);
+            }
+            if (payload_len != sizeof(LstpSpiReadRequest)) {
+                return std::unexpected(LstpStatus::Error);
+            }
+            auto& read_req = from<LstpSpiReadRequest>(&req_buffer.data()[req_offset]);
+
+            if (read_req.read_len > LstpMaxPayloadSize) {
+                return std::unexpected(LstpStatus::Error);
+            }
+
+            req.read_length = read_req.read_len;
+            break;
+        }
+
+        case LstpSpiCommand::Write: {
+            req.write_data = std::span<uint8_t>(&req_buffer.data()[req_offset], payload_len);
+            break;
+        }
+        case LstpSpiCommand::WriteRead: {
+            req.read_length = static_cast<uint16_t>(payload_len);
+            req.write_data  = std::span<uint8_t>(&req_buffer.data()[req_offset], payload_len);
+            break;
+        }
+
+        case LstpSpiCommand::PostedWrite:
+        default                         : return std::unexpected(LstpStatus::NotSupported);
+    }
+
+    if (req_hdr.cmd_status_code & LstpSpiCommandFlags::CsAssert) {
+        req.flags |= nv::spi::bm::SpiFlags::CsAssert;
+    }
+
+    if (req_hdr.cmd_status_code & LstpSpiCommandFlags::CsDeassert) {
+        req.flags |= nv::spi::bm::SpiFlags::CsDeassert;
+    }
+
+    // NOLINTNEXTLINE: expected to not work if EnableLstp is false
+    if (req.read_length > LstpMaxPayloadSize) {
+        return std::unexpected(LstpStatus::Error);
+    }
+
+    return req;
 }
 
 }  // namespace nv::lstp

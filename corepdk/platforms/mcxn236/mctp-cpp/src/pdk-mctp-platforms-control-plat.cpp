@@ -36,8 +36,13 @@ void pdk::mctp::platforms::on_enumerate_plat()
     logger::info(nv::logger::Event::MctpEnumerated, {});
 }
 
-void pdk::mctp::platforms::on_routing_info_update_plat()
+void pdk::mctp::platforms::on_routing_info_update_plat(uint8_t requester_eid,
+                                                       uint8_t requester_interface,
+                                                       uint8_t update_eid)
 {
+    logger::info(nv::logger::Event::MctpRoutingInfoUpdateRequester,
+                 {requester_eid, requester_interface, update_eid});
+
     // Use on_enumerate_done to update routing info to each task
     Driver::mctp_send_cmd(Driver::CmdCode::EnumerateDone);
 }

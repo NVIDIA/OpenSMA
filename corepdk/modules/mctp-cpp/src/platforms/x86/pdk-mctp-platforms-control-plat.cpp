@@ -28,7 +28,14 @@ void pdk::mctp::platforms::on_enumerate_plat()
     pdk::cmn::log::here().info("MCTP: Enumerate");
 }
 
-void pdk::mctp::platforms::on_routing_info_update_plat()
+void pdk::mctp::platforms::on_routing_info_update_plat(uint8_t requester_eid,
+                                                       uint8_t requester_interface,
+                                                       uint8_t update_eid)
 {
-    pdk::cmn::log::here().info("MCTP: Update Routing Table");
+    pdk::cmn::log::here().info(
+        "MCTP: Update Routing Table, requester_eid: %d, requester_interface: %d, "
+        "update_eid: %d",
+        requester_eid,
+        requester_interface,
+        update_eid);
 }

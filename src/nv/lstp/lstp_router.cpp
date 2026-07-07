@@ -20,7 +20,9 @@
 #include "nv/lstp/lstp_task.h"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
+#include <cstddef>
 #include <cstring>
 #include <variant>
 
@@ -29,12 +31,13 @@
 #include "nv/nv.h"
 #include "nv/ipc/queue.h"
 #include "nv/logger/log.h"
+#include "nv/gpio/driver.h"
 #include "nv/spi/flashrom.h"
 #include "nv/usb/task.h"
 #include "nv/ssif/task.h"
 #include "nv/i2c/task.h"
 #include "nv/spi/flashrom_task.h"
-#include "nv/vruart/lstp_bridge.h"
+#include "nv/vcom/vruart/lstp_bridge.h"
 
 namespace nv::lstp {
 
@@ -151,6 +154,7 @@ LstpStatus LstpRouter::receive_ch0(std::span<uint8_t>& buffer)
         case LstpManagementCommand::ReadConfig : return read_channel_config(buffer);
         case LstpManagementCommand::WriteConfig: return write_channel_config(buffer);
         case LstpManagementCommand::Lock       : return LstpStatus::NotSupported;
+        case LstpManagementCommand::ReadLock   : return read_lock(buffer);
         default                                : return LstpStatus::NotSupported;
     }
 }
@@ -317,50 +321,83 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
 }
 
 LstpStatus
-LstpRouter::read_gpio_config_helper(uint16_t                                      req_offset,
-                                    uint16_t                                      req_length,
+LstpRouter::read_gpio_config_helper(size_t                                        config_offset,
+                                    size_t                                        config_length,
                                     std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_buffer,
                                     size_t&                                       resp_offset)
 {
-    uint16_t start_pin = 0;
-    uint16_t n_pins    = 0;
-    if (req_offset == 0) {
-        auto& gpioConfigResp = from<LstpGpioChannelConfig>(&resp_buffer.data()[resp_offset]);
-        gpioConfigResp.channel_num_gpio  = LstpGpioNum;
-        resp_offset                     += sizeof(LstpGpioChannelConfig);
-        start_pin                        = 0;
-        if (req_length == 0) {
-            n_pins = static_cast<uint16_t>(std::min(static_cast<size_t>(LstpGpioNum),
-                                                    static_cast<size_t>(MaxGpiosPerPacket)));
-        }
-        else {
-            if ((req_length - sizeof(LstpGpioChannelConfig)) % sizeof(LstpGpioConfig) != 0) {
-                return LstpStatus::Error;  // length not aligned to GPIO config
-            }
-            n_pins = static_cast<uint16_t>((req_length - sizeof(LstpGpioChannelConfig))
-                                           / sizeof(LstpGpioConfig));
-        }
-    }
-    else {
-        if ((req_offset - sizeof(LstpGpioChannelConfig)) % sizeof(LstpGpioConfig) != 0
-            || req_length % sizeof(LstpGpioConfig) != 0) {
-            return LstpStatus::Error;  // offset or length not aligned to GPIO config
-        }
-        start_pin = static_cast<uint16_t>((req_offset - sizeof(LstpGpioChannelConfig))
-                                          / sizeof(LstpGpioConfig));
-        n_pins    = static_cast<uint16_t>(req_length / sizeof(LstpGpioConfig));
-    }
-    if (n_pins > MaxGpiosPerPacket) {
+    constexpr size_t max_config_offset = sizeof(LstpGpioChannelConfig)
+                                       + LstpGpioNum * sizeof(LstpGpioConfig);
+    constexpr size_t max_config_length = LstpMaxPayloadSize - sizeof(LstpChannelConfigBlob);
+
+    /*
+     * Incoming packet format:
+     * LstpHdr | LstpChannelConfigReadRequest | LstpChannelConfigBlob | <pin config bytes>
+     */
+    if (config_offset > max_config_offset) {
         return LstpStatus::Error;
     }
-    if (start_pin + n_pins > LstpGpioNum) {
-        return LstpStatus::Error;
+    // Read request includes explicit length; 0 means max that fits in one response packet.
+    config_length = std::min({(config_length == 0) ? max_config_length : config_length,
+                              max_config_offset - config_offset,
+                              max_config_length});
+    if (config_length == 0) {
+        return LstpStatus::Success;
     }
-    for (uint16_t i = 0; i < n_pins; i++) {
-        auto& pin_config_resp  = from<LstpGpioConfig>(&resp_buffer.data()[resp_offset]);
-        pin_config_resp        = PinConfigs.at(start_pin + i).config;
-        resp_offset           += sizeof(LstpGpioConfig);
+
+    size_t       config_end_offset = config_offset + config_length;
+    const size_t config_start_pin  = (config_offset <= sizeof(LstpGpioChannelConfig))
+                                       ? 0
+                                       : (config_offset - sizeof(LstpGpioChannelConfig))
+                                            / sizeof(LstpGpioConfig);
+
+    // Legacy support for out of spec driver that has special case for reading length of 0.
+    if (config_offset == 0) {
+        auto& gpio_channel_config = from<LstpGpioChannelConfig>(&resp_buffer.at(resp_offset));
+        gpio_channel_config.channel_num_gpio  = LstpGpioNum;
+        resp_offset                          += sizeof(LstpGpioChannelConfig);
+        config_offset                        += sizeof(LstpGpioChannelConfig);
+
+        const size_t pin_region_len  = config_length - sizeof(LstpGpioChannelConfig);
+        const size_t whole_pin_bytes = (pin_region_len / sizeof(LstpGpioConfig))
+                                     * sizeof(LstpGpioConfig);
+        config_end_offset = sizeof(LstpGpioChannelConfig) + whole_pin_bytes;
     }
+
+    for (size_t pin = config_start_pin; pin < LstpGpioNum; pin++) {
+        const size_t config_start_byte = sizeof(LstpGpioChannelConfig)
+                                       + pin * sizeof(LstpGpioConfig);
+        if (config_start_byte >= config_end_offset) {
+            break;
+        }
+        if (config_start_byte + sizeof(LstpGpioConfig) <= config_offset) {
+            continue;
+        }
+
+        const size_t start_copy_byte = (config_offset > config_start_byte)
+                                         ? (config_offset - config_start_byte)
+                                         : 0;
+        const size_t end_copy_byte   = std::min(sizeof(LstpGpioConfig),
+                                              config_end_offset - config_start_byte);
+        const size_t copy_bytes      = end_copy_byte - start_copy_byte;
+        if (copy_bytes == 0) {
+            continue;
+        }
+
+        const auto& config_pin_info = PinConfigs.at(pin);
+        auto        config_pin      = config_pin_info.config;
+
+        // Refresh the pin direction in config from hardware before copying bytes out.
+        nv::gpio::Direction hw_dir{};
+        nv::gpio::Driver::getDirection(config_pin_info.port, config_pin_info.pin, hw_dir);
+        config_pin.direction = LstpGpioDirection_from(hw_dir);
+
+        const auto pin_bytes = std::bit_cast<std::array<uint8_t, sizeof(LstpGpioConfig)>>(
+            config_pin);
+        std::memcpy(&resp_buffer.at(resp_offset), &pin_bytes.at(start_copy_byte), copy_bytes);
+        resp_offset += copy_bytes;
+    }
+
     return LstpStatus::Success;
 }
 
@@ -391,15 +428,10 @@ LstpStatus LstpRouter::write_channel_config(std::span<uint8_t>& req_buffer)
         return LstpStatus::Error;
     }
 
-    // Only supports single chunk per channel
-    if (channel_config_request.offset != 0) {
-        return LstpStatus::NotSupported;
-    }
-
     // Process the channel config write
     auto& channel_config    = from<LstpChannelConfigBlob>(&req_buffer.data()[req_offset]);
     const LstpStatus status = write_channel_config_helper(
-        channel_config_request.channel_id, channel_config, cfg_size);
+        channel_config_request.channel_id, channel_config, cfg_size, req_buffer);
     if (status != LstpStatus::Success) {
         return status;
     }
@@ -420,7 +452,8 @@ LstpStatus LstpRouter::write_channel_config(std::span<uint8_t>& req_buffer)
 
 LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channel_id,
                                                    LstpChannelConfigBlob& cfg,
-                                                   size_t                 cfg_size)
+                                                   size_t                 cfg_size,
+                                                   std::span<uint8_t>&    req_buffer)
 {
     LstpStatus status     = LstpStatus::Success;
     size_t     cfg_offset = 0;
@@ -429,8 +462,10 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
         return status;
     }
 
-    // Channel type - ignore, RO field
-    status = LstpStatus::Success;
+    const auto channel_type = LstpChannels.at(channel_id).info.type;
+    if (static_cast<LstpChannelType>(cfg.channel_type) != channel_type) {
+        return LstpStatus::Error;
+    }
 
     cfg_offset += sizeof(cfg.channel_type);
     if ((status != LstpStatus::Success)
@@ -440,7 +475,7 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
 
     // Channel enabled
     auto& channel_state = _channels.at(channel_id);
-    switch (static_cast<LstpChannelType>(cfg.channel_type)) {
+    switch (channel_type) {
         case LstpChannelType::Ipmi: {
             status = LstpStatus::NotSupported;
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi) == true) {
@@ -449,6 +484,15 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
                     channel_state.enabled = true;
                     status                = LstpStatus::Success;
                 }
+            }
+            break;
+        }
+        case LstpChannelType::Gpio: {
+            if (static_cast<bool>(cfg.channel_enabled) != channel_state.enabled) {
+                status = LstpStatus::NotSupported;
+            }
+            else if constexpr (EnableGpio) {
+                status = write_gpio_config_helper(req_buffer);
             }
             break;
         }
@@ -462,6 +506,134 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
 
     // Subsequent fields are ignored for now
     return status;
+}
+
+LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
+{
+    if (ReadLockState(PinConfigs) == LstpLockState::Locked) {
+        return LstpStatus::NotSupported;
+    }
+
+    constexpr size_t min_payload_length = sizeof(LstpChannelConfigWriteRequest)
+                                        + sizeof(LstpChannelConfigBlob);
+    constexpr size_t max_config_offset = sizeof(LstpGpioChannelConfig)
+                                       + LstpGpioNum * sizeof(LstpGpioConfig);
+    /*
+     * Incoming packet format:
+     * LstpHdr | LstpChannelConfigWriteRequest | LstpChannelConfigBlob | <pin config bytes>
+     */
+    const auto&  req_hdr            = from<LstpHdr>(req_buffer.data());
+    const size_t req_payload_length = static_cast<size_t>(req_hdr.len_lsb)
+                                    | (static_cast<size_t>(req_hdr.len_msb) << BYTE1_SHIFT);
+    const auto& req_write_config = from<LstpChannelConfigWriteRequest>(
+        &req_buffer.data()[sizeof(LstpHdr)]);
+
+    // Write has no explicit length field; pin config bytes fill the rest of the payload.
+    const size_t req_config_length = req_payload_length - min_payload_length;
+    size_t       config_offset     = req_write_config.offset;
+
+    if (req_payload_length < min_payload_length || config_offset > max_config_offset
+        || req_config_length > max_config_offset - config_offset) {
+        return LstpStatus::Error;
+    }
+    if (req_config_length == 0) {
+        return LstpStatus::Success;
+    }
+
+    const size_t config_end_offset = config_offset + req_config_length;
+    const size_t config_start_pin  = (config_offset <= sizeof(LstpGpioChannelConfig))
+                                       ? 0
+                                       : (config_offset - sizeof(LstpGpioChannelConfig))
+                                            / sizeof(LstpGpioConfig);
+
+    // Special-case num_gpio at blob byte 0; advance config_offset past the header.
+    config_offset += (config_offset == 0) ? sizeof(LstpGpioChannelConfig) : 0;
+
+    LstpStatus status = LstpStatus::Success;
+
+    // Only check write request for direction changes; ignore other config fields.
+    for (size_t pin = config_start_pin; pin < LstpGpioNum; pin++) {
+        const size_t config_direction_byte = sizeof(LstpGpioChannelConfig)
+                                           + pin * sizeof(LstpGpioConfig)
+                                           + offsetof(LstpGpioConfig, direction);
+        if (config_direction_byte >= config_end_offset) {
+            break;
+        }
+        if (config_direction_byte < config_offset) {
+            continue;
+        }
+
+        const auto req_direction = from<LstpGpioDirection>(
+            &req_buffer.data()[sizeof(LstpHdr) + min_payload_length
+                               + (config_direction_byte - req_write_config.offset)]);
+        if (req_direction != LstpGpioDirection::Output
+            && req_direction != LstpGpioDirection::Input) {
+            return LstpStatus::Error;
+        }
+
+        const auto& config_pin_info = PinConfigs.at(pin);
+        const auto& config_pin      = config_pin_info.config;
+
+        nv::gpio::Direction hw_dir{};
+        nv::gpio::Driver::getDirection(config_pin_info.port, config_pin_info.pin, hw_dir);
+        const auto current_direction = LstpGpioDirection_from(hw_dir);
+        if (req_direction == current_direction) {
+            continue;
+        }
+        if (!config_pin_info.allow_lstp_direction_control) {
+            nv::error("LSTP GPIO pin %zu direction control not allowed\n", pin);
+            status = LstpStatus::NotSupported;
+            continue;
+        }
+
+        // Output level comes from default_output; ignored when dir is Input.
+        const auto pin_status = LstpStatus_from(
+            nv::gpio::Driver::init_pin(config_pin_info.port,
+                                       config_pin_info.pin,
+                                       GpioDirection_from(req_direction),
+                                       GpioState_from(config_pin.default_output)));
+        if (pin_status != LstpStatus::Success) {
+            nv::error("LSTP GPIO pin %zu init_pin failed\n", pin);
+            status = pin_status;
+            continue;
+        }
+    }
+
+    return status;
+}
+
+LstpStatus LstpRouter::read_lock(std::span<uint8_t> req_buffer)
+{
+    static_assert(sizeof(LstpReadLockResponse) <= LstpMaxPayloadSize);
+
+    const auto&  req_hdr  = from<LstpHdr>(req_buffer.data());
+    const size_t req_size = static_cast<size_t>(req_hdr.len_lsb)
+                          | (static_cast<size_t>(req_hdr.len_msb) << BYTE1_SHIFT);
+
+    if (req_size != 0) {
+        return LstpStatus::Error;
+    }
+
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buffer{};
+    size_t                                       resp_offset = 0;
+    auto&                                        resp_hdr  = from<LstpHdr>(resp_buffer.data());
+    resp_offset                                           += sizeof(LstpHdr);
+
+    auto& lock_resp  = from<LstpReadLockResponse>(&resp_buffer.data()[resp_offset]);
+    resp_offset     += sizeof(LstpReadLockResponse);
+
+    lock_resp.lock_state = ReadLockState(PinConfigs);
+
+    const auto len           = static_cast<uint16_t>(resp_offset - sizeof(LstpHdr));
+    resp_hdr.channel_id      = req_hdr.channel_id;
+    resp_hdr.cmd_status_code = static_cast<uint8_t>(LstpStatus::Success) | LstpResponseBit;
+    resp_hdr.len_lsb         = len & LSB_MASK;
+    resp_hdr.len_msb         = len >> BYTE1_SHIFT;
+
+    std::span<uint8_t> item(resp_buffer.data(), resp_buffer.size());
+    nv::usb::Task::to_usbLstp(item);
+
+    return LstpStatus::Success;
 }
 
 /*****************************************************

@@ -18,29 +18,29 @@
 #include "nv/i2c/task.h"
 
 #include <bit>
+#include <chrono>
 #include <climits>
 #include <cstring>
-#include <chrono>
 
 #include "nv/i2c/common.h"
-#include "nv/i2c/helper.h"
-#include "nv/i2c/error_injection.h"
 #include "nv/i2c/eeprom_cache.h"
-#include "nv/logger/log.h"
-#include "nv/mctp/driver.h"
-#include "nv/nv.h"
-#include "nv/usb/task.h"
-#include "nv/i2c/sensor.h"
-#include "nv/volt_mon/mcu_internal_temp.h"
-#include "sys/sensor/sensor.h"
-#include "nv/i3c/task.h"
-#include "nv/watchdog/runtime.h"
-#include "nv/perf_mon/perf_mon.h"
-#include "sys/i2c/utils.h"
+#include "nv/i2c/error_injection.h"
+#include "nv/i2c/helper.h"
 #include "nv/i2c/recovery.h"
-#include "sys/i2c/loopback.h"
-#include "nv/mctp/selftest.h"
+#include "nv/i2c/sensor.h"
+#include "nv/i3c/task.h"
+#include "nv/logger/log.h"
 #include "nv/lstp/lstp_router.h"
+#include "nv/mctp/driver.h"
+#include "nv/mctp/selftest.h"
+#include "nv/nv.h"
+#include "nv/perf_mon/perf_mon.h"
+#include "nv/usb/task.h"
+#include "nv/volt_mon/mcu_internal_temp.h"
+#include "nv/watchdog/runtime.h"
+#include "sys/i2c/loopback.h"
+#include "sys/i2c/utils.h"
+#include "sys/sensor/sensor.h"
 
 #include NV_IPC_CONFIG_H
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-dcl37-c,cert-dcl51-cpp)
@@ -114,25 +114,14 @@ Task::Task(Config config) noexcept
 , _target_addr(config.target_addr)
 , _boot_event(config.boot_event)
 , _ipchandler_id(config.ipchandler_id)
-, _oob_bus(nv::perf_mon::OobBus::End)
+, _oob_bus(nv::perf_mon::Driver::flexcomm_port_to_oobBus(static_cast<uint8_t>(config.port_id)))
 {
     std::fill(_eid_addr_map.begin(), _eid_addr_map.end(), 0);
     _driver.bind(config.port_id, this);
     _driver.init();
 
-    switch (config.client) {
-        case mctp::Client::UsI2c : _oob_bus = nv::perf_mon::OobBus::UsI2c; break;
-        case mctp::Client::DsI2c0: _oob_bus = nv::perf_mon::OobBus::DsI2c0; break;
-        case mctp::Client::DsI2c1: _oob_bus = nv::perf_mon::OobBus::DsI2c1; break;
-        case mctp::Client::DsI2c2: _oob_bus = nv::perf_mon::OobBus::DsI2c2; break;
-        case mctp::Client::DsI2c3: _oob_bus = nv::perf_mon::OobBus::DsI2c3; break;
-        case mctp::Client::DsI2c4: _oob_bus = nv::perf_mon::OobBus::DsI2c4; break;
-        case mctp::Client::DsI2c5: _oob_bus = nv::perf_mon::OobBus::DsI2c5; break;
-        case mctp::Client::DsI2c6: _oob_bus = nv::perf_mon::OobBus::DsI2c6; break;
-        case mctp::Client::DsI2c7: _oob_bus = nv::perf_mon::OobBus::DsI2c7; break;
-        default                  : break;
-    }
     nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
+    nv::perf_mon::Driver::set_oob_bus_type(_oob_bus, nv::perf_mon::OobBusType::I2c);
 
     // SMBus Direct cache refresh timer (if configured)
     // New VR Telemetry cache refresh timer
@@ -1010,7 +999,11 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
         request.address, write_buffer_span, read_buffer_span, request.flags, ReadLength);
 
     if (result != I2cStatus::Ok) {
-        handle_error(result);
+        // Don't log NAKs for LSTP I2C to avoid spam during i2cdetect
+        // CP2112 typically uses manual NACK so we don't need the same
+        if (request.src_id != static_cast<uint8_t>(ipchandler::Id::Lstp)) {
+            handle_error(result);
+        }
     }
 
     std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
@@ -1415,7 +1408,7 @@ bool Task::transmit(const I2cPacket& packet)
     return status == I2cStatus::Ok;
 }
 
-void Task::handle_error(I2cStatus status)
+void Task::handle_error(I2cStatus status, uint8_t src_id)
 {
     if (status == I2cStatus::Ok) {
         return;
@@ -1435,7 +1428,10 @@ void Task::handle_error(I2cStatus status)
     // NOLINTNEXTLINE(misc-const-correctness)
     nv::logger::EventData data{static_cast<uint8_t>(static_cast<uint16_t>(_client) & ByteMask),
                                static_cast<uint8_t>(static_cast<uint16_t>(_client) >> 8U),
-                               static_cast<uint8_t>(status)};
+                               static_cast<uint8_t>(status),
+                               src_id,
+                               static_cast<uint8_t>(id()),
+                               static_cast<uint8_t>(_port)};
     nv::logger::error(nv::logger::Event::I2CError, data);
 
     nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
@@ -1702,3 +1698,31 @@ __attribute__((weak)) nv::ipc::QueueId projectGetApStatusQueueId(nv::ipc::Timer&
 // Weak function definition for project_stop_polling_timers (for testrunner project(esp. in
 // simulation))
 __attribute__((weak)) void project_stop_polling_timers() {}
+
+// EROT Recovery handler.
+// Recovery sequence (per EROT firmware spec):
+//   S <ErotAddr> Wr 0x00 0x00 P      (status -> down)
+//   wait ~10 ms
+//   S <ErotAddr> Wr 0x00 0x01 P      (status -> up)
+void Task::handle_erot_recovery(uint8_t reg, uint8_t value)
+{
+    if (reg != 0x00) {
+        return;
+    }
+    if (value != 0x00 && value != 0x01) {
+        return;
+    }
+
+    size_t endpoint_index = nv::ipc::DownStreamInfos.size();
+    for (size_t i = 0; i < nv::ipc::DownStreamInfos.size(); ++i) {
+        if (nv::ipc::DownStreamInfos.at(i).client == _client) {
+            endpoint_index = i;
+            break;
+        }
+    }
+    if (endpoint_index >= nv::ipc::DownStreamInfos.size()) {
+        return;
+    }
+
+    nv::mctp::Driver::endpoint_status_change(static_cast<uint8_t>(endpoint_index), value);
+}

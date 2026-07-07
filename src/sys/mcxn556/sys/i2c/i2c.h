@@ -64,6 +64,7 @@ public:
     /// Set slave match address on \p port. If \p sec_addr is non-zero, enable dual-address
     /// match (e.g. primary + FRU).
     static void        set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0);
+    static void        set_master_duty_cycle(nv::i2c::Port port, uint8_t duty_cycle);
     bool               get_status(uint8_t address);
     static IRQn_Type   get_irq(nv::i2c::Port port);
     nv::i2c::I2cStatus i2c_read(uint8_t            address,
@@ -109,6 +110,8 @@ private:
     void update_target_state_time_stamp(lpi2c_slave_transfer_event_t event);
 
     std::atomic<uint32_t> _target_state_time_stamp{};
+    static void
+    target_callback_erot(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
 };
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data);

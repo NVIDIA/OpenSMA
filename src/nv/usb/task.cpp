@@ -138,11 +138,13 @@ Task::Task()
             mctp_receive();
         }
 
+#if (SYS_USB_HID_CP2112 > 0U)
         /* HidRxBit */
         if (active_bits & HidRxBit) {
             _event.clear(HidRxBit);
             hid_receive();
         }
+#endif
 
         /* LSTP event handling */
         if constexpr (nv::ipc::EnableLstp) {
@@ -328,6 +330,7 @@ void Task::mctp_receive()
     }
 }
 
+#if (SYS_USB_HID_CP2112 > 0U)
 void Task::hid_receive()
 {
     bool is_send = false;
@@ -349,6 +352,7 @@ void Task::hid_receive()
         logger::error(logger::Event::UsbHidRecvError, {static_cast<uint8_t>(error)});
     }
 }
+#endif  // SYS_USB_HID_CP2112
 
 uint8_t Task::lstp_transmit()
 {
@@ -546,6 +550,7 @@ usb::Status Task::set_mctp_rx0_event()
     return usb::Status::Ok;
 }
 
+#if (SYS_USB_HID_CP2112 > 0U)
 usb::Status Task::set_hid_rx_event()
 {
     auto& event        = Event::make(EventId::UsbTask);
@@ -556,6 +561,7 @@ usb::Status Task::set_hid_rx_event()
     }
     return usb::Status::Ok;
 }
+#endif  // SYS_USB_HID_CP2112
 
 usb::Status Task::set_lstp_rx_event()
 {

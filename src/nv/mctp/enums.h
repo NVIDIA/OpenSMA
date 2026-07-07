@@ -158,7 +158,7 @@ enum class NsmFWCmdCode : uint8_t
     QuerySecVerNum     = 0x5,  // Query firmware security version number
     UpdateMinSecVerNum = 0x6,  // Update minimum security version number
     QueryFwCompId      = 0x7,  // Query firmware component ID
-    SetRotProperty     = 0x8,  // Set RoT property
+    SetRotProperty     = 0x8,  // Set RoT property (not supported on MCU/CPLD)
     ImageCopyControl   = 0x9,  // Image copy control
 };
 
@@ -294,14 +294,6 @@ enum class NsmGlobalFailoverPolicy : uint8_t
     NotApplicable = 0xFF,
 };
 
-enum class NsmSetRotPropertyRequest : uint8_t
-{
-    SetRedundancyPolicy     = 0x00,
-    SetInbandUpdatePolicy   = 0x01,
-    SetApSkuId              = 0x02,
-    SetGlobalFailoverPolicy = 0x03,
-};
-
 enum class NsmImageCopyControlRequest : uint8_t
 {
     QueryImageCopyProgress = 0x00,
@@ -371,6 +363,11 @@ typedef enum
     L4verifyL5CertFail                = 18,
     InvalidTemplate                   = 19,
     NpdsFmcNumericVersionReadFail     = 20,
+#ifdef EDGELOCK2GO_CERT
+    OtpL4SerialNumberReadFail       = 21,
+    OtpL4SerialNumberProgrammedFail = 22,
+    OtpL4SerialNumberCheckFail      = 23,
+#endif
 } ProgramCertificateStatus;
 
 // NVIDIA TYPE 2 PciLinks Command Code
@@ -659,10 +656,23 @@ enum Type4McuDiagnosticEntries : uint8_t
     DIAG_MAX_MODULE_TEMP = 230,                 // TemperatureTelemetry
 
     // Counters 231-250
-    DIAG_I3C0_BUS_ERROR            = 231,  // i3c range 231-233 (4 items)
-    DIAG_I2C_UPSTREAM_ERROR        = 234,  // i2c up range 234-235 (2 items)
-    DIAG_I2C0_DOWNSTREAM_BUS_ERROR = 236,  // i2c down range 236-246 (11 items)
-    DIAG_SPI0_DOWNSTREAM_BUS_ERROR = 247,  // spi down range 247-250 (4 items)
+    DIAG_I2C0_BUS_ERROR = 231,  // i2c range 231-240 (10 ports)
+    DIAG_I2C1_BUS_ERROR = 232,
+    DIAG_I2C2_BUS_ERROR = 233,
+    DIAG_I2C3_BUS_ERROR = 234,
+    DIAG_I2C4_BUS_ERROR = 235,
+    DIAG_I2C5_BUS_ERROR = 236,
+    DIAG_I2C6_BUS_ERROR = 237,
+    DIAG_I2C7_BUS_ERROR = 238,
+    DIAG_I2C8_BUS_ERROR = 239,
+    DIAG_I2C9_BUS_ERROR = 240,
+
+    DIAG_I3C0_BUS_ERROR = 241,  // i3c range 241-242
+    DIAG_I3C1_BUS_ERROR = 242,
+
+    DIAG_SPI0_BUS_ERROR = DIAG_I2C7_BUS_ERROR,
+    DIAG_SPI1_BUS_ERROR = DIAG_I2C8_BUS_ERROR,
+    DIAG_SPI2_BUS_ERROR = DIAG_I2C9_BUS_ERROR,
 
     DIAG_GPIO_VALUE_BITMAP = 254,  // GpioTelemetry
     DIAG_CurrentTimestamp  = 255   // TimestampTelemetry
@@ -680,6 +690,7 @@ enum Type4TelemetryTypes : uint8_t
     TimestampTelemetry    = 7
 };
 
+// Fan Control V1 VDM (0x87)
 enum class FanControlMode : uint8_t
 {
     Disabled    = 0x00,
@@ -687,6 +698,16 @@ enum class FanControlMode : uint8_t
     Steady      = 0x02,
     Rpm         = 0x03,
     Temperature = 0x04,
+};
+
+// Fan Control V2 VDM (0x87)
+enum class FanControlOp : uint8_t
+{
+    GetPwm     = 0x01,
+    SetPwm     = 0x02,
+    GetTach    = 0x03,  // phase 2
+    GetFanMode = 0x04,  // phase 2
+    SetFanMode = 0x05,  // phase 2
 };
 
 // NSM T4 Enable Disable Write Protection (0x65)

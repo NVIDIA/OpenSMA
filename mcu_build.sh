@@ -6,7 +6,7 @@ for arg in "$@"; do
         echo "Usage: $0 [PROJECT=project] [PLATFORM=platform] [BOARD=board] [MODE=mode] [SIGN_KEYSET=keyset] [VERSION=version] [STREAMBOOT=1] [RUN_LOCAL=1] [BUILD_ONLY=1]"
         echo "PROJECT: project name (for example: pg540)"
         echo "PLATFORM: platform name (for example: mcxn236)"
-        echo "BOARD: board name (for example: pg540)"
+        echo "BOARD: board name (for example: pg540). For px9me/pd4a4/pd4b4 the FRDM-MCXN947 devkit variant is BOARD=devkit."
         echo "MODE: mode name (for example: dev)"
         echo "SIGN_KEYSET: keyset name (for example: S0). If using local signing, use 'local' or 'local-debug' for debug signing, or 'local-prod' for prod sign."
         echo "VERSION: firmware version (for example: 02.0010.0000)"
@@ -41,6 +41,22 @@ SIGN_KEYSET="${SIGN_KEYSET:-$SIGN_KEYSET_ENV}"
 VERSION="${VERSION:-$VERSION_ENV}"
 CODE_GROUP_INDEX="${CODE_GROUP_INDEX:-$CODE_GROUP_INDEX_ENV}"
 BUILD_ONLY="${BUILD_ONLY:-$BUILD_ONLY_ENV}"
+export MCU_TOOLCHAIN_ROOT="${MCU_TOOLCHAIN_ROOT:-/toolchain}"
+UBS_DOCKER="${UBS_DOCKER:-gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:latest}"
+
+run_objcopy() {
+    local input_file="$1"
+    local output_file="$2"
+    local objcopy="${MCU_TOOLCHAIN_ROOT}/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-objcopy"
+
+    if [[ -f /.dockerenv ]]; then
+        "$objcopy" -O binary "$input_file" "$output_file"
+    else
+        echo "Running objcopy in UBS docker image $UBS_DOCKER"
+        docker run --rm --user="$(id -u):$(id -g)" -v"$PWD:/tmp/ubs" -w/tmp/ubs "$UBS_DOCKER" \
+            "$objcopy" -O binary "$input_file" "$output_file"
+    fi
+}
 
 run_build_flow() {
     local platform="$1"
@@ -101,8 +117,7 @@ if [[ "$PLATFORM" == "mcxn547-both" || "$PLATFORM" == "mcxn556-both" ]]; then
 
     # Generate binary file from ELF
     if [[ -f "$CORE1_ELF" ]]; then
-        OBJCOPY=libexec/toolchain/arm-gnu-toolchain-14.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-objcopy
-        $OBJCOPY -O binary "$CORE1_ELF" "$CORE1_BIN" 2>/dev/null
+        run_objcopy "$CORE1_ELF" "$CORE1_BIN" 2>/dev/null
         if [[ $? -eq 0 ]]; then
             echo "Binary file generated successfully: $CORE1_BIN"
         else
@@ -272,7 +287,8 @@ if [[ "$SIGN_KEYSET" == "local"* ]]; then
     
     # Add UBS_DOCKER argument for mcxn556 platforms
     if [[ "$PLATFORM" == mcxn556* ]]; then
-        LOCAL_SIGN_CMD+=" UBS_DOCKER=gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:0.0.1"
+        UBS_556_DOCKER_IMAGE="${UBS_556_DOCKER_IMAGE:-gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:0.0.3}"
+        LOCAL_SIGN_CMD+=" UBS_DOCKER=${UBS_556_DOCKER_IMAGE}"
         echo "Assign UBS_DOCKER for mcxn556 platform local signing"
     fi
 

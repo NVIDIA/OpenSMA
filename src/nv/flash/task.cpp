@@ -78,7 +78,7 @@ void Task::make()
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
-    task.setup(stack.span(), Priv, Priority::Norm, Task::entrypoint);
+    task.setup(stack.span(), Priv, Priority::Flash, Task::entrypoint);
 }
 
 void Task::entrypoint(void* params)
@@ -374,14 +374,20 @@ void Task::process(const Request& request, Response& response)
 
 void Task::get_ap_fw_authenticate_data(const Request& request, Response& response)
 {
+    if constexpr (Npds::AuthDataSlots == 0) {
+        response.status = nv::flash::Status::InvalidParam;
+        return;
+    }
+
     if (request.key != Key::NpdsActiveApFwAuthenticateData
         && request.key != Key::NpdsUpdateApFwAuthenticateData) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
-    const auto& now_data = _npds.get_ap_fw_authenticate_data_index(request.key);
+    const auto& auth_data = _npds.get_ap_fw_authenticate_data_index(request.key);
 
-    if (request.offset + request.length > sizeof(now_data.active_ap_fw_authenticate_data)) {
+    const auto auth_data_size = sizeof(auth_data.active_ap_fw_authenticate_data);
+    if (request.offset > auth_data_size || request.length > auth_data_size - request.offset) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
@@ -389,13 +395,13 @@ void Task::get_ap_fw_authenticate_data(const Request& request, Response& respons
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
-    if (now_data.is_on_set_data) {
+    if (auth_data.is_on_set_data) {
         response.status = nv::flash::Status::Busy;
         return;
     }
-    auto data_in_view = std::span<uint8_t>(
-        std::bit_cast<uint8_t*>(&now_data.active_ap_fw_authenticate_data),
-        sizeof(now_data.active_ap_fw_authenticate_data));
+    auto data_in_view = std::span<const uint8_t>(
+        std::bit_cast<const uint8_t*>(&auth_data.active_ap_fw_authenticate_data),
+        sizeof(auth_data.active_ap_fw_authenticate_data));
     auto data_in_view_sub = data_in_view.subspan(request.offset, request.length);
     response.length       = data_in_view_sub.size();
     std::copy(data_in_view_sub.begin(), data_in_view_sub.end(), response.buffer.begin());
@@ -405,14 +411,20 @@ void Task::get_ap_fw_authenticate_data(const Request& request, Response& respons
 
 void Task::set_ap_fw_authenticate_data(const Request& request, Response& response)
 {
+    if constexpr (Npds::AuthDataSlots == 0) {
+        response.status = nv::flash::Status::InvalidParam;
+        return;
+    }
+
     if (request.key != Key::NpdsActiveApFwAuthenticateData
         && request.key != Key::NpdsUpdateApFwAuthenticateData) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
-    auto& now_data = _npds.get_ap_fw_authenticate_data_index(request.key);
+    auto& auth_data = _npds.get_ap_fw_authenticate_data_index(request.key);
 
-    if (request.offset + request.length > sizeof(now_data.active_ap_fw_authenticate_data)) {
+    const auto auth_data_size = sizeof(auth_data.active_ap_fw_authenticate_data);
+    if (request.offset > auth_data_size || request.length > auth_data_size - request.offset) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
@@ -420,16 +432,16 @@ void Task::set_ap_fw_authenticate_data(const Request& request, Response& respons
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
-    now_data.is_on_set_data = true;
+    auth_data.is_on_set_data = true;
 
     auto data_in_view = std::span<uint8_t>(
-        std::bit_cast<uint8_t*>(&now_data.active_ap_fw_authenticate_data),
-        sizeof(now_data.active_ap_fw_authenticate_data));
+        std::bit_cast<uint8_t*>(&auth_data.active_ap_fw_authenticate_data),
+        sizeof(auth_data.active_ap_fw_authenticate_data));
     auto data_in_view_sub = data_in_view.subspan(request.offset, request.length);
     std::copy_n(request.buffer.begin(), request.length, data_in_view_sub.begin());
 
-    if (request.offset + request.length == sizeof(now_data.active_ap_fw_authenticate_data)) {
-        now_data.is_on_set_data = false;
+    if (request.offset + request.length == sizeof(auth_data.active_ap_fw_authenticate_data)) {
+        auth_data.is_on_set_data = false;
     }
     response.status = nv::flash::Status::Ok;
     return;

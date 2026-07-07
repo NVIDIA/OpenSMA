@@ -1,9 +1,0 @@
-{
-    "mbi": true,
-    "sb3": false,
-    "mbiconfig": {
-        "outputImageExecutionAddress": "0x0",
-        "firmwareVersion": "0x0",
-        "imageVersion": "0x0"
-    }
-}

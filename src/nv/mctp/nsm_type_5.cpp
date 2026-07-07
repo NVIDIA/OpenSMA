@@ -266,7 +266,7 @@ void triggerGpioSpoofingEvents(const GPIOSpoofingPayload& gpioSpoofingPayload)
         }
 
         uint8_t portIndex = 0;
-        if (port == nv::iox::vrPort) {
+        if (port == nv::gpio::vrPort) {
             static_assert(nv::ipc::GpioNsmEventMask.size() == sys::gpio::PortsNumber + 1,
                           "GpioNsmEventSetup size must be equal to nv::gpio::PortsNumber");
             portIndex = static_cast<uint8_t>(sys::gpio::PortsNumber);
@@ -285,7 +285,7 @@ void triggerGpioSpoofingEvents(const GPIOSpoofingPayload& gpioSpoofingPayload)
     for (size_t port = 0; port < port_flags.size(); ++port) {
         if (port_flags.at(port) != 0) {
             if (port == sys::gpio::PortsNumber) {
-                Nsm::GpioEventTrigger(nv::iox::vrPort, port_flags.at(port), VirtualGpio);
+                Nsm::GpioEventTrigger(nv::gpio::vrPort, port_flags.at(port), VirtualGpio);
             }
             else {
                 Nsm::GpioEventTrigger(
@@ -314,7 +314,7 @@ bool validateGpioSpoofingErrorInjectionPayload(GPIOSpoofingPayload& gpioSpoofing
         const auto  pin         = std::get<1>(gpio_config);
 
         // Check if this is virtual port (virtual port must be a input pin)
-        if (port == nv::iox::vrPort && pin < sys::gpio::PinsPerPort) {
+        if (port == nv::gpio::vrPort && pin < sys::gpio::PinsPerPort) {
             continue;
         }
 
@@ -1575,19 +1575,19 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
     const auto mode_index = static_cast<DeviceModeIndex>(raw_mode_index);
 
     const auto payload_bytes = req_span.subspan(sizeof(raw_mode_index));
-    float      ramp_rate     = 0.0f;
 
     Ccode result = Ccode::ErrorInvalidData;
     switch (mode_index) {
-        case DeviceModeIndex::MaxACPowerRampRate:
-            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(float)) {
+        case DeviceModeIndex::MaxACPowerRampRate: {
+            if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(uint32_t)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
                 return;
             }
-            // Copy float value instead of reinterpreting pointer
-            std::memcpy(&ramp_rate, payload_bytes.data(), sizeof(ramp_rate));
-            result = nsm_pwr_smoothing_handlers::handle_set_max_ac_ramp_rate(ramp_rate);
+            uint32_t ramp_rate_u32 = 0;
+            std::memcpy(&ramp_rate_u32, payload_bytes.data(), sizeof(ramp_rate_u32));
+            result = nsm_pwr_smoothing_handlers::handle_set_max_ac_ramp_rate(ramp_rate_u32);
             break;
+        }
         case DeviceModeIndex::SoCPowerSmoothEnabled:
             if (req_span.size() != sizeof(DeviceModeIndex) + sizeof(bool)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);

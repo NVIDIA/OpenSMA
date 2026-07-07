@@ -50,6 +50,13 @@
 #include "nv/i2c/smb_direct.h"
 #include "sys/ipc/driver.h"
 
+// Weak no-op default for the MctpCustomize1 command hook -- a generic
+// project-customizable function the MCTP command loop runs in the MCTP task
+// context. A project supplies a strong override with its own work; projects that
+// don't need it link this no-op. Mirrors the projectTryRunAdcTrigger pattern in
+// nv/ahs.
+__attribute__((weak)) void mctp_customize_1() {}
+
 using namespace nv::mctp;
 using namespace nv;
 using namespace std::chrono_literals;
@@ -64,6 +71,11 @@ Driver::Driver(ipc::Task& task, common::Uuid& uuid)
 , _spdm_queue(ipc::Queue::make(ipc::QueueId::MctpSpdmRequest))
 , _cmd_queue(ipc::Queue::make(ipc::QueueId::MctpCmd))
 , _router_queue(ipc::Queue::make(ipc::QueueId::RoutingTable))
+, _enum_start_timer(
+      ipc::Timer::make(ipc::TimerId::MctpEnumerateStart,
+                       ipc::EnumerateStartMs ? ipc::EnumerateStartMs * 1000us : 1s,
+                       on_enumeration_start_timer,
+                       false))
 , _enum_done_timer(ipc::Timer::make(
       ipc::TimerId::MctpEnumerate, EnumeratePeriod, on_enumeration_done_timer, false))
 , _endpoint_status_change_timers([]() {
@@ -213,6 +225,10 @@ void Driver::init()
                     }
                     break;
                 }
+                case static_cast<uint16_t>(CmdCode::MctpCustomize1):
+                    // Invoke the project's customizable hook in the MCTP task context.
+                    mctp_customize_1();
+                    break;
                 default: break;
             }
         }
@@ -235,6 +251,19 @@ void Driver::on_receive_event(uint8_t nsmType, uint8_t eventId, MctpCmdData3 eve
                          {static_cast<uint8_t>(client), eventId});
         forward(client, event_msg);
     }
+}
+
+bool Driver::on_get_eid_probe_response(const Packet& pkt, bool is_multi)
+{
+    const auto& ctrl_pkt = Control::PktReq::from(pkt);
+    if (ctrl_pkt.rq == 0 && ctrl_pkt.command_code == mctp::Cmd::GetEpId
+        && ctrl_pkt.dst_eid == 0) {
+        if (is_multi) {
+            _composer.clear();
+        }
+        return true;
+    }
+    return false;
 }
 
 void Driver::on_receive(Client client)
@@ -296,6 +325,9 @@ void Driver::on_receive(Client client)
 
     switch (msg_type) {
         case MsgType::Control: {
+            if (on_get_eid_probe_response(mctp_rx, is_multi)) {
+                break;
+            }
             memset(_mctp_tx_buf.data(), 0, _mctp_tx_buf.size());
             _control.process(mctp_rx, tx);
             if (tx.priv.packet_length != 0) {
@@ -487,6 +519,7 @@ void Driver::on_enumerate()
                     SetEndpoint::SetEidForced);
 
                 forward(info.client, tx);
+                map.at(index).is_set_eid_sent = true;
                 logger::info(
                     logger::Event::MctpEnumerateSetEid,
                     {static_cast<uint8_t>(static_cast<uint16_t>(info.client) & UINT8_MAX),
@@ -513,6 +546,31 @@ void Driver::on_enumerate_done()
             }
             logger::info(logger::Event::MctpEnumerateResult, {entry.assigned_eid, log});
         }
+    }
+
+    if constexpr (ipc::MaxEnumerateRetries > 0) {
+        constexpr uint8_t MaxPendingLog  = 6;
+        constexpr uint8_t RetryLogOffset = 2;
+        uint8_t           pending_count  = 0;
+        logger::EventData retry_log{};
+        for (uint8_t i = 0; i < ipc::DownStreamInfos.size(); i++) {
+            if (map.at(i).is_set_eid_sent && !map.at(i).is_enumerated) {
+                if (pending_count < MaxPendingLog) {
+                    retry_log.at(RetryLogOffset + pending_count) = map.at(i).assigned_eid;
+                }
+                pending_count++;
+            }
+        }
+
+        if (pending_count > 0 && _enumerate_retry_count < ipc::MaxEnumerateRetries) {
+            _enumerate_retry_count++;
+            retry_log.at(0) = _enumerate_retry_count;
+            retry_log.at(1) = pending_count;
+            logger::info(logger::Event::MctpEnumerateRetry, retry_log);
+            on_enumerate();
+            return;
+        }
+        _enumerate_retry_count = 0;
     }
 
     pdk::mctp::app::Control::RoutingMap tmp_map;
@@ -681,6 +739,11 @@ void Driver::dump_packet(const Packet& pkt, uint32_t len)
 #endif
 }
 
+void Driver::on_enumeration_start_timer([[maybe_unused]] ipc::Timer& id)
+{
+    mctp_send_cmd(CmdCode::Enumerate);
+}
+
 void Driver::on_enumeration_done_timer([[maybe_unused]] ipc::Timer& id)
 {
     mctp_send_cmd(CmdCode::EnumerateDone);
@@ -775,7 +838,15 @@ void Driver::on_endpoint_status_change(uint8_t endpoint_index, uint8_t status)
         }
 
         // do enumerate again
-        on_enumerate();
+        if (ipc::EnumerateStartMs) {
+            if (!_enum_start_timer.enabled()) {
+                _enum_done_timer.stop();
+                _enum_start_timer.start();
+            }
+        }
+        else {
+            on_enumerate();
+        }
 
         _is_send_notify = true;
     }

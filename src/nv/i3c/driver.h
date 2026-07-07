@@ -21,8 +21,9 @@
 #include <span>
 
 #include "nv/common/literals.h"
-#include "nv/ipc/event.h"
 #include "nv/i2c/common.h"
+#include "nv/ipc/event.h"
+#include "nv/perf_mon/perf_mon.h"
 #include "sys/i3c/driver.h"
 
 namespace nv::i3c {
@@ -97,7 +98,12 @@ public:
 
     uint32_t                  _error_log_count{};
     uint32_t                  _i2c_error_log_count{};
-    static constexpr uint32_t ErrorLogThreshold = 100;
+    uint32_t                  _i2c_arblost_log_count{};
+    static constexpr uint32_t ErrorLogThreshold        = 100;
+    static constexpr uint32_t MaxConsecutiveRecoveries = 5;
+
+    // assign a Port with a OobBus
+    static nv::perf_mon::OobBus i3c_port_to_oob_bus(Port port);
 
 protected:
     Port               _port;
@@ -106,9 +112,12 @@ protected:
     I3cBuffer          _w_buffer{};
     I3cBuffer          _r_buffer{};
     IbiBuffer          _ibi_data{};
-    bool               _is_gpu  = false;
-    bool               _is_init = false;
+    bool               _is_gpu                 = false;
+    bool               _is_init                = false;
+    bool               _daa_done               = false;
+    uint32_t           _consecutive_recoveries = 0;
     Status             transfer(void* args, uint8_t& length);
+    void               try_recover();
     nv::i2c::I2cStatus i2c_read(uint8_t address, std::span<uint8_t> buffer);
     nv::i2c::I2cStatus i2c_write(uint8_t address, std::span<uint8_t> buffer);
     nv::i2c::I2cStatus i2c_write_read(uint8_t            address,

@@ -17,6 +17,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 #include "nv/common/fixed_point.h"
 #include "nv/soc_pwr_smoothing/offset_policy.h"
 #include "nv/soc_pwr_smoothing/power_brake_policy.h"
@@ -45,9 +47,9 @@ enum class ConstantPowerMode
 
 struct RuntimeCfg
 {
-    float                        max_ac_ramp_rate{0.0f};  // AC ramp rate limit (0 = disabled)
-    PowerBrakePolicy::RuntimeCfg power_brake_policy{.entry_threshold = to_sfxp22_10(0.5),
-                                                    .exit_threshold  = to_sfxp22_10(0.8),
+    uint32_t max_ac_ramp_rate{0};  // AC ramp rate limit in W/s (0 = disabled)
+    PowerBrakePolicy::RuntimeCfg power_brake_policy{.entry_threshold = to_sfxp22_10(0.7),
+                                                    .exit_threshold  = to_sfxp22_10(0.9),
                                                     .enabled         = false};
     ThermBrakePolicy::RuntimeCfg therm_brake_policy{.enabled = true};
     OffsetPolicy::RuntimeCfg     isink_offset_policy{

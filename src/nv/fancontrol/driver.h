@@ -60,6 +60,22 @@ public:
      */
     static void stop_fan_pwm(size_t fan_index);
 
+    /**
+     * @brief Get a fan's current (last-commanded) PWM duty cycle.
+     *
+     * PWM is an output (there is no duty sensor), so this returns the value
+     * that was last written for the fan.
+     *
+     * @param fan_index Fan index (0-based)
+     * @return duty cycle percentage (0-100)
+     */
+    static uint8_t get_fan_pwm(size_t fan_index);
+
+    /**
+     * @brief Number of PWM fan channels, from the project config.h.
+     */
+    static size_t fan_count();
+
 private:
     /**
      * @brief Internal function to set PWM duty cycle with validation

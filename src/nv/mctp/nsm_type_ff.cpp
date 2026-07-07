@@ -378,14 +378,25 @@ void Nsm::on_nv_internal_getAdcCalibrationResults(const Packet& rx, Packet& tx)
 
 void Nsm::on_nv_internal_adcCalibSetLoopbackDacCode(const Packet& rx, Packet& tx)
 {
-    dispatch_nv_internal_set_req<NsmTFFAdcCalibSetLoopbackDacCodeReq>(
-        rx,
-        tx,
-        NvInternalReqCheck::ExactSize,
-        [](const NsmTFFAdcCalibSetLoopbackDacCodeReq& request) {
-            return nsm_pwr_smoothing_handlers::handle_adc_calib_set_loopback_dac_code(
-                request.dac_code);
-        });
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+
+    NsmTFFAdcCalibSetLoopbackDacCodeReq request{};
+    if (!load_nv_internal_request(rx, tx, request, NvInternalReqCheck::ExactSize)) {
+        return;
+    }
+
+    auto result = nsm_pwr_smoothing_handlers::handle_adc_calib_set_loopback_dac_code(
+        request.dac_code);
+    if (result != Ccode::Success) {
+        fill_error_packet(result, rx, tx);
+        return;
+    }
+
+    auto& ntx             = NsmPktResp::from(tx);
+    ntx.data_size         = 0;
+    ntx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
 }
 
 void Nsm::on_nv_internal_getPowerSmoothRawReadback(const Packet& rx, Packet& tx)

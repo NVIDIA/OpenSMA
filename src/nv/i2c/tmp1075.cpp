@@ -44,15 +44,19 @@ I2cStatus Tmp1075::read_temperature(int8_t& temp_celsius)
 
 int16_t Tmp1075::convert_12bit_to_signed(int16_t raw_value)
 {
-    return static_cast<int16_t>(raw_value >> 4);
+    // Limit/temperature data is left-justified in bits [15:4] with 0.0625 degC
+    // resolution, so the integer Celsius value lives in the upper byte (bits
+    // [15:8]). Arithmetic right shift by 8 sign-extends and yields degrees C.
+    return static_cast<int16_t>(raw_value >> 8);
 }
 
 int16_t Tmp1075::convert_signed_to_12bit(int8_t temp_celsius)
 {
-    // Convert temperature to 12-bit format in upper bits
-    // Temperature in Celsius * 16 (shift left by 4 to put in bits [15:4])
+    // Encode integer Celsius into the register's left-justified format: the
+    // 12-bit code is temp * 16 (1 LSB = 0.0625 degC) placed in bits [15:4],
+    // which is exactly temp << 8. Per datasheet, e.g. +80 degC -> 0x5000.
     // coverity[cert_int31_c_violation]
-    return static_cast<int16_t>(temp_celsius << 4);
+    return static_cast<int16_t>(temp_celsius << 8);
 }
 
 I2cStatus Tmp1075::set_low_limit(int8_t threshold)

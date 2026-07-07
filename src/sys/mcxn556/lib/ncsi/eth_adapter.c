@@ -27,6 +27,10 @@
 #include "fsl_enet.h"
 #include "fsl_common.h"
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+#include "fsl_phy.h"
+#endif
+
 #include <string.h>
 
 /*******************************************************************************
@@ -66,8 +70,15 @@
 /*******************************************************************************
  * External Variables
  ******************************************************************************/
+// BOARD_PhySysClock and BOARD_PhyAddress are declared in hardware_init.h.
+// BOARD_PhyOps / BOARD_PhySource depend on fsl_phy.h types and are kept local
+// to avoid pulling that header into hardware_init.h's wider consumer set.
 extern ENET_Type* BOARD_Enet;
-extern uint32_t   BOARD_PhySysClock;
+
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+extern const phy_operations_t* BOARD_PhyOps;  // defined in hardware_init.cpp
+extern void*                   BOARD_PhySource;
+#endif
 
 /*******************************************************************************
  * Variables
@@ -81,6 +92,25 @@ static volatile bool s_mac_inited = false;
 
 // ENET handle
 static enet_handle_t s_enet_handle;
+
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+// PHY handle (for LAN8741 driver on devkit)
+static phy_handle_t s_phy_handle;
+
+// Negotiated link speed/duplex written by ETH_ADAPTER_PHY_Init and consumed by
+// ETH_ADAPTER_MAC_Init. Defaults assume 100M/FD so a MAC brought up before
+// auto-neg converges (or if the PHY query fails) at least matches the most
+// likely link state on modern switches.
+static enet_mii_speed_t  s_phy_speed  = kENET_MiiSpeed100M;
+static enet_mii_duplex_t s_phy_duplex = kENET_MiiFullDuplex;
+
+// Wall-clock-bounded auto-neg poll. 3 s covers worst-case 802.3 auto-neg
+// convergence (~2 s typical), and ~50 ms between MDIO reads keeps the bus
+// idle long enough to not stress the PHY. Independent of SMI clock, unlike
+// a naked counter loop.
+#define ETH_ADAPTER_AUTONEG_TIMEOUT_MS (3000U)
+#define ETH_ADAPTER_AUTONEG_POLL_MS    (50U)
+#endif
 
 // Buffer descriptors - aligned for DMA
 SDK_ALIGN(static enet_rx_bd_struct_t s_rx_buff_descrip[ENET_RXBD_NUM], ENET_BUFF_ALIGNMENT);
@@ -269,11 +299,71 @@ eth_adapter_err_t ETH_ADAPTER_FrameQueueClear(eth_adapter_frame_queue_t* queue)
     return ETH_ADAPTER_OK;
 }
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+/*******************************************************************************
+ * PHY Initialization (devkit, LAN8741 via MDIO)
+ ******************************************************************************/
+
+static eth_adapter_err_t ETH_ADAPTER_PHY_Init(void)
+{
+    phy_config_t phyConfig = {
+        .phyAddr  = BOARD_PhyAddress,
+        .autoNeg  = true,
+        .ops      = BOARD_PhyOps,
+        .resource = BOARD_PhySource,
+    };
+
+    if (PHY_Init(&s_phy_handle, &phyConfig) != kStatus_Success) {
+        return ETH_ADAPTER_ERROR;
+    }
+
+    // PHY_Init only kicks auto-neg off; we still have to wait for it to
+    // converge before reading the negotiated speed/duplex. SDK_DelayAtLeastUs
+    // gives a stable wall-clock-based timeout regardless of how SMI/MDIO clock
+    // is configured.
+    bool autoneg_done = false;
+    for (uint32_t elapsed_ms  = 0U; elapsed_ms < ETH_ADAPTER_AUTONEG_TIMEOUT_MS;
+         elapsed_ms          += ETH_ADAPTER_AUTONEG_POLL_MS) {
+        if (PHY_GetAutoNegotiationStatus(&s_phy_handle, &autoneg_done) != kStatus_Success) {
+            return ETH_ADAPTER_ERROR;
+        }
+        if (autoneg_done) {
+            break;
+        }
+        SDK_DelayAtLeastUs(ETH_ADAPTER_AUTONEG_POLL_MS * 1000U, SystemCoreClock);
+    }
+
+    if (!autoneg_done) {
+        // Link never came up. Leave s_phy_speed/s_phy_duplex at the 100M/FD
+        // default and let MAC_Init proceed - if the cable is plugged in
+        // later, the link is more likely to land on 100M/FD than 10M with a
+        // modern switch.
+        return ETH_ADAPTER_OK;
+    }
+
+    phy_speed_t  speed;
+    phy_duplex_t duplex;
+    if (PHY_GetLinkSpeedDuplex(&s_phy_handle, &speed, &duplex) != kStatus_Success) {
+        return ETH_ADAPTER_ERROR;
+    }
+
+    s_phy_speed  = (speed == kPHY_Speed100M) ? kENET_MiiSpeed100M : kENET_MiiSpeed10M;
+    s_phy_duplex = (duplex == kPHY_FullDuplex) ? kENET_MiiFullDuplex : kENET_MiiHalfDuplex;
+    return ETH_ADAPTER_OK;
+}
+#endif  // NCSI_USE_PHY_MDIO
+
 /*******************************************************************************
  * MAC Initialization
  *
- * PHY runs in default auto-negotiation mode (no MDIO control).
- * MAC is configured for 100Mbps Full Duplex (typical auto-neg result).
+ * Production boards: PHY is strap-pin configured and we have no MDIO
+ * visibility, so MAC is hardcoded to 100M Full Duplex (typical auto-neg
+ * result with modern switches; if reality differs, packets drop).
+ *
+ * Devkit (NCSI_USE_PHY_MDIO): ETH_ADAPTER_PHY_Init() ran before this and
+ * populated s_phy_speed / s_phy_duplex from the LAN8741's negotiated link
+ * state - MAC tracks that. Falls back to the same 100M/FD default if
+ * auto-neg never converged.
  ******************************************************************************/
 
 static eth_adapter_err_t ETH_ADAPTER_MAC_Init(void)
@@ -315,10 +405,18 @@ static eth_adapter_err_t ETH_ADAPTER_MAC_Init(void)
     config.specialControl |= kENET_StoreAndForward | kENET_DescDoubleBuffer
                            | kENET_RxChecksumOffloadEnable | kENET_PromiscuousEnable;
 
-    // PHY runs in default auto-negotiation mode
-    // Configure MAC for 100M Full Duplex (typical auto-neg result with modern switches)
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    // Devkit: use the speed/duplex negotiated by the LAN8741 PHY (populated
+    // by ETH_ADAPTER_PHY_Init). Falls back to 100M/FD if auto-neg never
+    // converged - see s_phy_speed initialiser.
+    config.miiSpeed  = s_phy_speed;
+    config.miiDuplex = s_phy_duplex;
+#else
+    // Production: PHY is strap-pin configured for auto-neg with no MDIO
+    // visibility; we assume the typical 100M/FD result.
     config.miiSpeed  = kENET_MiiSpeed100M;
     config.miiDuplex = kENET_MiiFullDuplex;
+#endif
 
     // Set MII mode based on PHY interface
 #ifdef EXAMPLE_PHY_INTERFACE_RGMII
@@ -330,7 +428,7 @@ static eth_adapter_err_t ETH_ADAPTER_MAC_Init(void)
     // Enable interrupts
     config.interrupt = kENET_DmaTx | kENET_DmaRx | kENET_DmaBusErr;
 
-    // MCU generates 50MHz RMII clock internally (PLL0/3), so standard ENET_Init works
+    // ENET_Init uses the RMII clock source configured during ENET hardware init.
     ENET_Init(BOARD_Enet, &config, &s_mac_address[0], BOARD_PhySysClock);
 
     // ENET interrupt priority already set in ECM_InitEnetHardware()
@@ -451,6 +549,15 @@ eth_adapter_err_t ETH_ADAPTER_InitMac(void)
         return ETH_ADAPTER_OK;
     }
 
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    // Devkit (LAN8741): kick the PHY out of its default state via MDIO so its
+    // RX path actually feeds the MAC. Production boards skip this - the PHY is
+    // brought up by hardware strap pins.
+    if (ETH_ADAPTER_PHY_Init() != ETH_ADAPTER_OK) {
+        return ETH_ADAPTER_ERROR;
+    }
+#endif
+
     if (ETH_ADAPTER_MAC_Init() != ETH_ADAPTER_OK) {
         return ETH_ADAPTER_ERROR;
     }
@@ -462,6 +569,18 @@ eth_adapter_err_t ETH_ADAPTER_InitMac(void)
 bool ETH_ADAPTER_IsMacInited(void)
 {
     return s_mac_inited;
+}
+
+uint32_t ETH_ADAPTER_GetConfiguredSpeedBps(void)
+{
+#if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
+    // Tracks the speed sampled from the LAN8741 during ETH_ADAPTER_InitMac().
+    return (s_phy_speed == kENET_MiiSpeed100M) ? 100000000U : 10000000U;
+#else
+    // Production: PHY is strap-pin configured; MAC is hardcoded to 100M FD
+    // and we have no MDIO visibility to confirm or correct.
+    return 100000000U;
+#endif
 }
 
 eth_adapter_err_t ETH_ADAPTER_GetMacAddress(uint8_t* address)

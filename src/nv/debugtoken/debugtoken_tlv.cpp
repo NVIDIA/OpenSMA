@@ -110,6 +110,16 @@ nv::flash::Key get_subtype_npds_key(uint32_t token_type)
     }
 }
 
+constexpr uint32_t get_flash_debug_fw_subtype_for_ap(nv::vrot::ApType ap_type)
+{
+    switch (ap_type) {
+        case nv::vrot::ApType::Cpld: return DebugTokenSubtypeCpldFw;
+        case nv::vrot::ApType::Lpu : return DebugTokenSubtypeLpuFw;
+    }
+
+    return DebugTokenSubtypeNone;
+}
+
 TokenErrorCode set_debug_token_npds_data(nv::flash::Key key, nv::flash::Data data)
 {
     return nv::flash::Flash::set_data(key, data) == nv::flash::Status::Ok
@@ -1127,6 +1137,16 @@ TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token
     }
 
     return TokenErrorCode::NoErrorCode;
+}
+
+TokenErrorCode check_flash_debug_fw_token_for_ap(nv::vrot::ApType ap_type)
+{
+    const uint32_t subtype = get_flash_debug_fw_subtype_for_ap(ap_type);
+    if (subtype == DebugTokenSubtypeNone) {
+        return TokenErrorCode::TokenUnsupportedType;
+    }
+
+    return check_debug_token_subtype_enabled(Type::FlashDebugFw, subtype);
 }
 
 void sync_debug_token_features_on_boot()

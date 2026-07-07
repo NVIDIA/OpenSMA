@@ -65,3 +65,16 @@ Raa22800X::Raa22800X(Port port, uint8_t address) : PowerSensor(port, address)
     _temp_coeff        = {TempSlopeM, TempOffsetB, TempExpMult, TempMask};
     _power_input_coeff = {PowerSlopeM, PowerOffsetB, PowerExpMult, PowerMask};
 }
+
+I2cStatus Raa22800X::init()
+{
+    // RAA22800X SMBALERT_MASK (1Bh) POR default = 0x00 on every STATUS page, i.e. nothing is
+    // masked, so OT_WARN (STATUS_TEMPERATURE bit6) and OT_FAULT (bit7) already assert
+    // SMBALERT#/nPMALERT out of reset -- no mask write is needed here. (The RAA-side NSM gap
+    // was purely the HSCC_SMBUS_ALT_N polarity in GpioNsmEventSetup, which must be Low.)
+    //
+    // SMBALERT_MASK on the RAA is a PMBus *block* write ([1Bh][2][STATUS_cmd][mask]); if
+    // explicit (non-default) masking is ever required, add a write_block() HAL primitive and
+    // write {Register::StatusTemperature, 0x00} here.
+    return clear_faults();
+}

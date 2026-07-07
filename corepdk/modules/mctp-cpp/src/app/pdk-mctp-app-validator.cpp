@@ -65,34 +65,36 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
     }
     // Start of PLDM message
     if ((ctl.msg_type == MsgType::Pldm) && ctl.som) {
-        if (eid_ok) {
-            _msg_type = ctl.msg_type;
-            _msg_tag  = ctl.msg_tag;
-            _pkt_seq  = ctl.pkt_seq;
-            _eid      = ctl.dst_eid;
-            return true;
-        }
-        else {
+        if (!eid_ok) {
             pdk::cmn::log::hide().warn<Console>(
                 "SOM=1,EOM=0/1 with invalid dst eid for pldm message\n");
             return false;
         }
-    }
-
-    // Start of SPDM message
-    if ((ctl.msg_type == MsgType::Spdm) && ctl.som) {
-        if (eid_ok) {
+        // Skip persist on EOM=1 so a single-packet message does not clobber
+        // an in-flight fragmented flow.
+        if (!ctl.eom) {
             _msg_type = ctl.msg_type;
             _msg_tag  = ctl.msg_tag;
             _pkt_seq  = ctl.pkt_seq;
             _eid      = ctl.dst_eid;
-            return true;
         }
-        else {
+        return true;
+    }
+
+    // Start of SPDM message
+    if ((ctl.msg_type == MsgType::Spdm) && ctl.som) {
+        if (!eid_ok) {
             pdk::cmn::log::hide().warn<Console>(
                 "SOM=1,EOM=0/1 with invalid dst eid for spdm message\n");
             return false;
         }
+        if (!ctl.eom) {
+            _msg_type = ctl.msg_type;
+            _msg_tag  = ctl.msg_tag;
+            _pkt_seq  = ctl.pkt_seq;
+            _eid      = ctl.dst_eid;
+        }
+        return true;
     }
 
     // Start of VendorPci (NSM) message
@@ -109,16 +111,15 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
             return false;
         }
 
-        // Persist state so SOM=0 continuation fragments validate against the
-        // EID/tag/seq we just accepted. Mirrors the PLDM/SPDM start branches
-        // above; writing on EOM=1 is harmless because single packets never
-        // re-read this state. Without this, multi-fragment NSM messages (e.g.
-        // InstallToken) drop every fragment after the first because the
-        // continuation branch below compares against stale _eid.
-        _msg_type = ctl.msg_type;
-        _msg_tag  = ctl.msg_tag;
-        _pkt_seq  = ctl.pkt_seq;
-        _eid      = ctl.dst_eid;
+        // Persist state only for fragmented NSM starts. Single-packet NSM
+        // traffic can interleave with another fragmented message and must not
+        // clobber the continuation state for that flow.
+        if (!ctl.eom) {
+            _msg_type = ctl.msg_type;
+            _msg_tag  = ctl.msg_tag;
+            _pkt_seq  = ctl.pkt_seq;
+            _eid      = ctl.dst_eid;
+        }
         return true;
     }
 

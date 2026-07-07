@@ -44,7 +44,9 @@ struct EventRequest
 {
     bool     is_set;  // indicate set event or clear event
     uint32_t bits;
-    EventId  event_id;
+    // EventId for events; for task notify use (EventId::End + TaskId) so event_id extends
+    // beyond EventId::End
+    uint32_t event_id;
 };
 
 using Request = std::variant<QueueRequest, EventRequest>;

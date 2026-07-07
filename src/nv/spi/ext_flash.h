@@ -84,6 +84,7 @@ public:
     static ExtFlash& inst();
 
     std::span<const FlashPartition> partitions() const { return _partitions; }
+    uint32_t                        sector_size() const { return _spec.sector_size; }
 
     Status read_id(uint32_t& jedec_id);
     Status read_status(uint8_t& status_reg);

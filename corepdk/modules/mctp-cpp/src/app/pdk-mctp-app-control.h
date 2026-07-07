@@ -117,19 +117,23 @@ public:
     constexpr static uint8_t NotifyDisReqSize = 0x07;
 
 protected:
-    constexpr static uint8_t EidPoolSize      = platforms::EidPoolSize;
-    constexpr static uint8_t RoutingEntryNum  = 1;
-    constexpr static uint8_t EidSize          = 1;
-    constexpr static uint8_t NoNextEntry      = 0xFF;
-    constexpr static uint8_t PhyAddrSize      = 0x1;
-    constexpr static uint8_t PortNum          = 0x0;
-    constexpr static uint8_t InvalidPortNum   = 0xFF;
-    constexpr static uint8_t OneByteMask      = 0xFF;
-    constexpr static uint8_t VendorIaniByte1  = 0x16;
-    constexpr static uint8_t VendorIaniByte2  = 0x47;
-    constexpr static uint8_t VendorPciByte1   = 0x10;
-    constexpr static uint8_t VendorPciByte2   = 0xDE;
-    constexpr static uint8_t NoMoreCapability = 0xFF;
+    constexpr static uint8_t EidPoolSize        = platforms::EidPoolSize;
+    constexpr static uint8_t RoutingEntryNum    = 1;
+    constexpr static uint8_t EidSize            = 1;
+    constexpr static uint8_t NoNextEntry        = 0xFF;
+    constexpr static uint8_t PhyAddrSize        = 0x1;
+    constexpr static uint8_t PortNum            = 0x0;
+    constexpr static uint8_t InvalidPortNum     = 0xFF;
+    constexpr static uint8_t OneByteMask        = 0xFF;
+    constexpr static uint8_t VendorIdFormatPci  = 0x00;
+    constexpr static uint8_t VendorIdFormatIana = 0x01;
+    constexpr static uint8_t VendorIanaIdByte0  = 0x00;
+    constexpr static uint8_t VendorIanaIdByte1  = 0x00;
+    constexpr static uint8_t VendorIanaIdByte2  = 0x16;
+    constexpr static uint8_t VendorIanaIdByte3  = 0x47;
+    constexpr static uint8_t VendorPciIdByte0   = 0x10;
+    constexpr static uint8_t VendorPciIdByte1   = 0xDE;
+    constexpr static uint8_t NoMoreCapability   = 0xFF;
 
     void on_get_endpoint_id(const Packet& rx, Packet& tx) const;
     void on_get_endpoint_uuid(const Packet& rx, Packet& tx) const;

@@ -204,32 +204,6 @@ is
 
    end Populate_Version_String;
 
-   procedure Populate_Ap_Version_String (Major          : NvU16;
-                                         Minor          : NvU8;
-                                         Patch          : NvU16;
-                                         Build          : NvU16;
-                                         Version_String : out Array_Version_String;
-                                         Length         : out NvU8)
-   is
-      Offset : NvU32 := 0;
-
-   begin
-
-      Version_String := [others => 0];
-
-      Version_String (Offset) := NvU8 (Major and 16#FF#);
-      Offset := Offset + 1;
-      Version_String (Offset) := Minor;
-      Offset := Offset + 1;
-      Version_String (Offset) := NvU8 (Patch and 16#FF#);
-      Offset := Offset + 1;
-      Version_String (Offset) := NvU8 (Build and 16#FF#);
-      Offset := Offset + 1;
-
-      Length := NvU8 (Offset and 16#FF#);
-
-   end Populate_Ap_Version_String;
-
    procedure Get_Active_Stamp (Stamp : out NvU32)
    is
 
@@ -344,23 +318,11 @@ is
    procedure Get_Ap_Active_Version_String (Version_String : out Array_Version_String;
                                            Length         : out NvU8)
    is
-      Major    : NvU16  := 0;
-      Minor    : NvU8  := 0;
-      Patch    : NvU16 := 0;
-      Build    : NvU16 := 0;
    begin
 
-      Pldm_Get_Ap_Active_Version (Major  => Major,
-                                  Minor  => Minor,
-                                  Patch  => Patch,
-                                  Build  => Build);
-
-      Populate_Ap_Version_String (Major          => Major,
-                                  Minor          => Minor,
-                                  Patch          => Patch,
-                                  Build          => Build,
-                                  Version_String => Version_String,
-                                  Length         => Length);
+      Pldm_Get_Ap_Active_Comp_Version_String
+        (Version_String => Version_String,
+         Length         => Length);
 
    end Get_Ap_Active_Version_String;
 
@@ -387,23 +349,12 @@ is
    procedure Get_Ap_Pending_Version_String (Version_String : out Array_Version_String;
                                             Length         : out NvU8)
    is
-      Major    : NvU16  := 0;
-      Minor    : NvU8  := 0;
-      Patch    : NvU16 := 0;
-      Build    : NvU16 := 0;
    begin
 
-      Pldm_Get_Ap_Pending_Version  (Major  => Major,
-                                    Minor  => Minor,
-                                    Patch  => Patch,
-                                    Build  => Build);
+      Pldm_Get_Ap_Pending_Comp_Version_String
+        (Version_String => Version_String,
+         Length         => Length);
 
-      Populate_Ap_Version_String (Major          => Major,
-                                  Minor          => Minor,
-                                  Patch          => Patch,
-                                  Build          => Build,
-                                  Version_String => Version_String,
-                                  Length         => Length);
    end Get_Ap_Pending_Version_String;
 
    --  @todo should remove this
@@ -421,4 +372,3 @@ is
    end Pldm_Get_Device_Identity;
 
 end Pdk.Pldm.Plat;
-

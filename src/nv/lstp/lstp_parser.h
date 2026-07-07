@@ -18,6 +18,7 @@
 #pragma once
 
 #include <span>
+#include <expected>
 
 #include "nv/lstp/lstp_common.h"
 
@@ -26,6 +27,15 @@ namespace nv::lstp {
 class LstpParser
 {
 public:
+    struct SpiRequest
+    {
+        uint8_t               channel_id;
+        nv::spi::bm::CsPins   cs;
+        uint16_t              read_length;
+        std::span<uint8_t>    write_data;
+        nv::spi::bm::SpiFlags flags;
+    };
+
     /**
      * @brief Validate request header and length
      *
@@ -44,6 +54,15 @@ public:
      * @return LstpChannelType
      */
     static LstpChannelType parse_channel_type(std::span<uint8_t>& req_buffer);
+
+    /**
+     * @brief Retrieve SPI request metadata from LSTP request
+     *
+     * @param req_buffer The buffer with the request data
+     * @return LstpParser::SpiRequest or error status
+     */
+    static std::expected<SpiRequest, LstpStatus>
+    parse_spi_request(std::span<uint8_t>& req_buffer);
 };
 
 }  // namespace nv::lstp

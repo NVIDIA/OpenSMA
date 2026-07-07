@@ -17,15 +17,15 @@
  */
 #include "nv/spi/task.h"
 
-#include "nv/bootloader.h"
-#include "nv/nv.h"
-#include "sys/ipc/supervisor.h"
-#include "nv/ctimer/ctimer.h"
-#include "nv/mctp/driver.h"
-#include "nv/usb/task.h"
-#include "nv/logger/log.h"
-
 #include <cstring>
+
+#include "nv/bootloader.h"
+#include "nv/ctimer/ctimer.h"
+#include "nv/logger/log.h"
+#include "nv/mctp/driver.h"
+#include "nv/nv.h"
+#include "nv/usb/task.h"
+#include "sys/ipc/supervisor.h"
 
 using namespace nv::spi;
 
@@ -42,7 +42,7 @@ void Task::make(Config config)
 
             // NOLINTNEXTLINE(*-reinterpret-cast)
             const std::span<uint8_t> Priv0(reinterpret_cast<uint8_t*>(&task0), sizeof(Task));
-            task0.setup(stack0.span(), Priv0, Priority::Norm, Task::entrypoint);
+            task0.setup(stack0.span(), Priv0, Priority::SPI, Task::entrypoint);
             break;
         }
         case Port::One: {
@@ -51,7 +51,7 @@ void Task::make(Config config)
 
             // NOLINTNEXTLINE(*-reinterpret-cast)
             const std::span<uint8_t> Priv1(reinterpret_cast<uint8_t*>(&task1), sizeof(Task));
-            task1.setup(stack1.span(), Priv1, Priority::Norm, Task::entrypoint);
+            task1.setup(stack1.span(), Priv1, Priority::SPI, Task::entrypoint);
             break;
         }
         case Port::Two: {
@@ -60,7 +60,7 @@ void Task::make(Config config)
 
             // NOLINTNEXTLINE(*-reinterpret-cast)
             const std::span<uint8_t> Priv2(reinterpret_cast<uint8_t*>(&task2), sizeof(Task));
-            task2.setup(stack2.span(), Priv2, Priority::Norm, Task::entrypoint);
+            task2.setup(stack2.span(), Priv2, Priority::SPI, Task::entrypoint);
             break;
         }
         default: nv::info("Flexcomm for SPI not defined (%d)\n", config.port_id);
@@ -85,6 +85,8 @@ Task::Task(Config config) noexcept
 , _master_device(config.master_device)
 , _slave_device(config.slave_device)
 , _spb(_driver, _event, _client)
+, _oob_bus(
+      nv::perf_mon::Driver::flexcomm_port_to_oobBus(static_cast<uint8_t>(config.flexcomm_id)))
 {
     if (_master_device == MasterDevice::Spi0 || _master_device == MasterDevice::Spi1
         || _master_device == MasterDevice::Spi2) {
@@ -98,6 +100,9 @@ Task::Task(Config config) noexcept
             _spb._driver.init();
         }
     }
+
+    nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
+    nv::perf_mon::Driver::set_oob_bus_type(_oob_bus, nv::perf_mon::OobBusType::Spi);
 }
 
 void Task::start()
@@ -206,6 +211,8 @@ void Task::handle_tx(Buffer& buffer)
     auto status = _spb.spi_mctp_send(buffer);
     if (status != SpbStatus::Ok) {
         error_log(status, _client);
+        // oob_error array has few entries, supported only first errors from SpbStatus
+        nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
     }
 }
 
@@ -215,6 +222,8 @@ void Task::handle_rx()
     auto   status = _spb.spi_mctp_recv(buffer);
     if (status != SpbStatus::Ok) {
         error_log(status, _client);
+        // oob_error array has few entries, supported only first errors from SpbStatus
+        nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
     }
     else {
         forward(buffer);

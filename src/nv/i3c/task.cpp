@@ -22,19 +22,18 @@
 #include <cstring>
 
 #include "nv/bootloader.h"
+#include "nv/ctimer/ctimer.h"
+#include "nv/flash/flash.h"
 #include "nv/gpio/driver.h"
 #include "nv/i2c/helper.h"
+#include "nv/i2c/task.h"
+#include "nv/i3c/topology_info.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/driver.h"
 #include "nv/nv.h"
-#include "nv/usb/task.h"
-#include "nv/gpio/driver.h"
-#include "nv/i2c/task.h"
-#include "nv/watchdog/runtime.h"
 #include "nv/perf_mon/perf_mon.h"
-#include "nv/ctimer/ctimer.h"
-#include "nv/flash/flash.h"
-#include "nv/i3c/topology_info.h"
+#include "nv/usb/task.h"
+#include "nv/watchdog/runtime.h"
 #include "sys/i2c/utils.h"
 
 using namespace nv::i3c;
@@ -299,7 +298,7 @@ Task::Task(Config config) noexcept
 , _temp_sensor(config.temp_sensor)
 , _gpu_error(config.gpu_error)
 , _ipchandler_id(config.ipchandler_id)
-, _oob_bus(nv::perf_mon::OobBus::End)
+, _oob_bus(_driver.i3c_port_to_oob_bus(config.port_id))
 , _fru_i2c_info(config.fru_i2c_info)
 , _platform_info(config.platform_info)
 {
@@ -307,23 +306,23 @@ Task::Task(Config config) noexcept
     logger::info(logger::Event::I3CBind,
                  {static_cast<uint8_t>(config.task_id), static_cast<uint8_t>(config.port_id)});
 
-    switch (config.client) {
-        case mctp::Client::DsI3c0: {
-            _oob_bus      = nv::perf_mon::OobBus::DsI3c0;
-            _smbpbi_items = {telemetry::TelemId::Gpu1Temp, telemetry::TelemId::Gpu1Power};
-            break;
-        }
-        case mctp::Client::DsI3c1: {
-            _oob_bus      = nv::perf_mon::OobBus::DsI3c1;
-            _smbpbi_items = {telemetry::TelemId::Gpu2Temp, telemetry::TelemId::Gpu2Power};
-            break;
-        }
-        default: break;
-    }
-
     nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
+    nv::perf_mon::Driver::set_oob_bus_type(_oob_bus, nv::perf_mon::OobBusType::I3c);
 
     if (_is_gpu) {
+        // Bug 6388735: SMBPBI command -> telemetry-cache mapping. Must stay aligned with
+        // smbpbi::SmbpbiCommands = {GetTemperature, GetPower}. (Dropped by GFWLYNT1-5650;
+        // without it _smbpbi_items defaults to {Gpu1Temp, Gpu1Temp} and the GetPower reply
+        // gets cached as GPU temperature -> SMBus 0x50 returns garbage.)
+        switch (config.client) {
+            case mctp::Client::DsI3c0:
+                _smbpbi_items = {telemetry::TelemId::Gpu1Temp, telemetry::TelemId::Gpu1Power};
+                break;
+            case mctp::Client::DsI3c1:
+                _smbpbi_items = {telemetry::TelemId::Gpu2Temp, telemetry::TelemId::Gpu2Power};
+                break;
+            default: break;
+        }
         nv::logger::info(nv::logger::Event::NvlInfo,
                          {static_cast<uint8_t>(_client),
                           _platform_info.node_index,

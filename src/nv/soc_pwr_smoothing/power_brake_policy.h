@@ -26,7 +26,7 @@
 namespace nv::soc_pwr_smoothing {
 
 // Policy to determine when power brake should be asserted based on SoC voltage.
-// Uses hysteresis: asserts at low voltage (0.5V), deasserts at higher voltage (0.8V).
+// Uses hysteresis: asserts at low voltage (0.7V), deasserts at higher voltage (0.9V).
 class PowerBrakePolicy : public mpf::FuncBlock
 {
 public:
@@ -38,8 +38,8 @@ public:
 
     struct RuntimeCfg
     {
-        SFXP22_10 entry_threshold;  // Voltage threshold to assert brake (in volts, e.g., 0.5V)
-        SFXP22_10 exit_threshold;  // Voltage threshold to deassert brake (in volts, e.g., 0.8V)
+        SFXP22_10 entry_threshold;  // Voltage threshold to assert brake (in volts, e.g., 0.7V)
+        SFXP22_10 exit_threshold;  // Voltage threshold to deassert brake (in volts, e.g., 0.9V)
         bool      enabled;
     };
 

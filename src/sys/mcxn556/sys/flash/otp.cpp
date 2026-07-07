@@ -102,9 +102,15 @@ status_t OtpDriver::program(const uint32_t addr, const uint32_t input_data)
     }
 
     // check if the address is valid
+#ifdef EDGELOCK2GO_CERT
+    constexpr std::array<uint32_t, 29> UsedEfuseAddr = {31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                                                        41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+                                                        63, 64, 65, 66, 67, 68, 69, 70, 71};
+#else
     constexpr std::array<uint32_t, 25> UsedEfuseAddr = {31, 32, 33, 34, 35, 36, 37, 38, 39,
                                                         40, 41, 42, 43, 44, 45, 46, 47, 48,
                                                         49, 50, 63, 64, 65, 66, 67};
+#endif
     static_assert(std::is_sorted(UsedEfuseAddr.begin(), UsedEfuseAddr.end()),
                   "UsedEfuseAddr is not sorted");
     // perform a binary search to check if the address is valid

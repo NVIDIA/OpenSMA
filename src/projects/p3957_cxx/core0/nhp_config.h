@@ -28,6 +28,12 @@ namespace nv::nhp {
 
 // AHS PROTOCOL CONFIG
 
+// When true, firmware drives the PERST_L / CLK_EN_L / PWR_EN_L / PWR_DIS
+// pins from the HSSM state machine. When false, the platform delegates
+// that pin sequencing to external hardware (CPLD / backplane) and
+// firmware only manages LED indication.
+constexpr bool EnableFwHssmPinControl = false;
+
 // Schematic Note: (this would seem to apply to A02, B00, C00, C01 and C02)
 //
 // J2 - MCIO0 --+-- J6 (SSD0) : VPP0

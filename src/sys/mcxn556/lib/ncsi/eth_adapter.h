@@ -143,6 +143,21 @@ eth_adapter_err_t ETH_ADAPTER_InitMac(void);
 bool ETH_ADAPTER_IsMacInited(void);
 
 /**
+ * @brief Get the MAC speed configured/reported by the ENET adapter.
+ *
+ * Production builds: always returns 100 Mbps because the PHY is strap-pin
+ * configured and there is no MDIO visibility.
+ *
+ * Devkit (NCSI_USE_PHY_MDIO): returns the speed sampled from the LAN8741
+ * during ETH_ADAPTER_InitMac(). This is the speed used for MAC configuration
+ * and the USB ECM speed notification; it is not refreshed after runtime
+ * renegotiation.
+ *
+ * @return Speed in bps (10000000 or 100000000)
+ */
+uint32_t ETH_ADAPTER_GetConfiguredSpeedBps(void);
+
+/**
  * @brief Send an ethernet frame
  * @param buffer Frame buffer to send
  * @return ETH_ADAPTER_OK on success

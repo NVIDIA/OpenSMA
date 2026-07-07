@@ -65,7 +65,7 @@
 #include "sys/common/AHB_config.h"
 #include "sys/smartdma/driver.h"
 #include "nv/spi/flashrom_task.h"
-#include "nv/vruart/task.h"
+#include "nv/vcom/vruart/task.h"
 
 static void make_i2c_task()
 {

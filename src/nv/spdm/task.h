@@ -31,7 +31,6 @@
 #include "nv/spdm/spdm_cert_chain.h"
 #include "sys/ipc/event.h"
 #include "corepdk/modules/spdm/src/app/pdk-spdm-app-res-library.h"
-#include "nv/spdm/secure_boot.h"
 namespace nv::spdm {
 
 constexpr size_t SpdmResponderNumber = nv::ipc::SpdmI2cResponder == true ? 2 : 1;
@@ -43,7 +42,10 @@ enum class Status
     QueueSendFail,  ///< queue send return fail
     EventSetFail,   ///< event set fail
     InvalidInterface,
-    Unknown,  ///< an unknown error occurred
+    Timeout,       ///< no response within deadline (used by crypto::request)
+    Busy,          ///< another caller holds the SPDM idle lock
+    Unknown,       ///< an unknown error occurred
+    NotSupported,  ///< the request is not supported
 };
 struct CertificateChain
 {
@@ -60,14 +62,21 @@ public:
         UsbRxBit = 0_bit,
         I2cRxBit = 1_bit,
         // for authenticate usage
-        AuthenticateRequestBit = 4_bit,  // notify the spdm task to auth
-        AuthenticateTaskIdle   = 5_bit,  // act as a lock to access spdm auth functionality
-        CertReadyBit           = 22_bit,
+        AuthenticateRequestBit    = 4_bit,  // notify the spdm task to auth
+        AuthenticateTaskIdle      = 5_bit,  // act as a lock to access spdm auth functionality
+        CryptoPrimitiveRequestBit = 6_bit,
+        CertReadyBit              = 22_bit,
     };
-    static constexpr auto RxWaitEventBit = nv::ipc::SpdmI2cResponder == true
-                                             ? spdm::Task::EventBits::UsbRxBit
-                                                   | spdm::Task::EventBits::I2cRxBit
-                                             : spdm::Task::EventBits::UsbRxBit;
+    static constexpr nv::ipc::Event::Bits
+        CryptoRequestEventBit = static_cast<nv::ipc::Event::Bits>(
+                                    spdm::Task::EventBits::AuthenticateRequestBit)
+                              | static_cast<nv::ipc::Event::Bits>(
+                                    spdm::Task::EventBits::CryptoPrimitiveRequestBit);
+    static constexpr auto RxWaitEventBit = (nv::ipc::SpdmI2cResponder == true
+                                                ? spdm::Task::EventBits::UsbRxBit
+                                                      | spdm::Task::EventBits::I2cRxBit
+                                                : spdm::Task::EventBits::UsbRxBit)
+                                         | CryptoRequestEventBit;
 
     static void make();
     static void entrypoint(void* params);
@@ -141,8 +150,6 @@ public:
     // for spdm scratch buffer
     std::array<SpdmScratchBufferAllocateItem, MaxSpdmScratchBufferItemCount>
         spdm_scratch_buffer_allocate_item{};
-    // for secure boot
-    nv::spdm::secure_boot::SecureBoot secure_boot{};
 
 protected:
     ipc::Event& _event;

@@ -26,6 +26,7 @@
 #include "nv/i2c/nct75.h"
 #include "nv/i2c/sensor.h"
 #include "nv/i2c/tmp1075.h"
+#include "nv/i2c/tmp432.h"
 #include "nv/i2c/tmp461.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/logger/log.h"
@@ -325,7 +326,19 @@ TelemetryValue read_i2c_temp_sensor(uint8_t sensorId)
     const uint8_t       i2cAddr      = sensorConfig.identified_addr;
     const uint8_t       id           = sensorConfig.sensor_model;
 
-    if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
+    if (id == nv::i2c::SensorModel::Sensor_Tmp432) {
+        nv::i2c::Tmp432 tmp432(i2cPort, i2cAddr);
+        int8_t          temp   = 0;
+        auto            status = tmp432.get_remote_high_temp(temp);
+        if (status == nv::i2c::I2cStatus::Ok) {
+            return static_cast<TelemetryValue>(temp);
+        }
+        else {
+            // TODO: Add to flash log
+            return TelemetryInvalid;
+        }
+    }
+    else if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
         nv::i2c::Tmp461 tmp461(i2cPort, i2cAddr);
         int8_t          temp   = 0;
         auto            status = tmp461.get_remote_high_temp(temp);
@@ -1169,7 +1182,11 @@ void Nsm::on_plat_env_setThermalParameter(const Packet& rx, Packet& tx)
             const uint8_t       i2cAddr      = sensorConfig.identified_addr;
             const uint8_t       id           = sensorConfig.sensor_model;
 
-            if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
+            if (id == nv::i2c::SensorModel::Sensor_Tmp432) {
+                nv::i2c::Tmp432 tmp432(i2cPort, i2cAddr);
+                tmp432.set_remote_high_alert_thresholds(static_cast<int8_t>(request.threshold));
+            }
+            else if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
                 nv::i2c::Tmp461 tmp461(i2cPort, i2cAddr);
                 tmp461.set_remote_high_alert_thresholds(static_cast<int8_t>(request.threshold));
             }
@@ -1180,10 +1197,12 @@ void Nsm::on_plat_env_setThermalParameter(const Packet& rx, Packet& tx)
             else if (id == nv::i2c::SensorModel::Sensor_Tmp1075) {
                 nv::i2c::Tmp1075 tmp1075(i2cPort, i2cAddr);
                 tmp1075.set_high_limit(static_cast<int8_t>(request.threshold));
+                tmp1075.set_low_limit(static_cast<int8_t>(request.threshold - 5));
             }
             else if (id == nv::i2c::SensorModel::Sensor_Nct75) {
                 nv::i2c::Nct75 nct75(i2cPort, i2cAddr);
                 nct75.set_tos_limit(static_cast<int8_t>(request.threshold));
+                nct75.set_thyst_limit(static_cast<int8_t>(request.threshold - 5));
             }
             else {
                 fill_error_packet(Ccode::ErrorGeneral, rx, tx);
@@ -1294,7 +1313,11 @@ void Nsm::on_plat_env_getThermalParameter(const Packet& rx, Packet& tx)
             const uint8_t       id           = sensorConfig.sensor_model;
             int8_t              threshold    = 0;
 
-            if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
+            if (id == nv::i2c::SensorModel::Sensor_Tmp432) {
+                nv::i2c::Tmp432 tmp432(i2cPort, i2cAddr);
+                tmp432.get_remote_high_alert_thresholds(threshold);
+            }
+            else if (id == nv::i2c::SensorModel::Sensor_Tmp461) {
                 nv::i2c::Tmp461 tmp461(i2cPort, i2cAddr);
                 tmp461.get_remote_high_alert_thresholds(threshold);
             }

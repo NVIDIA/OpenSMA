@@ -505,3 +505,164 @@ UBS_TEST(Validator, ValidMultiPacketVendorPciStart)
     };
     ensure::is_eq(v.validate(secondPkt, platforms::Interface::UsI2c), true);
 };
+
+UBS_TEST(Validator, SinglePacketVendorPciDoesNotClobberPldmFragmentState)
+{
+    platforms::RoutingTable router;
+    platforms::set_cur_eid(router, static_cast<uint8_t>(platforms::Interface::UsI2c), 0x02);
+    platforms::set_cur_eid(router, static_cast<uint8_t>(platforms::Interface::UsUsb), 0x03);
+    app::Validator v(router);
+
+    app::Packet pldmStart{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x1,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 0,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Pldm)}
+    };
+
+    app::Packet nsmSingle{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsUsb)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x03,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x1,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 1,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::VendorPci)}
+    };
+    auto& nsmReq         = platforms::NsmPktReq::from(nsmSingle);
+    nsmReq.pci_vendor_id = platforms::NvMctpPciVendorId;
+
+    app::Packet pldmEnd{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x1,
+                 .tag_owner = 1,
+                 .pkt_seq   = 1,
+                 .eom       = 1,
+                 .som       = 0},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Pldm)}
+    };
+
+    ensure::is_eq(v.validate(pldmStart, platforms::Interface::UsI2c), true);
+    ensure::is_eq(v.validate(nsmSingle, platforms::Interface::UsUsb), true);
+    ensure::is_eq(v.validate(pldmEnd, platforms::Interface::UsI2c), true);
+};
+
+// Single-packet PLDM mid-fragmentation must not clobber the in-flight SPDM
+// continuation state — same hazard class as the NSM case above.
+UBS_TEST(Validator, SinglePacketPldmDoesNotClobberSpdmFragmentState)
+{
+    platforms::RoutingTable router;
+    platforms::set_cur_eid(router, static_cast<uint8_t>(platforms::Interface::UsI2c), 0x02);
+    app::Validator v(router);
+
+    app::Packet spdmStart{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x3,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 0,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Spdm)}
+    };
+    app::Packet pldmSingle{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x5,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 1,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Pldm)}
+    };
+    app::Packet spdmEnd{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x3,
+                 .tag_owner = 1,
+                 .pkt_seq   = 1,
+                 .eom       = 1,
+                 .som       = 0},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Spdm)}
+    };
+
+    ensure::is_eq(v.validate(spdmStart, platforms::Interface::UsI2c), true);
+    ensure::is_eq(v.validate(pldmSingle, platforms::Interface::UsI2c), true);
+    ensure::is_eq(v.validate(spdmEnd, platforms::Interface::UsI2c), true);
+};
+
+// Mirror of the above for the SPDM start branch.
+UBS_TEST(Validator, SinglePacketSpdmDoesNotClobberPldmFragmentState)
+{
+    platforms::RoutingTable router;
+    platforms::set_cur_eid(router, static_cast<uint8_t>(platforms::Interface::UsI2c), 0x02);
+    app::Validator v(router);
+
+    app::Packet pldmStart{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x4,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 0,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Pldm)}
+    };
+    app::Packet spdmSingle{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x6,
+                 .tag_owner = 1,
+                 .pkt_seq   = 0,
+                 .eom       = 1,
+                 .som       = 1},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Spdm)}
+    };
+    app::Packet pldmEnd{
+        .priv = {.packet_length    = 0,
+                 .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c)},
+        .hdr  = {.hdr_ver   = 0x01,
+                 .dst_eid   = 0x02,
+                 .src_eid   = 0x01,
+                 .msg_tag   = 0x4,
+                 .tag_owner = 1,
+                 .pkt_seq   = 1,
+                 .eom       = 1,
+                 .som       = 0},
+        .msg  = {static_cast<uint8_t>(app::MsgType::Pldm)}
+    };
+
+    ensure::is_eq(v.validate(pldmStart, platforms::Interface::UsI2c), true);
+    ensure::is_eq(v.validate(spdmSingle, platforms::Interface::UsI2c), true);
+    ensure::is_eq(v.validate(pldmEnd, platforms::Interface::UsI2c), true);
+};

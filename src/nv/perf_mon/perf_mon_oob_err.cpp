@@ -79,6 +79,34 @@ void Driver::set_oob_bus_valid(OobBus bus)
     }
 }
 
+OobBus Driver::flexcomm_port_to_oobBus(uint8_t port_number)
+{
+    constexpr auto last_flexcomm_port = static_cast<uint8_t>(OobBus::Port9);
+    if (port_number <= last_flexcomm_port) {
+        return static_cast<OobBus>(port_number);
+    }
+    return OobBus::End;
+}
+
+void Driver::set_oob_bus_type(OobBus bus, OobBusType type)
+{
+    if (bus < OobBus::End) {
+        auto& driver                  = Driver::inst();
+        auto  index                   = static_cast<uint32_t>(bus);
+        driver.oob_bus_type.at(index) = type;
+    }
+}
+
+OobBusType Driver::get_oob_bus_type(OobBus bus)
+{
+    if (bus < OobBus::End) {
+        auto& driver = Driver::inst();
+        auto  index  = static_cast<uint32_t>(bus);
+        return driver.oob_bus_type.at(index);
+    }
+    return OobBusType::I2c;  // default
+}
+
 bool Driver::is_oob_bus_valid(OobBus bus)
 {
     if (bus >= OobBus::End) {

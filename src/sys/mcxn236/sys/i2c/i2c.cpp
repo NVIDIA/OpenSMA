@@ -26,6 +26,7 @@
 
 #include "nv/i2c/task.h"
 #include "nv/i2c/smb_direct.h"
+#include "nv/i2c/helper.h"
 #include "nv/logger/task.h"
 #include "sys/i2c/utils.h"
 
@@ -223,18 +224,47 @@ bool Driver::write(std::span<uint8_t> data)
 
 bool Driver::get_status(uint8_t address)
 {
+    constexpr size_t  PacketSize     = 11;
+    constexpr uint8_t SmbusMctpCmd   = 0x0F;
+    constexpr uint8_t MctpByteCount  = 0x08;
+    constexpr uint8_t MctpHdrVersion = 0x01;
+    constexpr uint8_t MctpNullEid    = 0x00;
+    // SOM=1, EOM=1, pkt_seq=0, TO=1, msg_tag=0
+    constexpr uint8_t MctpPktFlags    = 0xC8;
+    constexpr uint8_t MctpMsgTypeCtrl = 0x00;
+    // rq=1, d=0, instance_id=0
+    constexpr uint8_t MctpCtrlRqByte = 0x80;
+    constexpr uint8_t MctpCmdGetEpId = 0x02;
+    constexpr uint8_t PecPlaceholder = 0x00;
+
+    std::array<uint8_t, PacketSize> packet{SmbusMctpCmd,
+                                           MctpByteCount,
+                                           static_cast<uint8_t>(this->address() << 1U),
+                                           MctpHdrVersion,
+                                           MctpNullEid,
+                                           MctpNullEid,
+                                           MctpPktFlags,
+                                           MctpMsgTypeCtrl,
+                                           MctpCtrlRqByte,
+                                           MctpCmdGetEpId,
+                                           PecPlaceholder};
+
+    std::array<uint8_t, PacketSize> pec_input{};
+    pec_input[0] = static_cast<uint8_t>(address << 1U);
+    std::copy(packet.begin(), packet.end() - 1, pec_input.begin() + 1);
+    packet.back() = nv::i2c::crc8(pec_input);
+
     lpi2c_master_transfer_t transfer = {
-        .flags        = kLPI2C_TransferDefaultFlag,
-        .slaveAddress = address,
-        .direction    = kLPI2C_Write,
-        .data         = nullptr,
-        .dataSize     = 0,
+        .flags          = kLPI2C_TransferDefaultFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Write,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = packet.data(),
+        .dataSize       = packet.size(),
     };
     const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
-    if (Status != kStatus_Success) {
-        return false;
-    }
-    return true;
+    return Status == kStatus_Success;
 }
 
 uint8_t Driver::address()

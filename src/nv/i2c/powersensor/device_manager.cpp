@@ -31,10 +31,61 @@
 using namespace nv::i2c;
 using namespace nv::i2c::power;
 
+namespace nv::i2c::power {
+
+// Weak default: when a project does not provide a board-strap reader, scan
+// every HSC device column. Projects that have an East/West (or similar) strap
+// must define a strong override of this symbol *inside* nv::i2c::power.
 __attribute__((weak)) uint8_t read_hsc_gpio_strap()
 {
     return SCAN_ALL_DEVICES;
 }
+
+}  // namespace nv::i2c::power
+
+namespace {
+
+// Compile-time contract for this project's HSC configuration. Each HSC type
+// consumes its board-specific calibration differently, and none of it has a safe
+// default, so every entry must carry the value it actually uses:
+//   - MP5926: calibrates against Rsense and the CL strap at runtime, so both
+//     must be set (rsense_milliohm > 0, cl_pin != HscClPin::Unset). Its power
+//     coefficient is IC-fixed (driver default), so power_input_coeff may be left
+//     empty.
+//   - LM5066I / XPD712-021: Rsense is baked into power_input_coeff, so the coeff
+//     must be valid (has_power_input_coeff(): m / exp_mult / mask all non-zero).
+//     A zero m is doubly invalid — it is the runtime divisor in (Y*10^-R - b)/m.
+//     Leaving it unset would silently fall back to the driver's 1 mΩ baseline.
+// HSCC chips have no external Rsense and are not validated here.
+constexpr bool hsc_config_is_valid()
+{
+    for (const auto& column : HscSensorList) {
+        for (const auto& cfg : column) {
+            switch (cfg.device_type) {
+                case DeviceType::MP5926:
+                    if (cfg.rsense_milliohm <= 0.0f || cfg.cl_pin == HscClPin::Unset) {
+                        return false;
+                    }
+                case DeviceType::LM5066I:
+                case DeviceType::XPD712021:
+                    if (!has_power_input_coeff(cfg.power_input_coeff)) {
+                        return false;
+                    }
+                    break;
+                default: break;
+            }
+        }
+    }
+    return true;
+}
+
+static_assert(hsc_config_is_valid(),
+              "Invalid HSC power-sensor config in this project's powersensor.h: MP5926 "
+              "entries must set rsense_milliohm (> 0) and a CL-pin strap "
+              "(HscClPin::Gnd or ::Vdd); LM5066I / XPD712021 entries must set a valid "
+              "power_input_coeff (non-zero m / exp_mult / mask).");
+
+}  // namespace
 
 // ========== Multi-Device Identification Logic ==========
 void DeviceManager::identify_power_sensors()
@@ -75,13 +126,20 @@ void DeviceManager::identify_power_sensors()
                                sensor.power_sensor_id,
                                sensor.vout_sensor_id,
                                sensor.vin_sensor_id,
-                               sensor.alert_sensor_id);
+                               sensor.alert_sensor_id,
+                               sensor.rsense_milliohm,
+                               sensor.cl_pin);
                 nv::info("Found HSC device: variant=%d, addr=0x%02X, type=%d\n",
                          hsc_row,
                          sensor.address,
                          static_cast<int>(sensor.device_type));
                 break;  // This device slot is filled by this variant, move to next slot
             }
+        }
+    }
+    for (uint8_t i = 0; i < hsc_count_; i++) {
+        if (hsc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
+            nv::logger::info(nv::logger::Event::I2cHscInitFailed, nv::logger::data_from_u32(i));
         }
     }
 
@@ -101,7 +159,9 @@ void DeviceManager::identify_power_sensors()
         const bool verified = (mfr_id == sensor.mfr_id) && (mfr_model == sensor.mfr_model);
 
         if (verified) {
-            // Add to device list with NSM Type 3 sensor IDs, continue scanning (don't break)
+            // HSCC chips (RAA22800X, MP29540) use internal DCR/RDS(on) current
+            // sensing with factory-trimmed coefficients, so no external Rsense
+            // calibration is needed before adding them.
             add_hscc_device(sensor.address,
                             sensor.device_type,
                             sensor.power_input_coeff,
@@ -116,6 +176,15 @@ void DeviceManager::identify_power_sensors()
                      sensor.address,
                      static_cast<int>(sensor.device_type));
             // Don't break - continue scanning for more devices
+        }
+    }
+
+    // Initialize each detected HSCC device. For the MP29540 this unmasks OT warning/fault to
+    // ALT_P# in SMBALERT_MASK1; for the RAA22800X the mask already defaults to unmasked.
+    // Mirrors the HSC init loop above.
+    for (uint8_t i = 0; i < hscc_count_; i++) {
+        if (hscc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
+            nv::info("HSCC init failed: index=%d\n", i);
         }
     }
 
@@ -158,9 +227,21 @@ DeviceManager::read_mfr_info(Port port, uint8_t address, uint32_t& mfr_id, uint6
     std::array<uint8_t, MFR_ID_BUFFER_SIZE> mfr_id_data = {};  // Buffer for MFR_ID data
     uint8_t                                 mfr_id_len  = sizeof(mfr_id_data);
 
-    auto status = reader.read_block(PmbusReg::MFR_ID, mfr_id_data, mfr_id_len);
-    if (status != I2cStatus::Ok) {
-        return status;  // Block read failed
+    // WAR bug 6205336: read MFR_ID up to MAX_MFR_ID_ATTEMPTS times; require >= 2 ACKs.
+    // Device must receive 2 ACKs to warm up MP5926 silicon; 2nd ACK's data is trusted.
+    constexpr uint8_t MAX_MFR_ID_ATTEMPTS = 5;
+    uint8_t           success_count       = 0;
+    I2cStatus         status              = I2cStatus::Error;
+    for (uint8_t attempt = 0; attempt < MAX_MFR_ID_ATTEMPTS; attempt++) {
+        mfr_id_len = sizeof(mfr_id_data);
+        status     = reader.read_block(PmbusReg::MFR_ID, mfr_id_data, mfr_id_len);
+
+        if (status == I2cStatus::Ok && ++success_count >= 2) {
+            break;  // 2nd ACK reached; data here is post-warmup
+        }
+    }
+    if (success_count < 2) {
+        return I2cStatus::Error;
     }
 
     // Parse MFR_ID based on actual byte count returned
@@ -226,7 +307,9 @@ void DeviceManager::add_hsc_device(uint8_t                           address,
                                    nv::mctp::Type3PowerSensors       power_id,
                                    nv::mctp::T3Voltage               vout_id,
                                    nv::mctp::T3Voltage               vin_id,
-                                   nv::mctp::PowerSensorFaults       alert_id)
+                                   nv::mctp::PowerSensorFaults       alert_id,
+                                   float                             rsense_milliohm,
+                                   HscClPin                          cl_pin)
 {
     if (hsc_count_ < MAX_HSC_DEVICES) {
         hsc_devices_.at(hsc_count_) = IdentifiedDevice{address,
@@ -237,7 +320,9 @@ void DeviceManager::add_hsc_device(uint8_t                           address,
                                                        power_id,
                                                        vout_id,
                                                        vin_id,
-                                                       alert_id};
+                                                       alert_id,
+                                                       rsense_milliohm,
+                                                       cl_pin};
         hsc_count_++;
     }
     else {
@@ -256,6 +341,8 @@ void DeviceManager::add_hscc_device(uint8_t                           address,
                                     nv::mctp::PowerSensorFaults       alert_id)
 {
     if (hscc_count_ < MAX_HSCC_DEVICES) {
+        // HSCC chips have no external Rsense; rsense_milliohm stays at the
+        // IdentifiedDevice default (0.0f).
         hscc_devices_.at(hscc_count_) = IdentifiedDevice{address,
                                                          type,
                                                          power_input_coeff,
@@ -430,10 +517,23 @@ I2cStatus DeviceManager::hsc_dispatch(uint8_t device_index, Func func) const
         }
         case DeviceType::MP5926: {
             Mp5926 sensor(POWER_SENSOR_PORT, device.address);
+            sensor.set_rsense_config(device.rsense_milliohm, device.cl_pin);
+            if (has_power_input_coeff(device.power_input_coeff)) {
+                sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                             device.power_input_coeff.b,
+                                             device.power_input_coeff.exp_mult,
+                                             device.power_input_coeff.mask);
+            }
             return func(sensor);
         }
         case DeviceType::XPD712021: {
             Xpd712021 sensor(POWER_SENSOR_PORT, device.address);
+            if (has_power_input_coeff(device.power_input_coeff)) {
+                sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                             device.power_input_coeff.b,
+                                             device.power_input_coeff.exp_mult,
+                                             device.power_input_coeff.mask);
+            }
             return func(sensor);
         }
         default: return I2cStatus::Error;

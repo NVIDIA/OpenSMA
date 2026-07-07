@@ -32,6 +32,89 @@ Mp5926::Mp5926(Port port, uint8_t address) : PowerSensor(port, address)
     _power_input_coeff = {PowerSlopeM, PowerOffsetB, PowerExpMult, PowerMask};
 }
 
+void Mp5926::set_rsense_config(float rsense_milliohm, nv::i2c::power::HscClPin cl_pin)
+{
+    _rsense_milliohm = rsense_milliohm;
+    _cl_pin          = cl_pin;
+}
+
+I2cStatus Mp5926::init()
+{
+    if (configure_for_rsense(_rsense_milliohm, _cl_pin) != I2cStatus::Ok) {
+        return I2cStatus::Error;
+    }
+
+    // Unmask OT warning (bit10, OTP_WARN_AM) and OT fault (bit2, OTP_FLT_ANA_AM) in
+    // ALERT_MASK (D8h) so an over-temperature condition asserts ALT#. D8h is 1=mask /
+    // 0=assert, so CLEAR those bits. Read-modify-write to preserve the other mask bits.
+    constexpr uint8_t  AlertMaskReg = 0xD8;
+    constexpr uint16_t OtMaskBits   = (1u << 10) | (1u << 2);  // OTP_WARN_AM, OTP_FLT_ANA_AM
+    uint16_t           mask         = 0;
+    const I2cStatus    st           = read_reg_16bits(AlertMaskReg, mask);
+    if (st != I2cStatus::Ok) {
+        return st;
+    }
+    const I2cStatus wst = write_reg_16bits(AlertMaskReg,
+                                           static_cast<uint16_t>(mask & ~OtMaskBits));
+    if (wst != I2cStatus::Ok) {
+        return wst;
+    }
+
+    // Clear any stale boot-time latched faults for a clean status baseline.
+    return clear_faults();
+}
+
+I2cStatus Mp5926::configure_for_rsense(float rsense_milliohm, nv::i2c::power::HscClPin cl_pin)
+{
+    if (rsense_milliohm <= 0.0f) {
+        return I2cStatus::Error;
+    }
+
+    // SENSE_GAIN is fixed by the CL pin strap (per-board hardware design).
+    const float sense_gain = (cl_pin == nv::i2c::power::HscClPin::Vdd) ? SENSE_GAIN_CL_VDD
+                                                                       : SENSE_GAIN_CL_GND;
+
+    // Step 1: FUNCTION_CONFIG (0xC6) — set IMON_SNS_GAIN[9:8] = 0b10 (×4).
+    // Read-modify-write so we don't disturb other config bits.
+    uint16_t func_cfg = 0;
+    auto     status   = read_reg_16bits(Register::FUNCTION_CONFIG, func_cfg);
+    if (status != I2cStatus::Ok) {
+        nv::error("MP5926 read FUNCTION_CONFIG failed\n");
+        return status;
+    }
+    func_cfg = (func_cfg & static_cast<uint16_t>(~FUNC_CFG_IMON_SNS_GAIN_MASK))
+             | FUNC_CFG_IMON_SNS_GAIN_X4;
+    status = write_reg_16bits(Register::FUNCTION_CONFIG, func_cfg);
+    if (status != I2cStatus::Ok) {
+        nv::error("MP5926 write FUNCTION_CONFIG failed\n");
+        return status;
+    }
+
+    // Step 2: IIN_TUNE (0x38) — set IIN_GAIN_TUNE[10:0]; offset[15:11] = 0.
+    //   IIN_GAIN_TUNE = 2.9 × 2^13 × 1000 / (Rsns_mΩ × SENSE_GAIN × IMON_GAIN × 4096)
+    // Examples (IMON_GAIN = ×4):
+    //   Rsns=0.15 mΩ, CL=GND (SENSE_GAIN=12) → IIN_GAIN_TUNE = 805 (0x325)
+    //   Rsns=0.15 mΩ, CL=VDD (SENSE_GAIN=24) → IIN_GAIN_TUNE = 402 (0x192)
+    const float gain_f = IIN_TUNE_NUMERATOR
+                       / (rsense_milliohm * sense_gain * IIN_TUNE_IMON_GAIN_X4
+                          * IIN_TUNE_ADC_DENOM);
+    if (gain_f < 1.0f || gain_f > static_cast<float>(IIN_GAIN_TUNE_MAX)) {
+        nv::error("MP5926 IIN_GAIN_TUNE out of range for Rsense\n");
+        return I2cStatus::Error;
+    }
+    const auto iin_tune_value = static_cast<uint16_t>(gain_f) & IIN_GAIN_TUNE_MASK;
+    status                    = write_reg_16bits(Register::IIN_TUNE, iin_tune_value);
+    if (status != I2cStatus::Ok) {
+        nv::error("MP5926 write IIN_TUNE failed\n");
+        return status;
+    }
+
+    nv::info("MP5926 configured for Rsense (CL=%s, IIN_TUNE=0x%04X)\n",
+             (cl_pin == nv::i2c::power::HscClPin::Vdd) ? "VDD" : "GND",
+             iin_tune_value);
+    return I2cStatus::Ok;
+}
+
 I2cStatus Mp5926::read_vin(uint32_t& microvolts)
 {
     // Read input voltage from READ_VIN register (16-bit)

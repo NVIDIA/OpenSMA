@@ -152,12 +152,17 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
     }
     else if (type == PacketType::Response) {
         if (EidPoolSize != 0) {
+            // Correlate by the "EID Setting" field (crx.data[2]), which the spec
+            // requires to echo the assigned EID on an accepted Set EID. The MCTP
+            // source EID is unreliable here -- it carries the endpoint's previous
+            // EID (NULL_EID on first enumeration). Skip NULL_EID to avoid
+            // false-matching an unassigned slot.
+            const uint8_t eid_setting = crx.data[2];
             for (auto& entry : _routing_map) {
-                if (entry.assigned_eid == rx.hdr.src_eid) {
-                    // [5:4] Eid assignment status
+                if ((eid_setting != app::NULL_EID) && (entry.assigned_eid == eid_setting)) {
+                    // [5:4] EID assignment status
                     const uint8_t eid_assign_status = static_cast<uint8_t>(crx.data[1] >> 4U)
                                                     & 0b11U;
-                    // Case of assign status is not accept or eid not match
                     logger::info(
                         nv::logger::Event::MctpRecvSetEid,
                         {entry.assigned_eid, rx.priv.packet_interface, eid_assign_status});
@@ -321,11 +326,26 @@ void Control::on_get_routing_table_entry(const app::Packet& rx, app::Packet& tx)
                 tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 8 + PhyAddrSize;
                 return;
             }
-            const auto index   = static_cast<uint8_t>(eid_diff) & OneByteMask;
-            auto&      ds_info = ipc::DownStreamInfos.at(index);
-            ctx.data[5]        = static_cast<uint8_t>(ds_info.phy_id);
-            ctx.data[6]        = static_cast<uint8_t>(ds_info.phy_medium_id);
-            ctx.data[8]        = static_cast<uint8_t>(ds_info.port_address);
+            const auto index = static_cast<uint8_t>(eid_diff) & OneByteMask;
+            if (index >= ipc::DownStreamInfos.size()) {
+                logger::error(nv::logger::Event::MctpInvalidEidDifference,
+                              {static_cast<uint8_t>(index),
+                               _routing_map.at(entry_in_map).assigned_eid,
+                               _start_eid,
+                               static_cast<uint8_t>(ipc::DownStreamInfos.size())});
+                ctx.data[0]           = NoNextEntry;
+                ctx.data[3]           = _router.ec.cur_eid.at(rx.priv.packet_interface);
+                ctx.data[4]           = PortNum;
+                ctx.data[5]           = static_cast<uint8_t>(PhyId::MctpOverUsb);
+                ctx.data[6]           = static_cast<uint8_t>(PhyMediumId::Usb20);
+                ctx.data[8]           = 0x00;
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 8 + PhyAddrSize;
+                return;
+            }
+            auto& ds_info = ipc::DownStreamInfos.at(index);
+            ctx.data[5]   = static_cast<uint8_t>(ds_info.phy_id);
+            ctx.data[6]   = static_cast<uint8_t>(ds_info.phy_medium_id);
+            ctx.data[8]   = static_cast<uint8_t>(ds_info.port_address);
 
             ctx.data[0] = ++cur_entry;
         }

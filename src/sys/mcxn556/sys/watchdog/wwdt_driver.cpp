@@ -34,6 +34,14 @@ auto get_instance(wwdt_instance instance)
 }
 }  // namespace
 
+// Project hook for the I3C WDT register dump.
+__attribute__((weak)) bool project_probe_i3c_wdt_lines([[maybe_unused]] uint8_t  i3c_index,
+                                                       [[maybe_unused]] uint8_t& scl_level,
+                                                       [[maybe_unused]] uint8_t& sda_level)
+{
+    return false;
+}
+
 void LogWdtFault(uint32_t msp_frame, uint32_t lr_value)
 {
     nv::logger::FaultBuffer fault_buffer{};
@@ -97,6 +105,17 @@ void LogWdtFault(uint32_t msp_frame, uint32_t lr_value)
         memcpy(fault_buffer.data() + 16,
                std::bit_cast<void*>(&(i3c_inst->MDATACTRL)),
                sizeof(i3c_inst->MDATACTRL));
+
+        // Append the SDA/SCL line levels via the board hook (no-op default).
+        // fault_buffer[20..22] (== host log_data[36..38]) carry the probe so
+        // the dump tells whether either line was stuck low when the WDT fired.
+        uint8_t    scl_lvl  = 0;
+        uint8_t    sda_lvl  = 0;
+        const bool probe_ok = project_probe_i3c_wdt_lines(i3c_index, scl_lvl, sda_lvl);
+        fault_buffer[20]    = probe_ok ? 1U : 0U;
+        fault_buffer[21]    = scl_lvl;
+        fault_buffer[22]    = sda_lvl;
+
         nv::logger::FaultLogger::fault(
             nv::logger::Fault::I3CRegDump, fault_buffer, nv::logger::FaultDataSize);
     }

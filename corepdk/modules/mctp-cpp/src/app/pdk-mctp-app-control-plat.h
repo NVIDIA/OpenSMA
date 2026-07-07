@@ -18,11 +18,14 @@
 #pragma once
 
 #include <bit>
+#include <cstdint>
 
 #include "app/pdk-mctp-app-packet.h"
 #include "pdk-mctp-platforms-config.h"
 
 namespace pdk::mctp::platforms {
 void on_enumerate_plat();
-void on_routing_info_update_plat();
+void on_routing_info_update_plat(uint8_t requester_eid,
+                                 uint8_t requester_interface,
+                                 uint8_t update_eid);
 }  // namespace pdk::mctp::platforms

@@ -7,13 +7,17 @@ namespace nv::fw_parser::ap {
 
 enum class ApFwStatus : uint8_t
 {
-    Sb_Auth_Success                  = 0xff,
+    Boot_Complete                    = 0xff,
     Update_Complete                  = 0x1,
     Update_Complete_But_Not_Activate = 0x2,
     Update_In_Progress               = 0x3,
     Auth_In_Progress                 = 0x4,
     Auth_Failed                      = 0x5,
-    Not_Supported                    = 0x00
+    // Auth signature checks passed but the post-auth physical sequence
+    // (release_reset, post_authenticate, check_booted) failed. Distinguished
+    // from Auth_Failed so BMC/diag don't misread it as a signature failure.
+    Boot_Failed   = 0x6,
+    Not_Supported = 0x00
 };
 
 enum class ParsingApFwType : uint8_t

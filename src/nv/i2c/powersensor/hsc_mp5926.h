@@ -17,6 +17,7 @@
  */
 #pragma once
 #include "nv/i2c/powersensor/sensor.h"
+#include "nv/i2c/powersensor/types.h"
 #include <stdint.h>
 
 namespace nv::i2c {
@@ -34,7 +35,9 @@ class Mp5926 : public PowerSensor
 public:
     enum Register
     {
-        MFR_SYS_CTRL = 0xCF
+        IIN_TUNE        = 0x38,  // Current Sense Adjustment (16-bit)
+        FUNCTION_CONFIG = 0xC6,  // Function configuration (16-bit, contains IMON_GAIN)
+        MFR_SYS_CTRL    = 0xCF
     };
     /**
      * Constructor
@@ -42,6 +45,44 @@ public:
      * @param address I2C slave address of the MP5926
      */
     Mp5926(Port port, uint8_t address);
+
+    /**
+     * Boot-time setup (overrides PowerSensor::init()). Programs FUNCTION_CONFIG
+     * and IIN_TUNE using Rsense/CL config injected by hsc_dispatch().
+     */
+    I2cStatus init();
+
+    /**
+     * Inject board Rsense and CL strap from IdentifiedDevice before init().
+     * Called by DeviceManager::hsc_dispatch() — same pattern as set_power_input_coeff().
+     */
+    void set_rsense_config(float rsense_milliohm, nv::i2c::power::HscClPin cl_pin);
+
+    /**
+     * Configure the MP5926 internal current-sense pipeline for the actual board
+     * sense resistor (mΩ) and CL strap.
+     *
+     * The READ_PIN result has a fixed 4 W/LSB resolution, so the IC must be told
+     * the Rsense value via IIN_TUNE (0x38). When MTP is not used, this method
+     * must be called every boot.
+     *
+     * Programs:
+     *   - FUNCTION_CONFIG (0xC6) bits[9:8] = 0b10 → IMON_SNS_GAIN = ×4
+     *   - IIN_TUNE        (0x38) bits[10:0] = IIN_GAIN_TUNE (computed from Rsense
+     *                                          and SENSE_GAIN, where SENSE_GAIN is
+     *                                          determined by the CL strap)
+     *                            bits[15:11] = IIN_OFFSET_TUNE = 0
+     *
+     * The MP5926 SENSE_GAIN is hardware-strapped via the CL pin:
+     *   - CL = GND/Floating → SENSE_GAIN = 12  (e.g. pg558_gpu)
+     *   - CL = VDD          → SENSE_GAIN = 24
+     *
+     * @param rsense_milliohm  External sense resistor value, in mΩ.
+     *                         Must be positive and within the IC's working range.
+     * @param cl_pin           Hardware strap on the CL pin (per board strata).
+     * @return I2cStatus::Ok on success.
+     */
+    I2cStatus configure_for_rsense(float rsense_milliohm, nv::i2c::power::HscClPin cl_pin);
     /**
      * Read input voltage (VIN) and convert to microvolts
      * Format: Linear11 (bits[15:11]=exponent N, bits[10:0]=mantissa Y)
@@ -90,6 +131,9 @@ public:
     I2cStatus read_output_power(uint32_t& milliwatts);
 
 private:
+    float                    _rsense_milliohm = 0.0f;
+    nv::i2c::power::HscClPin _cl_pin          = nv::i2c::power::HscClPin::Unset;
+
     // PMBus DIRECT format conversion coefficients from MP5926 datasheet
     // Formula: x = (1/m) × (Y × 10^(-R) - b)
 
@@ -150,6 +194,25 @@ private:
     static constexpr uint16_t LINEAR11_MANTISSA_SIGN_EXT = 0xF800;  // Sign extension for
                                                                     // negative mantissa
     static constexpr int LINEAR11_MAX_SHIFT = 32;                   // Maximum safe shift amount
+
+    // FUNCTION_CONFIG (0xC6) bit fields per MP5926 datasheet
+    static constexpr uint16_t FUNC_CFG_IMON_SNS_GAIN_MASK = 0x0300;  // bits[9:8] mask
+    static constexpr uint16_t FUNC_CFG_IMON_SNS_GAIN_X4   = 0x0200;  // 0b10 << 8 → ×4
+
+    // IIN_TUNE (0x38) bit fields per MP5926 datasheet
+    static constexpr uint16_t IIN_GAIN_TUNE_MASK = 0x07FF;  // bits[10:0]
+    static constexpr uint16_t IIN_GAIN_TUNE_MAX  = 0x07FF;  // 11-bit unsigned
+
+    // IIN_GAIN_TUNE numerator constant from MP5926 datasheet
+    //   IIN_GAIN_TUNE = 2.9 × 2^13 × 1000 / (RSNS × SENSE_GAIN × IMON_GAIN × 4096)
+    static constexpr float IIN_TUNE_NUMERATOR = 2.9f * 8192.0f * 1000.0f;
+    // SENSE_GAIN is selected by the IC's CL hardware strap.
+    static constexpr float SENSE_GAIN_CL_GND = 12.0f;  // CL = GND or floating
+    static constexpr float SENSE_GAIN_CL_VDD = 24.0f;  // CL = VDD
+    // FUNCTION_CONFIG IMON_SNS_GAIN ×4 chosen so IIN_GAIN_TUNE fits 11 bits and
+    // the ADC range is fully utilised at high IIN.
+    static constexpr float IIN_TUNE_IMON_GAIN_X4 = 4.0f;
+    static constexpr float IIN_TUNE_ADC_DENOM    = 4096.0f;
 };
 
 }  // namespace nv::i2c

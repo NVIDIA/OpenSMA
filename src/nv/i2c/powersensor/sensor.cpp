@@ -84,6 +84,11 @@ I2cStatus PowerSensor::write_ot_warn_limit(uint8_t limit)
     return write_reg_16bits(Register::OtWarnLimit, raw_value);
 }
 
+I2cStatus PowerSensor::init()
+{
+    return I2cStatus::Ok;
+}
+
 I2cStatus PowerSensor::read_vin(uint32_t& microvolts)
 {
     uint16_t raw_value = 0;

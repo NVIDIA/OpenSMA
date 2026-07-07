@@ -22,6 +22,9 @@
 // #define USB_CONFIG_MCTP (1U)
 #define USB_CONFIG_COMPOSITE (1U)
 #define USB_CONFIG_LSTP      (1U)
+// P3957 does not use the CP2112 (HID) bridge, so do not present that USB
+// interface. The MCU enumerates only the MCTP and LSTP/vendor interfaces.
+#define USB_CONFIG_CP2112    (0U)
 
 // Debug console configuration (NV_UART_INSTANCE, etc.)
 #include "DebugConsoleConfig.h"
@@ -78,8 +81,10 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 }  // namespace nv::telemetry
 
 namespace nv::ipc {
-constexpr bool EnableLstp   = true;
-constexpr auto UartInstance = NV_UART_INSTANCE;
+
+constexpr bool EanbleTaskSamePriority = false;
+constexpr bool EnableLstp             = true;
+constexpr auto UartInstance           = NV_UART_INSTANCE;
 }  // namespace nv::ipc
 
 namespace nv::lstp {
@@ -395,15 +400,18 @@ constexpr inline std::array<ClientInfo, int(mctp::Client::End)> ClientInfos{
     ClientInfo{mctp::Client::DsI2c1,    TaskId::I2c2},
     ClientInfo{mctp::Client::DsI2c2,    TaskId::I2c3},
     ClientInfo{mctp::Client::DsI2c3,    TaskId::I2c4},
-    ClientInfo{mctp::Client::DsI2c4,    TaskId::I2c5},
-    ClientInfo{mctp::Client::DsI2c5,    TaskId::I2c6},
-    ClientInfo{mctp::Client::DsI2c6,    TaskId::I2c7},
-    ClientInfo{mctp::Client::DsI2c7,    TaskId::I2c8},
     ClientInfo{mctp::Client::DsI3c0, TaskId::Invalid},
     ClientInfo{mctp::Client::DsI3c1, TaskId::Invalid},
     ClientInfo{  mctp::Client::Pldm,    TaskId::Pldm},
     ClientInfo{  mctp::Client::Spdm,    TaskId::Spdm},
     ClientInfo{mctp::Client::Spdm4K,    TaskId::Spdm},
+    ClientInfo{  mctp::Client::Spi0, TaskId::Invalid},
+    ClientInfo{  mctp::Client::Spi1, TaskId::Invalid},
+    ClientInfo{  mctp::Client::Spi2, TaskId::Invalid},
+    ClientInfo{mctp::Client::DsI2c4,    TaskId::I2c5},
+    ClientInfo{mctp::Client::DsI2c5,    TaskId::I2c6},
+    ClientInfo{mctp::Client::DsI2c6,    TaskId::I2c7},
+    ClientInfo{mctp::Client::DsI2c7,    TaskId::I2c8},
 };
 
 /// All Stream Buffers must be part of this enum.
@@ -425,19 +433,17 @@ constexpr uint32_t C2CBufferSize            = 0;
 constexpr inline std::array<StreamBufferInfo, int(StreamBufferId::End)> StreamBufferInfos{};
 
 // Down stream Information
-constexpr uint8_t I2cDownStreamMctpNum   = 8;
-constexpr uint8_t I2cDownStreamCp2112Num = 0;
-constexpr uint8_t I2cDownStreamNum       = I2cDownStreamMctpNum + I2cDownStreamCp2112Num;
-constexpr uint8_t I3cDownStreamNum       = 0;
-constexpr uint8_t DownStreamNum          = I2cDownStreamNum + I3cDownStreamNum;
-
-constexpr uint8_t I2cUpStreamNum          = 0;
-constexpr uint8_t UpStreamNum             = 2;
-constexpr uint8_t DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
-constexpr uint8_t RoutingInfoUpdateSize   = 4;
-constexpr uint8_t RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
-constexpr bool    EnableEndpointStatusChangeDebounce = false;
-constexpr auto    EndpointStatusChangePeriodMs       = 0;
+constexpr uint8_t  I2cDownStreamNum        = 8;
+constexpr uint8_t  I3cDownStreamNum        = 0;
+constexpr uint8_t  DownStreamNum           = I2cDownStreamNum + I3cDownStreamNum;
+constexpr uint8_t  UpStreamNum             = 1;
+constexpr uint8_t  DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
+constexpr uint8_t  RoutingInfoUpdateSize   = 4;
+constexpr uint8_t  RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
+constexpr uint32_t EnumerateStartMs        = 1000;
+constexpr bool     EnableEndpointStatusChangeDebounce = false;
+constexpr auto     EndpointStatusChangePeriodMs       = 0;
+constexpr uint8_t  MaxEnumerateRetries                = 3;
 
 constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos{
     mctp::DownStreamInfo{mctp::PhyId::MctpOverSmbus,
@@ -556,6 +562,7 @@ enum class TimerId
 {
     Begin,
     MctpEnumerate = Begin,
+    MctpEnumerateStart,
     Pldm,
     PerfMonitor,
     MctpApPowerGoodEngage,
@@ -589,6 +596,7 @@ constexpr auto make_timer_infos()
     int                                      idx = 0;
 
     infos[idx++] = TimerInfo{TimerId::MctpEnumerate, get_core_from_task(TaskId::Mctp)};
+    infos[idx++] = TimerInfo{TimerId::MctpEnumerateStart, get_core_from_task(TaskId::Mctp)};
     infos[idx++] = TimerInfo{TimerId::Pldm, get_core_from_task(TaskId::Pldm)};
     infos[idx++] = TimerInfo{TimerId::PerfMonitor, CoreId::Core0};
     infos[idx++] = TimerInfo{TimerId::MctpApPowerGoodEngage, get_core_from_task(TaskId::Mctp)};
@@ -945,6 +953,8 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 13> TaskMonitorList{
 
 constexpr bool EnableRuntimeWdt       = true;
 constexpr bool EnableCP2112NativeGpio = false;
+constexpr bool EnablePufEngine        = false;
+constexpr bool EnableAesGCM           = false;
 
 // Debugtoken config
 constexpr bool DebugTokenEnabled = true;
@@ -1072,10 +1082,10 @@ constexpr bool I2cIsEndpoint = false;
 
 // For CX8 I3C init flow, CX8 need time to handle RSTDAA
 constexpr bool EnableDelayInI3CInit = false;
-// AP status ping interval for discovery notify when no GPIO is available
-constexpr uint32_t CheckApStatusTimerUs = 0;
+// AP status ping interval for discovery notify when no GPIO is available.
+constexpr uint32_t CheckApStatusTimerUs = 5 * 1000 * 1000;
 // Use the I2C AP status timer if I3C is not enabled
-constexpr bool UseI2cApStatusTimer = false;
+constexpr bool UseI2cApStatusTimer = true;
 // GPU I3C pull up status pin
 constexpr bool               I3CPullUpCheck = false;
 constexpr nv::gpio::GpioPort I3CPullUpPort  = 0;
@@ -1181,6 +1191,20 @@ constexpr inline std::array<LstpGpioPinInfo, LstpGpioNum> PinConfigs{
 // clang-format on
 }  // namespace nv::lstp
 
+namespace nv::gpio {
+
+struct VirtualGpioEvent
+{
+    GpioPort         port = vrPort;
+    GpioPin          pin{};
+    nv::ipc::EventId event{};
+    uint32_t         bits{};
+};
+
+constexpr inline std::array<VirtualGpioEvent, 0> VirtualGpioEventSetup{};
+
+}  // namespace nv::gpio
+
 namespace nv::mctp {
 
 /** function to add/remove NSM Message Types
@@ -1198,7 +1222,7 @@ config_nsm_types([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNu
 constexpr void
 config_nsm_type0_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
 {
-    // Default does nothing
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDcdCmdCode::DcdGetDeviceCapabilitiesV2));
 }
 
 /** function to add/remove NSM T2 Command Codes

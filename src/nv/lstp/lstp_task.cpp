@@ -34,6 +34,31 @@
 
 namespace nv::lstp {
 
+namespace {
+
+inline nv::gpio::Status gpio_read(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, uint8_t& data)
+{
+    if constexpr (projectHasVirtualGpios(PinConfigs)) {
+        return nv::gpio::Driver::read_virtual_physical_gpio(port, pin, data);
+    }
+    else {
+        return nv::gpio::Driver::read(port, pin, data);
+    }
+}
+
+inline nv::gpio::Status
+gpio_write(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, const uint8_t data)
+{
+    if constexpr (projectHasVirtualGpios(PinConfigs)) {
+        return nv::gpio::Driver::write_virtual_physical_gpio(port, pin, data);
+    }
+    else {
+        return nv::gpio::Driver::write(port, pin, data);
+    }
+}
+
+}  // namespace
+
 LstpTask::LstpTask(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _boot_event(config.boot_event)
@@ -152,9 +177,9 @@ void LstpTask::process_gpio_req()
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto& pin_info = PinConfigs.at(req.gpio_index);
-                uint8_t     value    = 0;
-                auto gpio_status = nv::gpio::Driver::read(pin_info.port, pin_info.pin, value);
+                const auto& pin_info    = PinConfigs.at(req.gpio_index);
+                uint8_t     value       = 0;
+                auto        gpio_status = gpio_read(pin_info.port, pin_info.pin, value);
                 if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
                     send_resp(0, LstpStatus_from(gpio_status));
                     return;
@@ -178,30 +203,18 @@ void LstpTask::process_gpio_req()
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto& [port, pin, pin_config, _] = PinConfigs.at(req.gpio_index);
-                (void)_;
-                if (pin_config.direction != LstpGpioDirection::Output) {
+                const auto&         pin_info = PinConfigs.at(req.gpio_index);
+                nv::gpio::Direction dir{};
+                nv::gpio::Driver::getDirection(pin_info.port, pin_info.pin, dir);
+                if (dir != nv::gpio::Direction::Output) {
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                auto write_value = static_cast<uint8_t>(req.value);
-                auto gpio_status = nv::gpio::Driver::write(port, pin, write_value);
+                const auto write_value = static_cast<uint8_t>(req.value);
+                const auto gpio_status = gpio_write(pin_info.port, pin_info.pin, write_value);
                 if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
                     send_resp(0, LstpStatus_from(gpio_status));
                     return;
-                }
-                if ((pin_config.output_drive_config == LstpGpioOutputDriveConfig::PushPull)
-                    || (pin_config.output_drive_config == LstpGpioOutputDriveConfig::OpenDrain
-                        && req.value == LstpGpioState::Low)
-                    || (pin_config.output_drive_config == LstpGpioOutputDriveConfig::OpenSource
-                        && req.value == LstpGpioState::High)) {
-                    uint8_t read_value = 0;
-                    gpio_status        = nv::gpio::Driver::read(port, pin, read_value);
-                    if (LstpStatus_from(gpio_status) != LstpStatus::Success
-                        || static_cast<LstpGpioState>(read_value) != req.value) {
-                        send_resp(0, LstpStatus::Error);
-                        return;
-                    }
                 }
             }
             break;
@@ -235,12 +248,16 @@ void LstpTask::process_gpio_req()
                 send_resp(0, LstpStatus::Error);
                 return;
             }
-            const auto& [port, pin, pin_config, allow_set_irq] = PinConfigs.at(req.gpio_index);
+            const auto& [port, pin, pin_config, allow_set_irq, _] = PinConfigs.at(
+                req.gpio_index);
+            (void)pin_config;
             if (!allow_set_irq) {
                 send_resp(0, LstpStatus::NotSupported);
                 return;
             }
-            if (pin_config.direction != LstpGpioDirection::Input) {
+            nv::gpio::Direction dir{};
+            nv::gpio::Driver::getDirection(port, pin, dir);
+            if (dir != nv::gpio::Direction::Input) {
                 send_resp(0, LstpStatus::Error);
                 return;
             }
@@ -278,7 +295,7 @@ void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
 
     uint8_t     value    = 0;
     const auto& pin_info = PinConfigs.at(gpio_idx);
-    nv::gpio::Driver::read(pin_info.port, pin_info.pin, value);
+    gpio_read(pin_info.port, pin_info.pin, value);
 
     LstpGpioIrqEventRequest req{};
     req.gpio_index = gpio_idx;
