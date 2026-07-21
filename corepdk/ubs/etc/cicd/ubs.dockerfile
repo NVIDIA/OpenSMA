@@ -27,8 +27,8 @@ RUN --mount=type=secret,id=pdk_bin_key \
 #Install nvsec for mcu signing
 RUN mv /usr/lib/python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')/EXTERNALLY-MANAGED /usr/lib/python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')/EXTERNALLY-MANAGED.old
 RUN pip install jsonschema
-RUN pip install nvsec -i https://urm.nvidia.com/artifactory/api/pypi/sw-cloudsec-pypi/simple --extra-index-url https://urm.nvidia.com/artifactory/api/pypi/sw-cftt-pypi-local/simple
-RUN pip install --upgrade nvsec -i https://urm.nvidia.com/artifactory/api/pypi/sw-cloudsec-pypi/simple --extra-index-url https://urm.nvidia.com/artifactory/api/pypi/sw-cftt-pypi-local/simple
+RUN pip install nvsec -i https://artifactory.nvidia.com/artifactory/api/pypi/sw-cloudsec-pypi/simple --extra-index-url https://artifactory.nvidia.com/artifactory/api/pypi/sw-cftt-pypi-local/simple
+RUN pip install --upgrade nvsec -i https://artifactory.nvidia.com/artifactory/api/pypi/sw-cloudsec-pypi/simple --extra-index-url https://artifactory.nvidia.com/artifactory/api/pypi/sw-cftt-pypi-local/simple
 RUN pip install bitarray
 RUN pip install python-gitlab
 RUN pip install ruamel.yaml==0.18.14
