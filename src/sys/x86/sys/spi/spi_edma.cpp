@@ -24,7 +24,7 @@ using namespace nv;
 using namespace sys::spi;
 
 void EdmaDriver::bind([[maybe_unused]] nv::spi::Flexcomm flexcomm,
-                      [[maybe_unused]] nv::ipc::EventId  event_id)
+                      [[maybe_unused]] nv::ipc::TaskId   task_id)
 {
     return;
 }

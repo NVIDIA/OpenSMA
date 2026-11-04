@@ -24,6 +24,7 @@
 
 #include "mbedtls/ctr_drbg.h"
 
+#include "nv/common/timestamp.h"
 #include "nv/gpio/driver.h"
 #include "nv/i2c/powersensor/device_manager.h"
 #include "nv/ipc/supervisor.h"
@@ -429,8 +430,8 @@ struct [[gnu::packed]] TelemetryRecord
             this->v = 0;
             return false;
         }
-        // TODO change to the 64 bits timestamp when Glacier team done that API
-        uint64_t timestamp = sys::ipc::get_os_ticks();
+
+        uint64_t timestamp = nv::common::get_timestamp(nv::common::TimeUnit::Seconds);
         return setValue(timestamp, valid);
     }
 
@@ -1482,6 +1483,11 @@ public:
         return type5_data.getGPIOSpoofingPayload();
     }
 
+public:
+    // Type 5
+    bool is_gpio_spoofing_activate();
+    bool get_gpio_spoofing_value(uint16_t gpio_index, uint8_t& pin_value);
+
 protected:
     // Type 0
     void on_dcd_ping(const Packet& rx, Packet& tx);
@@ -1541,9 +1547,7 @@ protected:
     void on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx);
     void on_dev_cfg_set_gpu_degrade_mode(const Packet& rx, Packet& tx);
     void on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx);
-    bool is_gpio_spoofing_activate();
     bool get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value);
-    bool get_gpi_spoofing_value(uint16_t gpio_index, uint8_t& pin_value);
     void notifyIoxSpoofingState(bool spoofingActive);
 
     void on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx);

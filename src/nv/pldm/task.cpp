@@ -404,11 +404,8 @@ Task::Task()
                     }
                 }
             }
-            else if (ap_bg_in_progress) {
-                nv::info("MCU bg rejected: AP bg in progress\n");
-            }
-            else if (!is_bgcopy_automatic) {
-                nv::info("bg copy disabled\n");
+            // no matter automatic or not, set NpdsAllowInitBackgroundCopy to 1
+            else {
                 (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 1);
             }
 

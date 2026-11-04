@@ -560,7 +560,7 @@ instance:
       - 5:
         - user_commandId: 'CMD_VMON_SSD7'
         - commandId: '8'
-        - chainedNextCommandNumber: '0'
+        - chainedNextCommandNumber: '15'
         - sampleChannelMode: 'kLPADC_SampleChannelSingleEndSideB'
         - channelNumber: 'B.1'
         - enableChannelB_b: 'false'
@@ -569,6 +569,20 @@ instance:
         - loopCount: '0'
         - hardwareAverageMode: 'kLPADC_HardwareAverageCount4'
         - sampleTimeMode: 'kLPADC_SampleTimeADCK3'
+        - conversionResoultuionMode: 'kLPADC_ConversionResolutionHigh'
+        - enableWaitTrigger: 'false'
+      - 6:
+        - user_commandId: 'CMD_INTERNAL_TEMP'
+        - commandId: '15'
+        - chainedNextCommandNumber: '0'
+        - sampleChannelMode: 'kLPADC_SampleChannelDiffBothSide'
+        - channelNumber: 'A.26'
+        - enableChannelB_b: 'false'
+        - channelBNumber: 'B.0'
+        - enableAutoChannelIncrement: 'false'
+        - loopCount: '1'
+        - hardwareAverageMode: 'kLPADC_HardwareAverageCount4'
+        - sampleTimeMode: 'kLPADC_SampleTimeADCK131'
         - conversionResoultuionMode: 'kLPADC_ConversionResolutionHigh'
         - enableWaitTrigger: 'false'
     - lpadcConvTriggerConfig:
@@ -601,7 +615,7 @@ instance:
         - enableHardwareTrigger: 'false'
     - IRQ_cfg:
       - interrupt_type: 'kLPADC_ResultFIFO0OverflowInterruptEnable kLPADC_ResultFIFO1OverflowInterruptEnable kLPADC_TriggerExceptionInterruptEnable kLPADC_Trigger0CompletionInterruptEnable
-        kLPADC_Trigger1CompletionInterruptEnable kLPADC_Trigger2CompletionInterruptEnable kLPADC_Trigger3CompletionInterruptEnable'
+        kLPADC_Trigger1CompletionInterruptEnable kLPADC_Trigger3CompletionInterruptEnable'
       - enable_irq: 'true'
       - adc_interrupt:
         - IRQn: 'ADC0_IRQn'
@@ -624,7 +638,7 @@ const lpadc_config_t ADC0_config = {
   .FIFO0Watermark = 0UL,
   .FIFO1Watermark = 0UL
 };
-lpadc_conv_command_config_t ADC0_commandsConfig[6] = {
+lpadc_conv_command_config_t ADC0_commandsConfig[7] = {
   {
     .sampleChannelMode = kLPADC_SampleChannelSingleEndSideA,
     .channelNumber = 14U,
@@ -706,12 +720,25 @@ lpadc_conv_command_config_t ADC0_commandsConfig[6] = {
     .sampleChannelMode = kLPADC_SampleChannelSingleEndSideB,
     .channelNumber = 1U,
     .channelBNumber = 0U,
-    .chainedNextCommandNumber = 0,
+    .chainedNextCommandNumber = 15,
     .enableChannelB = false,
     .enableAutoChannelIncrement = false,
     .loopCount = 0UL,
     .hardwareAverageMode = kLPADC_HardwareAverageCount4,
     .sampleTimeMode = kLPADC_SampleTimeADCK3,
+    .conversionResolutionMode = kLPADC_ConversionResolutionHigh,
+    .enableWaitTrigger = false
+  },
+  {
+    .sampleChannelMode = kLPADC_SampleChannelDiffBothSide,
+    .channelNumber = 26U,
+    .channelBNumber = 0U,
+    .chainedNextCommandNumber = 0,
+    .enableChannelB = false,
+    .enableAutoChannelIncrement = false,
+    .loopCount = 1UL,
+    .hardwareAverageMode = kLPADC_HardwareAverageCount4,
+    .sampleTimeMode = kLPADC_SampleTimeADCK131,
     .conversionResolutionMode = kLPADC_ConversionResolutionHigh,
     .enableWaitTrigger = false
   }
@@ -762,6 +789,8 @@ static void ADC0_init(void) {
   LPADC_SetConvCommandConfig(ADC0_PERIPHERAL, ADC0_CMD_VMON_SSD6, &ADC0_commandsConfig[4]);
   /* Configure conversion command 8. */
   LPADC_SetConvCommandConfig(ADC0_PERIPHERAL, ADC0_CMD_VMON_SSD7, &ADC0_commandsConfig[5]);
+  /* Configure conversion command 15. */
+  LPADC_SetConvCommandConfig(ADC0_PERIPHERAL, ADC0_CMD_INTERNAL_TEMP, &ADC0_commandsConfig[6]);
   /* Configure trigger 0. */
   LPADC_SetConvTriggerConfig(ADC0_PERIPHERAL, ADC0_TRIG_VMON_SSD_0TO1, &ADC0_triggersConfig[0]);
   /* Configure trigger 1. */
@@ -769,7 +798,7 @@ static void ADC0_init(void) {
   /* Configure trigger 3. */
   LPADC_SetConvTriggerConfig(ADC0_PERIPHERAL, ADC0_TRIG_VMON_SSD_6TO7, &ADC0_triggersConfig[2]);
   /* Enable interrupts from LPADC */
-  LPADC_EnableInterrupts(ADC0_PERIPHERAL, (kLPADC_ResultFIFO0OverflowInterruptEnable | kLPADC_ResultFIFO1OverflowInterruptEnable | kLPADC_TriggerExceptionInterruptEnable | kLPADC_Trigger0CompletionInterruptEnable | kLPADC_Trigger1CompletionInterruptEnable | kLPADC_Trigger2CompletionInterruptEnable | kLPADC_Trigger3CompletionInterruptEnable));
+  LPADC_EnableInterrupts(ADC0_PERIPHERAL, (kLPADC_ResultFIFO0OverflowInterruptEnable | kLPADC_ResultFIFO1OverflowInterruptEnable | kLPADC_TriggerExceptionInterruptEnable | kLPADC_Trigger0CompletionInterruptEnable | kLPADC_Trigger1CompletionInterruptEnable | kLPADC_Trigger3CompletionInterruptEnable));
   /* Enable interrupt ADC0_IRQN request in the NVIC */
   EnableIRQ(ADC0_IRQN);
 }

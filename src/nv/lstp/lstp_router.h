@@ -56,6 +56,19 @@ inline LstpGpioIrqConfig LstpGpioIrqConfig_from(nv::gpio::InterruptDetection det
     return GpioToLstpIrq[static_cast<size_t>(detection)];
 }
 
+inline bool LstpGpioIrqEventMatches(LstpGpioIrqConfig irq_type, LstpGpioState value)
+{
+    switch (irq_type) {
+        case LstpGpioIrqConfig::IrqDisabled: return false;
+        case LstpGpioIrqConfig::Rising     : return value == LstpGpioState::High;
+        case LstpGpioIrqConfig::Falling    : return value == LstpGpioState::Low;
+        case LstpGpioIrqConfig::BothEdge   : return true;
+        case LstpGpioIrqConfig::High       : return value == LstpGpioState::High;
+        case LstpGpioIrqConfig::Low        : return value == LstpGpioState::Low;
+    }
+    return false;
+}
+
 class LstpRouter
 {
 public:
@@ -85,18 +98,10 @@ public:
     static void send_error(std::span<uint8_t>& buffer, LstpStatus status);
 
     /**
-     * @brief Callback from GPIO task when done
-     * @param resp_buffer Populated send buffer
+     * @brief Send a populated GPIO channel packet to the host (response or IRQ event)
+     * @param buffer Populated send buffer
      */
-    static void send_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_buffer);
-
-    /**
-     * @brief Send GPIO IRQ event to the host
-     * @param ch_id The channel ID
-     * @param gpio_index The GPIO index that triggered the interrupt
-     * @param value The current GPIO value
-     */
-    static void send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t value);
+    static void send_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
 
     /**
      * @brief Callback from I2C task with response to be sent to the USB task.
@@ -192,11 +197,18 @@ private:
     LstpStatus write_gpio_config_helper(std::span<uint8_t>& req_buffer);
 
     /**
-     * @brief Read configuration lock state (header-only request, 1-byte response)
+     * @brief Write the configuration persistence mode
      * @param buffer The buffer with the request data
      * @return The status of the operation
      */
-    LstpStatus read_lock(std::span<uint8_t> buffer);
+    LstpStatus write_config_mode(std::span<uint8_t> buffer);
+
+    /**
+     * @brief Read the configuration persistence mode
+     * @param buffer The buffer with the request data
+     * @return The status of the operation
+     */
+    LstpStatus read_config_mode(std::span<uint8_t> buffer);
 
     /**
      * @brief Receive a message from the SPI channel

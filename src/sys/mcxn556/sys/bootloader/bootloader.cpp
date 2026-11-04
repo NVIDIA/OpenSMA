@@ -37,6 +37,15 @@
 using namespace nv;
 using namespace nv::bootloader;
 
+static uint8_t g_mcu_heartbeat_level = 1;
+
+[[maybe_unused]] static void mcu_heartbeat_tick([[maybe_unused]] ipc::Timer& id)
+{
+    g_mcu_heartbeat_level = (g_mcu_heartbeat_level != 0) ? 0U : 1U;
+    (void)gpio::Driver::write(
+        ipc::McuHeartbeatPort, ipc::McuHeartbeatPin, g_mcu_heartbeat_level);
+}
+
 // Jump information bit flags
 static constexpr uint32_t JUMP_INFO_SLOT_0_FLAG = 0x1;  // Bit 0: booted from slot 0
 static constexpr uint32_t JUMP_INFO_SLOT_1_FLAG = 0x2;  // Bit 1: booted from slot 1
@@ -473,6 +482,25 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
     auto event       = ipc::Event::make(ipc::EventId::TaskBootStatus);
     auto value       = event.bits().value();
     if (value == nv::common::to_underlying(nv::ipc::BootedEventBits::BootStatusMask)) {
+        if constexpr (nv::ipc::EnableMcuHeartbeat) {
+            // Current 500ms is only used by PG544, could define it by project if needed in the
+            // future
+            auto mcuheartbeat_timer = ipc::Timer::make(ipc::TimerId::McuHeartbeat,
+                                                       std::chrono::milliseconds(500),
+                                                       mcu_heartbeat_tick,
+                                                       true);
+            mcuheartbeat_timer.start();
+        }
+        if constexpr (nv::ipc::EnableRuntimeWdt) {
+            nv::watchdog::Runtime::init(nv::ipc::RuntimeWatchdogResetMs, false);
+            auto wdt_timer = ipc::Timer::make(
+                ipc::TimerId::RuntimeWatchDog,
+                std::chrono::milliseconds(nv::ipc::SupervisorCheckMs),
+                nv::watchdog::Runtime::start_task_status_query,
+                true);
+            wdt_timer.start();
+        }
+
         auto boot_slot = current_boot_index();
         nv::watchdog::Boot::disable();
         nv::watchdog::Boot::reset_total_switch_time();
@@ -533,10 +561,13 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
                 2. Another slot cannot boot
             */
 
+            bool bg_copy_triggered = false;
+
             if (update_state == static_cast<flash::Data>(State::Complete)) {
                 if (update_slot == static_cast<flash::Data>(boot_slot)) {
                     /* trigger BG */
                     pldm::Task::pldm_bg_start();
+                    bg_copy_triggered = true;
                 }
             }
             key = boot_slot == ImageIndex::Image0 ? flash::Key::PdsBootableSlot1
@@ -546,6 +577,12 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
             if (!inactive_bootable) {
                 /* trigger BG */
                 pldm::Task::pldm_bg_start();
+                bg_copy_triggered = true;
+            }
+
+            // It means both slots are identical, not allow BG copy
+            if (!bg_copy_triggered) {
+                flash::Flash::set_data_from_kernel(flash::Key::NpdsAllowInitBackgroundCopy, 0);
             }
 
             auto inactive = boot_slot == ImageIndex::Image0 ? ImageIndex::Image1
@@ -590,16 +627,6 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
             nv::logger::info(
                 nv::logger::Event::BootFmcFaultStatus2,
                 nv::logger::data_from_two_u32(FmcFault.fault_mmfar, FmcFault.fault_bfar));
-        }
-
-        if constexpr (nv::ipc::EnableRuntimeWdt) {
-            nv::watchdog::Runtime::init(nv::ipc::RuntimeWatchdogResetMs, false);
-            auto wdt_timer = ipc::Timer::make(
-                ipc::TimerId::RuntimeWatchDog,
-                std::chrono::milliseconds(nv::ipc::SupervisorCheckMs),
-                nv::watchdog::Runtime::start_task_status_query,
-                true);
-            wdt_timer.start();
         }
 
         // REQ-GNL-REC-001 SMA_READY, default low, active high

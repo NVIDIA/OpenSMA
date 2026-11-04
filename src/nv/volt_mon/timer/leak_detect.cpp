@@ -45,6 +45,8 @@ inline void leak_detect_init_sensors(nv::volt_mon::LeakDetectSensor* sensors,
                                      std::index_sequence<Indices...> /*indices*/)
 {
     ((sensors[Indices] = leak_detect_get_sensor_config<Indices>()), ...);
+    // Invalid forces the first ADC sample through normal transition handling.
+    ((sensors[Indices].state = State::Invalid), ...);
 }
 
 LeakDetect::LeakDetect()
@@ -254,16 +256,16 @@ void LeakDetect::update_gpio_alert(uint8_t sensorId, State state)
 
 __attribute__((weak)) void LeakDetect::update_physical_gpio()
 {
-    // if any sensor is not nominal, trigger alert
+    // if any initialized sensor is not nominal, trigger alert
     for (const auto& _sensor : sensor) {
-        if (_sensor.state != State::Nominal) {
+        if (_sensor.state != State::Invalid && _sensor.state != State::Nominal) {
             update_hardware_gpio(HwGpioState::Low);
             alertActive = true;
             return;
         }
     }
 
-    // if all sensors are nominal, clear alert
+    // if all sensors are nominal or uninitialized, clear alert
     update_hardware_gpio(HwGpioState::High);
     alertActive = false;
 }

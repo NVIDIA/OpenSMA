@@ -66,7 +66,7 @@ VPP::VPP(const VppConfig& config, nv::ipc::Event* hotSwapEvent)
     }
 
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
-        e1s_gpio_expanders.at(gpioIndex) = emulation::Pca9555(0x0000, 0x0000, InputPinMask);
+        e1s_gpio_expanders.at(gpioIndex).configure(0x0000, 0x0000, InputPinMask);
 
         uint8_t bank0DriveIndex = 0, bank1DriveIndex = 0;
         gpio_index_to_drive_indices(gpioIndex, bank0DriveIndex, bank1DriveIndex);

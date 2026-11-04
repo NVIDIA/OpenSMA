@@ -184,8 +184,7 @@ Status Flash::get_ap_fw_authenticate_data(nv::secure_boot::AuthenticateData& aut
                                           Key                                key,
                                           nv::ipc::Queue::Usecs              timeout)
 {
-    if (key != Key::NpdsActiveApFwAuthenticateData
-        && key != Key::NpdsUpdateApFwAuthenticateData) {
+    if (!Npds::has_ap_auth_data_record(key)) {
         return Status::InvalidParam;
     }
 
@@ -225,8 +224,7 @@ Flash::set_ap_fw_authenticate_data(const nv::secure_boot::AuthenticateData& auth
                                    Key                                      key,
                                    nv::ipc::Queue::Usecs                    timeout)
 {
-    if (key != Key::NpdsActiveApFwAuthenticateData
-        && key != Key::NpdsUpdateApFwAuthenticateData) {
+    if (!Npds::has_ap_auth_data_record(key)) {
         return Status::InvalidParam;
     }
 

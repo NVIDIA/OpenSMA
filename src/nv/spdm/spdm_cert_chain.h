@@ -402,12 +402,14 @@ void     erase_l5_cert_svc();
 
 enum class DevIkGenerateErrorCode : uint8_t
 {
-    DdaNumberNotFound      = 0x01,
-    DdaNumberReadEfuseFail = 0x02,
-    DdaNumberMismatch      = 0x03,
-    L3CertNotFound         = 0x04,
-    SignatureReadEfuseFail = 0x05,
-    VerifySignatureFail    = 0x06,
+    DdaNumberNotFound         = 0x01,
+    DdaNumberReadEfuseFail    = 0x02,
+    DdaNumberMismatch         = 0x03,
+    L3CertNotFound            = 0x04,
+    SignatureReadEfuseFail    = 0x05,
+    VerifySignatureFail       = 0x06,
+    DdaNumberReadNpdsFail     = 0x07,
+    SerialNumberReadEfuseFail = 0x08,
 };
 
 enum class DevAkGenerateErrorCode : uint8_t
@@ -417,9 +419,11 @@ enum class DevAkGenerateErrorCode : uint8_t
 };
 enum class L3CertGenerateErrorCode : uint8_t
 {
-    L2CertNotExist      = 0x01,
-    L3CertNotExist      = 0x02,
-    VerifySignatureFail = 0x03,
+    L2CertNotExist       = 0x01,
+    L3CertNotExist       = 0x02,
+    VerifySignatureFail  = 0x03,
+    DdaNumberParseFail   = 0x04,
+    DdaNumberSetNpdsFail = 0x05,
 };
 
 }  // namespace cert

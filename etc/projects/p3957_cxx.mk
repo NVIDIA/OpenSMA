@@ -33,7 +33,7 @@ PATH_SDK 			?= libexec/sdk/SDK_25_03_00_MCX-N5XX-EVK
 PATH_SDK_DEVICE  	:= $(PATH_SDK)/devices/MCXN547
 else ifeq ($(PLATFORM_BASE), mcxn556)
 PATH_SYS            = $(UBS_PATH_SRC)/sys/mcxn556
-PATH_SDK 			?= libexec/sdk/SDK_25_09_00_MCXN556S
+PATH_SDK 			?= libexec/sdk/SDK_25_09_02_MCXN556S
 PATH_SDK_DEVICE  	:= $(PATH_SDK)/devices/MCXN556S
 endif
 PATH_SDK_COMPONENTS := $(PATH_SDK)/components
@@ -164,7 +164,7 @@ $(foreach DIR,$1, \
 )
 endef
 MODULES := common ipc mctp i2c pldm usb flash bootloader gpio i3c logger ctimer spdm uart watchdog perf_mon ipchandler sensor debugtoken telemetry spi fw_parser crypto c2c_mailbox vrot fru smartdma
-MODULES += adc emulation ahs lstp
+MODULES += adc emulation ahs lstp volt_mon/ahs
 SOURCES += $(FREERTOS_SRC) $(FREERTOS_SRC_ARCH) $(UBS_PATH_SRC)/nv/nv.ads $(PATH_PROJECT_SYS)/linker_script.ld
 SOURCES += $(call nvsrcfiles,$(MODULES))
 

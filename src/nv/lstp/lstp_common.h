@@ -181,12 +181,12 @@ struct [[gnu::packed]] LstpChannelConfigBlob
 
 enum class LstpManagementCommand : uint8_t
 {
-    ReadConfig  = 0x08,
-    WriteConfig = 0x09,
-    Lock        = 0x0A,
-    ReadLock    = 0x0B,
-    Start       = ReadConfig,
-    End         = ReadLock
+    ReadConfig      = 0x08,
+    WriteConfig     = 0x09,
+    WriteConfigMode = 0x0A,
+    ReadConfigMode  = 0x0B,
+    Start           = ReadConfig,
+    End             = ReadConfigMode
 };
 
 struct [[gnu::packed]] LstpManagementConfig
@@ -195,16 +195,19 @@ struct [[gnu::packed]] LstpManagementConfig
     uint8_t num_channels;
 };
 
-enum class LstpLockState : uint8_t
+enum class LstpConfigMode : uint8_t
 {
-    Unlocked = 0x00,
-    Locked   = 0x01,
+    NonVolatile = 0x00,
+    Locked      = 0x01,
+    Volatile    = 0x02,
 };
 
-struct [[gnu::packed]] LstpReadLockResponse
+struct [[gnu::packed]] LstpConfigModePayload
 {
-    LstpLockState lock_state;
+    LstpConfigMode config_mode;
 };
+
+constexpr LstpConfigMode CurrentConfigMode = LstpConfigMode::Locked;
 
 /*****************************************************
  * LSTP SPI Channel
@@ -236,6 +239,10 @@ struct [[gnu::packed]] LstpSpiChannelConfig
 {
     uint8_t  channel_num_cs;
     uint32_t freq_hz;
+    uint16_t output_drive_strength_ma = 0U;
+    uint16_t slew_rate_100_ps         = 0U;
+    uint16_t input_debounce_time_us   = 0U;
+    uint16_t glitch_filter_width_ns   = 0U;
 };
 
 struct [[gnu::packed]] LstpSpiReadRequest
@@ -261,8 +268,9 @@ enum class LstpGpioDirection : uint8_t
 
 enum class LstpGpioState : uint8_t
 {
-    Low  = 0U,
-    High = 1U,
+    Low           = 0U,
+    High          = 1U,
+    HighImpedance = 2U,
 };
 
 enum class LstpGpioOutputDriveConfig : uint8_t
@@ -305,7 +313,8 @@ struct [[gnu::packed]] LstpGpioConfig
     uint8_t                                RSVD_1;
     uint8_t                                RSVD_2;
 };
-static_assert(sizeof(LstpGpioConfig) == 48U, "LstpGpioConfig size is not 48 bytes");
+// GPIO config is not forward compatible
+static_assert(sizeof(LstpGpioConfig) == 48U, "LstpGpioConfig size must be 48 bytes");
 
 struct [[gnu::packed]] LstpGpioPinInfo
 {
@@ -316,6 +325,11 @@ struct [[gnu::packed]] LstpGpioPinInfo
     bool allow_lstp_direction_control = false;  // Do not enable for GPIOs owned by other tasks
                                                 // or system critical GPIOs
 };
+
+// vrPort pins have no hardware direction register — report configured direction.
+// Defined in lstp_router.cpp to keep nv/gpio/driver.h out of this header
+// (its <assert.h> shadows nv::assert).
+nv::gpio::Status gpio_get_direction(const LstpGpioPinInfo& info, nv::gpio::Direction& dir);
 
 enum class LstpGpioIrqConfig : uint8_t
 {
@@ -338,6 +352,14 @@ enum class LstpGpioCommand : uint8_t
 };
 
 using GpioIndex = uint16_t;
+
+template<typename GpioIndexMap>
+constexpr GpioIndex LstpGpioIdFromPortPin(const GpioIndexMap& gpio_index_map,
+                                          nv::gpio::GpioPort  port,
+                                          nv::gpio::GpioPin   pin)
+{
+    return gpio_index_map[port][pin];
+}
 
 struct [[gnu::packed]] LstpGpioGetValueRequest
 {
@@ -430,7 +452,13 @@ enum class LstpI2cSpeed : uint8_t
 
 struct [[gnu::packed]] LstpI2cChannelConfig
 {
-    uint8_t speed;
+    uint8_t  speed;
+    uint16_t output_drive_strength_ma = 0U;
+    uint16_t slew_rate_100_ps         = 0U;
+    uint16_t input_debounce_time_us   = 0U;
+    uint16_t glitch_filter_width_ns   = 0U;
+    uint8_t  bus_low_timeout_ms       = 0U;
+    uint8_t  bus_arbitration_retries  = 0U;
 };
 
 constexpr uint8_t LstpI2cCmdMask = 0xBF;  // Bits [0:5] for command
@@ -520,6 +548,10 @@ struct [[gnu::packed]] LstpUartChannelConfig
     uint8_t  stop_bits = 1;                                           // Number of stop bits
     uint8_t  parity    = static_cast<uint8_t>(LstpUartParity::None);  // [4:7] reserved for flow
                                                                       // control
+    uint16_t output_drive_strength_ma = 0U;
+    uint16_t slew_rate_100_ps         = 0U;
+    uint16_t input_debounce_time_us   = 0U;
+    uint16_t glitch_filter_width_ns   = 0U;
 };
 
 /*****************************************************
@@ -634,17 +666,18 @@ constexpr bool projectHasVirtualGpios(const std::array<LstpGpioPinInfo, N>& pin_
     });
 }
 
-/** Interim ReadLock state until persistent lock is wired up. */
+/** Preserve legacy per-pin GPIO config writes while the device reports locked mode. */
 template<size_t N>
-constexpr LstpLockState ReadLockState(const std::array<LstpGpioPinInfo, N>& pin_configs)
+constexpr LstpConfigMode GpioWriteConfigMode(const std::array<LstpGpioPinInfo, N>& pin_configs)
 {
     for (const auto& pin_info : pin_configs) {
         if (pin_info.allow_lstp_direction_control) {
-            return LstpLockState::Unlocked;
+            return LstpConfigMode::NonVolatile;
         }
     }
-    return LstpLockState::Locked;
+    return LstpConfigMode::Locked;
 }
+
 template<size_t N>
 constexpr size_t LstpChannelTypeCount(const std::array<LstpChannelEntry, N>& channels,
                                       const LstpChannelType                  channel_type)

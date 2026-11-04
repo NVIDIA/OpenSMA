@@ -50,6 +50,15 @@ public:
         Driver*       owner;
         bool          transmit;
         SlaveFunction function;
+        /// matched target address and its forward destination, latched on
+        /// address-match for the I2cForward path
+        uint8_t            target_addr;
+        nv::ipchandler::Id forward_dst = nv::ipchandler::Id::Unuse;
+        /// a receive phase happened in the current transaction; gates the
+        /// register-select grab on a repeated-start read (the buffer is
+        /// shared per port, so on a standalone read buffer[2] may hold
+        /// another slave function's stale traffic)
+        bool rx_seen = false;
     };
 
     void bind(nv::i2c::Port port, void* task);
@@ -63,9 +72,12 @@ public:
     uint8_t address();
     /// Set slave match address on \p port. If \p sec_addr is non-zero, enable dual-address
     /// match (e.g. primary + FRU).
-    static void        set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0);
-    static void        set_master_duty_cycle(nv::i2c::Port port, uint8_t duty_cycle);
-    bool               get_status(uint8_t address);
+    static void set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0);
+    static void set_master_duty_cycle(nv::i2c::Port port, uint8_t duty_cycle);
+    bool        get_status(uint8_t address);
+    /// i2cdetect-style liveness probe: address-phase ACK only, no payload. Use for targets
+    /// that are not MCTP-over-SMBus endpoints (e.g. EROT whose MCTP path is on SPI).
+    bool               ping(uint8_t address);
     static IRQn_Type   get_irq(nv::i2c::Port port);
     nv::i2c::I2cStatus i2c_read(uint8_t            address,
                                 std::span<uint8_t> buffer,
@@ -112,11 +124,19 @@ private:
     std::atomic<uint32_t> _target_state_time_stamp{};
     static void
     target_callback_erot(LPI2C_Type* base, lpi2c_slave_transfer_t* transfer, void* user_data);
+    static void target_callback_i2c_forward(LPI2C_Type*             base,
+                                            lpi2c_slave_transfer_t* transfer,
+                                            void*                   user_data);
 };
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data);
 
-/// Lookup slave function based on port and address (defined in i2c.cpp with config access)
-SlaveFunction get_slave_function(nv::i2c::Port port, uint8_t address);
+/// Marks (port, address) pairs that are not claimed in SlaveFunctionTable
+constexpr uint8_t InvalidSlaveFunctionIndex = 0xFFU;
+
+/// Index into nv::ipc::SlaveFunctionTable for (port, address);
+/// InvalidSlaveFunctionIndex when the address is not claimed (callers
+/// default to MCTP handling). Defined in i2c.cpp with config access.
+uint8_t get_slave_function(nv::i2c::Port port, uint8_t address);
 
 }  // namespace sys::i2c

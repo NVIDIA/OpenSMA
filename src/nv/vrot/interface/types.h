@@ -86,7 +86,32 @@ struct ApInfo
     // these as zero and let the platform Ops use its native layout.
     uint32_t metadata_offset = 0;
     uint32_t metadata_size   = 0;
+
+    // Physical slot count for callers that still distinguish active/inactive.
+    // One slot matches the logical active/update bank used by the platform ops.
+    uint8_t  slot_count                      = 1;
+    uint32_t background_copy_timeout_seconds = 0;
 };
+
+constexpr uint8_t InvalidSlot = 0xFF;
+
+// SPDM AP chip-id measurement is 16 bytes (MeasAp1ChipId / MeasAp2ChipId).
+using ApMeasurementChipId = std::array<uint8_t, 16>;
+
+constexpr uint8_t active_slot(const ApInfo&)
+{
+    return 0;
+}
+
+constexpr uint8_t update_slot(const ApInfo&)
+{
+    return 0;
+}
+
+constexpr uint8_t inactive_slot(const ApInfo& ap)
+{
+    return ap.slot_count > 1U ? 1U : InvalidSlot;
+}
 
 struct ApBackgroundCopyRegion
 {

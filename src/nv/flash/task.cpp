@@ -379,8 +379,7 @@ void Task::get_ap_fw_authenticate_data(const Request& request, Response& respons
         return;
     }
 
-    if (request.key != Key::NpdsActiveApFwAuthenticateData
-        && request.key != Key::NpdsUpdateApFwAuthenticateData) {
+    if (!Npds::has_ap_auth_data_record(request.key)) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }
@@ -416,8 +415,7 @@ void Task::set_ap_fw_authenticate_data(const Request& request, Response& respons
         return;
     }
 
-    if (request.key != Key::NpdsActiveApFwAuthenticateData
-        && request.key != Key::NpdsUpdateApFwAuthenticateData) {
+    if (!Npds::has_ap_auth_data_record(request.key)) {
         response.status = nv::flash::Status::InvalidParam;
         return;
     }

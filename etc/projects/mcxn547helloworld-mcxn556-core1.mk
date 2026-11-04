@@ -80,7 +80,6 @@ SOURCES += \
 	$(PATH_SDK_DEVICE)/drivers/fsl_edma_soc.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_smartdma.c \
 	$(PATH_SDK_DEVICE)/drivers/fsl_smartdma_mcxn.c \
-	$(PATH_SDK_DEVICE)/drivers/smartdma_i3c.c \
 	$(PATH_SDK_DEVICE)/utilities/debug_console_lite/fsl_assert.c \
 	$(PATH_SDK_DEVICE)/utilities/debug_console_lite/fsl_debug_console.c \
 	$(PATH_SDK_DEVICE)/utilities/fsl_sbrk.c \

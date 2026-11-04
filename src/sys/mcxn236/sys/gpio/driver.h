@@ -44,6 +44,17 @@ public:
         return GPIO_PinRead(std::to_array(GPIO_BASE_PTRS)[port], pin);
     }
 
+    template<uint32_t port, uint32_t... pins, typename... Values>
+    static void write_port(Values... values)
+    {
+        static_assert(sizeof...(pins) == sizeof...(values), "Pin and value count mismatch");
+        static_assert((is_pin_valid(port, pins) && ...), "Invalid pin");
+        GPIO_Type* const inst       = std::to_array(GPIO_BASE_PTRS)[port];
+        const uint32_t   pin_mask   = ((1U << pins) | ...);
+        const uint32_t   value_mask = ((static_cast<uint32_t>(values) << pins) | ...);
+        inst->PDOR                  = (inst->PDOR & ~pin_mask) | value_mask;
+    }
+
 protected:
     static void init();
 

@@ -130,6 +130,13 @@ void Task::start()
 
     nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Nhp);
 
+    // BMC-driven amber LED blink engine cadence. The ADC polling loop below runs
+    // far faster than AmberTickMs, so we accumulate real elapsed time (from the
+    // free-running ctimer) and service the amber patterns once per tick.
+    constexpr uint32_t   AmberTickUs      = nv::ahs::AmberTickMs * 1000U;
+    nv::ctimer::NV_Ticks amber_last_ticks = nv::ctimer::Driver::read_ticks();
+    uint32_t             amber_accum_us   = 0;
+
     // coverity[no_escape] should never leave here
     while (true) {
         processPendingI2cPeripheralRecovery();
@@ -144,6 +151,20 @@ void Task::start()
 
         // Check for expired hot swap timers across all AHS instances
         checkForHotSwapTimers();
+
+        // Service the BMC amber LED override on its fixed cadence.
+        const auto amber_now    = nv::ctimer::Driver::read_ticks();
+        const auto amber_delta  = static_cast<uint32_t>(amber_now - amber_last_ticks);
+        amber_last_ticks        = amber_now;
+        amber_accum_us         += nv::ctimer::Driver::ticks_to_us(amber_delta);
+        while (amber_accum_us >= AmberTickUs) {
+            amber_accum_us -= AmberTickUs;
+            for (auto& instance : ahs_instances) {
+                if (instance.has_value()) {
+                    instance->service_amber(nv::ahs::AmberTickMs);
+                }
+            }
+        }
     }
 }
 

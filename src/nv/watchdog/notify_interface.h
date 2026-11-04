@@ -32,6 +32,8 @@ enum class TaskMonitorIndex : uint32_t
     I2c7,
     I2c8,
     I2c9,
+    VrI2c0,
+    VrI2c1,
     I3c0,
     I3c1,
     Pldm,

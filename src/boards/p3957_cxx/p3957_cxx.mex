@@ -18,7 +18,7 @@
       <generate_registers_defines>false</generate_registers_defines>
    </preferences>
    <tools>
-      <pins name="Pins" version="17.0" enabled="true" update_project_code="true">
+      <pins name="Pins" version="17.0" enabled="true" update_project_code="false">
          <generated_project_files>
             <file path="board/pin_mux.c" update_enabled="true"/>
             <file path="board/pin_mux.h" update_enabled="true"/>
@@ -592,7 +592,7 @@
             </function>
          </functions_list>
       </pins>
-      <clocks name="Clocks" version="20.0" enabled="true" update_project_code="true">
+      <clocks name="Clocks" version="20.0" enabled="true" update_project_code="false">
          <generated_project_files>
             <file path="board/clock_config.c" update_enabled="true"/>
             <file path="board/clock_config.h" update_enabled="true"/>
@@ -1107,6 +1107,16 @@
                         <data type="Boolean">true</data>
                      </feature>
                   </dependency>
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="ADC0.adc_se.26A" description="Signal channel 26A is not routed." problem_level="1" source="Peripherals:BOARD_InitPeripherals">
+                     <feature name="routed" evaluation="">
+                        <data type="Boolean">true</data>
+                     </feature>
+                  </dependency>
+                  <dependency resourceType="PeripheralUnifiedSignal" resourceId="ADC0.adc_se.26B" description="Signal channel 26B is not routed." problem_level="1" source="Peripherals:BOARD_InitPeripherals">
+                     <feature name="routed" evaluation="">
+                        <data type="Boolean">true</data>
+                     </feature>
+                  </dependency>
                   <dependency resourceType="PeripheralUnifiedSignal" resourceId="LP_FLEXCOMM1.lpi2c_scl" description="Signal serial clock is not routed." problem_level="1" source="Peripherals:BOARD_InitPeripherals">
                      <feature name="routed" evaluation="">
                         <data type="Boolean">true</data>
@@ -1580,7 +1590,7 @@
                            <struct name="5">
                               <setting name="user_commandId" value="CMD_VMON_SSD7"/>
                               <setting name="commandId" value="8"/>
-                              <setting name="chainedNextCommandNumber" value="0"/>
+                              <setting name="chainedNextCommandNumber" value="15"/>
                               <setting name="sampleChannelMode" value="kLPADC_SampleChannelSingleEndSideB"/>
                               <setting name="channelNumber" value="B.1"/>
                               <setting name="enableChannelB_b" value="false"/>
@@ -1589,6 +1599,21 @@
                               <setting name="loopCount" value="0"/>
                               <setting name="hardwareAverageMode" value="kLPADC_HardwareAverageCount4"/>
                               <setting name="sampleTimeMode" value="kLPADC_SampleTimeADCK3"/>
+                              <setting name="conversionResoultuionMode" value="kLPADC_ConversionResolutionHigh"/>
+                              <setting name="enableWaitTrigger" value="false"/>
+                           </struct>
+                           <struct name="6">
+                              <setting name="user_commandId" value="CMD_INTERNAL_TEMP"/>
+                              <setting name="commandId" value="15"/>
+                              <setting name="chainedNextCommandNumber" value="0"/>
+                              <setting name="sampleChannelMode" value="kLPADC_SampleChannelDiffBothSide"/>
+                              <setting name="channelNumber" value="A.26"/>
+                              <setting name="enableChannelB_b" value="false"/>
+                              <setting name="channelBNumber" value="B.0"/>
+                              <setting name="enableAutoChannelIncrement" value="false"/>
+                              <setting name="loopCount" value="1"/>
+                              <setting name="hardwareAverageMode" value="kLPADC_HardwareAverageCount4"/>
+                              <setting name="sampleTimeMode" value="kLPADC_SampleTimeADCK131"/>
                               <setting name="conversionResoultuionMode" value="kLPADC_ConversionResolutionHigh"/>
                               <setting name="enableWaitTrigger" value="false"/>
                            </struct>
@@ -1633,7 +1658,6 @@
                                  <id>kLPADC_TriggerExceptionInterruptEnable</id>
                                  <id>kLPADC_Trigger0CompletionInterruptEnable</id>
                                  <id>kLPADC_Trigger1CompletionInterruptEnable</id>
-                                 <id>kLPADC_Trigger2CompletionInterruptEnable</id>
                                  <id>kLPADC_Trigger3CompletionInterruptEnable</id>
                               </selected>
                            </set>

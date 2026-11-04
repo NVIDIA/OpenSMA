@@ -72,6 +72,35 @@ public:
      */
     void updateStateMachine(bool pgood, bool prsntL, bool perstL, bool timerDone = false);
 
+    /**
+     * @brief Sets the BMC-requested amber LED override state for this drive
+     *
+     * When @p new_amber_state is non-zero (1..AmberStateMax) firmware takes over
+     * the drive's tristate LED pin and renders the associated blink pattern,
+     * overriding the AHS blue/amber indication. When @p new_amber_state is 0 the
+     * override is cleared; the caller (AHS) should re-run the hot-swap update so
+     * normal HSSM set_leds() resumes. Out-of-range values are treated as 0
+     * (release). Restarts the pattern whenever the state changes.
+     *
+     * @param new_amber_state Decoded 3-bit amber state from the BMC
+     */
+    void set_amber_state(uint8_t new_amber_state);
+
+    /**
+     * @brief Advances the amber blink pattern by @p elapsed_ms milliseconds
+     *
+     * No-op while no override is active (amber state 0). Intended to be called
+     * periodically (every nv::ahs::AmberTickMs) from the AHS task.
+     *
+     * @param elapsed_ms Time elapsed since the previous call
+     */
+    void tick_amber(uint32_t elapsed_ms);
+
+    /**
+     * @brief Whether a BMC amber override currently owns the LED pin
+     */
+    bool amber_active() const { return amber_state != 0U; }
+
 private:
     // Member Constants
     // ---------------------------------------------
@@ -145,6 +174,14 @@ private:
                  bool               reverse_polarity = false);
 
     /**
+     * @brief Drives the tristate LED pin for the current amber pattern step
+     *
+     * Applies the on/off level of @ref amber_step from the active pattern and
+     * reloads @ref amber_ms_remaining. Bypasses the set_leds() override guard.
+     */
+    void render_amber_step();
+
+    /**
      * @brief Starts the hot swap timer for state transitions
      *
      * Initiates a timer that will trigger state machine updates when
@@ -166,6 +203,15 @@ private:
 
     /** @brief Drive number identifier for this instance */
     uint8_t _driveNum;
+
+    /** @brief Active BMC amber override state (0 = none / released to AHS) */
+    uint8_t amber_state{0};
+
+    /** @brief Current index into the active amber pattern step table */
+    uint8_t amber_step{0};
+
+    /** @brief Milliseconds remaining before advancing to the next pattern step */
+    uint32_t amber_ms_remaining{0};
 };
 
 }  // namespace nv::ahs

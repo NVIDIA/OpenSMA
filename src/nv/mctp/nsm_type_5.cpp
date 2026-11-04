@@ -529,13 +529,17 @@ Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx)
         return Ccode::ErrorGeneral;
     }
 
-    auto& resp  = *std::bit_cast<CpldFeatureRowResponse*>(&ntx.data[0]);
+    // Regardless the Request version, the Response is always V2
+    auto& resp          = *std::bit_cast<ProgramCpldFeatureRowResponse*>(&ntx.data[0]);
+    resp.current_length = sizeof(ProgramCpldFeatureRowResponse)
+                        - sizeof(CpldFeatureRowResponse);
+    resp.pending_length = 0;
     resp.match  = (std::memcmp(readback.data(), expected.data(), expected.size()) == 0) ? 1 : 0;
     resp.length = static_cast<uint8_t>(nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE);
     resp.reserved[0] = 0x00;
     resp.reserved[1] = 0x00;
     std::memcpy(static_cast<uint8_t*>(resp.data), readback.data(), readback.size());
-    ntx.data_size = sizeof(CpldFeatureRowResponse);
+    ntx.data_size = sizeof(ProgramCpldFeatureRowResponse);
     return Ccode::Success;
 }
 
@@ -563,8 +567,12 @@ Ccode handle_get_otp_cpld_feature_row(NsmPktResp& ntx)
         return Ccode::ErrorGeneral;
     }
 
-    ntx.data[0]   = value;
-    ntx.data_size = sizeof(uint8_t);
+    // Regardless the Request version, the Response is always V2
+    auto& resp          = *std::bit_cast<OtpCpldFeatureRowResponse*>(&ntx.data[0]);
+    resp.current_length = sizeof(OtpCpldFeatureRowResponse) - sizeof(CpldFeatureRowResponse);
+    resp.pending_length = 0;
+    resp.data           = value;
+    ntx.data_size       = sizeof(OtpCpldFeatureRowResponse);
     return Ccode::Success;
 }
 
@@ -1171,6 +1179,17 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
         memcpy(
             &type5_data.gpioSpoofingResp, &nrx.data[0], static_cast<size_t>(request_data_size));
 
+        // send clear event for any payload already activated
+        if (type5_data.previousGpioSpoofingPayload.gpio_spoofing_header.ei_gpio_number > 0) {
+            nsm_type5::triggerGpioSpoofingEvents(type5_data.previousGpioSpoofingPayload);
+            type5_data.previousGpioSpoofingPayload.gpio_spoofing_header.ei_gpio_number = 0;
+        }
+
+        // counter = 0 can be used to generate Clear event, return without setting any error
+        if (gpioSpoofingHeader.ei_gpio_number == 0) {
+            return;
+        }
+
         // Set polarity and clear activated bit for each GPIO error injection entry
         auto gpio_count = type5_data.gpioSpoofingResp.gpio_spoofing_header.ei_gpio_number;
         for (uint16_t i = 0; i < gpio_count && i < MaxGPIOSpoofingEntries; i++) {
@@ -1344,9 +1363,11 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
                 gpio_entry.activated = 1;
             }
         }
-        // trigger event
+        // trigger current event
         nsm_type5::triggerGpioSpoofingEvents(type5_data.gpioSpoofingResp);
         notifyIoxSpoofingState(true);
+        // save payload to send clear event on next set payload
+        type5_data.previousGpioSpoofingPayload = type5_data.gpioSpoofingResp;
     }
     else {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);

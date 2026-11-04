@@ -38,6 +38,7 @@ public:
     bool        write(std::span<uint8_t> data);
     uint8_t     address();
     bool        get_status(uint8_t address);
+    bool        ping(uint8_t address);
     static void set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0) {};
     nv::i2c::I2cStatus i2c_read(uint8_t            address,
                                 std::span<uint8_t> buffer,

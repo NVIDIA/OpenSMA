@@ -382,6 +382,7 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
 
     // GPIO Spoofing Errors payload
     GPIOSpoofingPayload gpioSpoofingResp;
+    GPIOSpoofingPayload previousGpioSpoofingPayload;
 
     // device mode setting index 17 - NcsiMacAddr
     bool                   currentNcsiMacAddrLoaded = false;
@@ -437,7 +438,8 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
             usbBridgeEmulationResp = USBBridgeEmulationPayload{};
         }
         else if (error_injection_id == static_cast<uint8_t>(ErrorInjectionID::GpioSpoofing)) {
-            gpioSpoofingResp = GPIOSpoofingPayload{};
+            gpioSpoofingResp            = GPIOSpoofingPayload{};
+            previousGpioSpoofingPayload = GPIOSpoofingPayload{};
         }
     }
 
@@ -502,10 +504,21 @@ struct [[gnu::packed]] NsmT5GetSupportedDeviceModesV2Resp
 
 struct [[gnu::packed]] CpldFeatureRowResponse
 {
+    uint16_t current_length;
+    uint16_t pending_length;
+};
+
+struct [[gnu::packed]] ProgramCpldFeatureRowResponse : CpldFeatureRowResponse
+{
     uint8_t match;
     uint8_t length;
     uint8_t reserved[2];
     uint8_t data[10];
+};
+
+struct [[gnu::packed]] OtpCpldFeatureRowResponse : CpldFeatureRowResponse
+{
+    uint8_t data;
 };
 
 struct NsmPktResp;

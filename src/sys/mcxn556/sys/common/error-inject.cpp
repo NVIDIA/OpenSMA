@@ -16,8 +16,13 @@
  * limitations under the License.
  */
 #include "error-inject.h"
+
 #include <cstdint>
+
+#include "FreeRTOS.h"
+#include "FreeRTOSConfig.h"
 #include "fsl_common.h"
+#include "task.h"
 
 namespace sys::common {
 
@@ -42,9 +47,15 @@ namespace sys::common {
      * -> src/projects/<project>/config.h
      *    -> constexpr bool EnableRuntimeWdt = true;
      */
+
+#if 0
+    // TODO: The code below does not work for all MCUs and requires fixing, https://nvbugspro.nvidia.com/bug/6462487
     __disable_irq();  // disable all interrupts
     // coverity[no_escape]
     while (true) {}  // hang here
+#else
+    configASSERT(0);  // the assert is just a work around
+#endif
 
     // avoid clang-tidy warning
     __builtin_unreachable();

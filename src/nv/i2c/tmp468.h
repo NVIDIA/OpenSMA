@@ -123,6 +123,11 @@ public:
     {
         return channel < RemoteChannelCount;
     }
+
+private:
+    // Bus location for the sys::i2c driver calls; TempSensor's own copy is private.
+    Port    _bus_port;
+    uint8_t _bus_address;
 };
 
 }  // namespace nv::i2c

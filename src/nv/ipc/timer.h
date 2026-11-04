@@ -51,6 +51,10 @@ public:
 
     Status reset();
 
+    // Reset an already-created timer by id from any task, without (re)creating it.
+    // Returns InvalidOperation if the timer has not been created yet. Safe cross-task.
+    static Status reset_by_id(TimerId id);
+
     bool enabled() const;
 
     std::chrono::microseconds period() const;

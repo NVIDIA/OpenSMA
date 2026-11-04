@@ -21,38 +21,6 @@
 
 namespace nv::emulation {
 
-Pca9555::Pca9555(uint16_t initial_input_values,
-                 uint16_t required_output_mask,
-                 uint16_t required_input_mask)
-: _active_register(Input)
-, _active_bank(Zero)
-, _new_command(true)
-, interrupt_low_vector({InterruptVectorDefault, InterruptVectorDefault})
-// coverity[cert_int31_c_violation] dont care about lost bits
-, state_at_last_interrupt_check({static_cast<uint8_t>(initial_input_values),
-                                 static_cast<uint8_t>(initial_input_values >> 8U)})
-// coverity[cert_int31_c_violation] dont care about lost bits
-, _gpio_pin_state({static_cast<uint8_t>(initial_input_values),
-                   static_cast<uint8_t>(initial_input_values >> 8U)})
-, _gpio_output({OutputValueInit, OutputValueInit})
-, _gpio_inversion_enable({InversionEnableInit, InversionEnableInit})
-// coverity[cert_int31_c_violation] dont care about lost bits
-, _gpio_direction_config(
-      {static_cast<uint8_t>(
-           DirectionInit & static_cast<uint8_t>(~static_cast<uint8_t>(required_output_mask))),
-       static_cast<uint8_t>(
-           DirectionInit
-           & static_cast<uint16_t>(~static_cast<uint8_t>(required_output_mask >> 8U)))})
-// coverity[cert_int31_c_violation] dont care about lost bits
-, _required_outputs({static_cast<uint8_t>(required_output_mask),
-                     static_cast<uint8_t>(required_output_mask >> 8U)})
-// coverity[cert_int31_c_violation] dont care about lost bits
-, _required_inputs({static_cast<uint8_t>(required_input_mask),
-                    static_cast<uint8_t>(required_input_mask >> 8U)})
-{
-    nv::info("Finished PCA9555 initialization\n");
-}
-
 Pca9555::Pca9555()
 : _active_register(Input)
 , _active_bank(Zero)
@@ -67,6 +35,47 @@ Pca9555::Pca9555()
 , _required_inputs()
 {
     return;
+}
+
+Pca9555::Pca9555(uint16_t initial_input_values,
+                 uint16_t required_output_mask,
+                 uint16_t required_input_mask)
+: Pca9555()
+{
+    configure(initial_input_values, required_output_mask, required_input_mask);
+}
+
+void Pca9555::configure(uint16_t initial_input_values,
+                        uint16_t required_output_mask,
+                        uint16_t required_input_mask)
+{
+    _active_register     = Input;
+    _active_bank         = Zero;
+    _new_command         = true;
+    interrupt_low_vector = {InterruptVectorDefault, InterruptVectorDefault};
+    // coverity[cert_int31_c_violation] dont care about lost bits
+    state_at_last_interrupt_check = {static_cast<uint8_t>(initial_input_values),
+                                     static_cast<uint8_t>(initial_input_values >> 8U)};
+    // coverity[cert_int31_c_violation] dont care about lost bits
+    _gpio_pin_state        = {static_cast<uint8_t>(initial_input_values),
+                              static_cast<uint8_t>(initial_input_values >> 8U)};
+    _gpio_output           = {OutputValueInit, OutputValueInit};
+    _gpio_inversion_enable = {InversionEnableInit, InversionEnableInit};
+    // coverity[cert_int31_c_violation] dont care about lost bits
+    _gpio_direction_config = {
+        static_cast<uint8_t>(
+            DirectionInit & static_cast<uint8_t>(~static_cast<uint8_t>(required_output_mask))),
+        static_cast<uint8_t>(
+            DirectionInit
+            & static_cast<uint16_t>(~static_cast<uint8_t>(required_output_mask >> 8U)))};
+    // coverity[cert_int31_c_violation] dont care about lost bits
+    _required_outputs = {static_cast<uint8_t>(required_output_mask),
+                         static_cast<uint8_t>(required_output_mask >> 8U)};
+    // coverity[cert_int31_c_violation] dont care about lost bits
+    _required_inputs = {static_cast<uint8_t>(required_input_mask),
+                        static_cast<uint8_t>(required_input_mask >> 8U)};
+
+    nv::info("Finished PCA9555 initialization\n");
 }
 
 void Pca9555::i2c_read(uint8_t& return_data, bool new_transaction)
@@ -115,8 +124,8 @@ void Pca9555::i2c_read(uint8_t& return_data, bool new_transaction)
     }
 }
 
-void Pca9555::i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
-                        uint8_t                                            data_length)
+void Pca9555::i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                        uint8_t                                                  data_length)
 {
     // FIRST BYTE IS COMMAND (register to write to)
     const auto CommandRegister = static_cast<Pca9555Register>(i2c_data.at(0) / 2);

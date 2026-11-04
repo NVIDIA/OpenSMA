@@ -33,7 +33,7 @@ PATH_SDK 			?= libexec/sdk/SDK_25_03_00_MCX-N5XX-EVK
 PATH_SDK_DEVICE  	:= $(PATH_SDK)/devices/MCXN547
 else ifeq ($(PLATFORM_BASE), mcxn556)
 PATH_SYS            = $(UBS_PATH_SRC)/sys/mcxn556
-PATH_SDK 			?= libexec/sdk/SDK_25_09_00_MCXN556S
+PATH_SDK 			?= libexec/sdk/SDK_25_09_02_MCXN556S
 PATH_SDK_DEVICE  	:= $(PATH_SDK)/devices/MCXN556S
 endif
 PATH_SDK_COMPONENTS := $(PATH_SDK)/components

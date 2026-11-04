@@ -26,6 +26,8 @@
 #include "nv/i2c/smb_direct.h"
 #include "nv/i2c/helper.h"
 #include "nv/ipc/mutex.h"
+#include "nv/i2c/i2c_forward.h"
+#include "sys/i2c/i2c_forward_dest.h"
 #include "nv/i2c/eeprom_cache.h"
 #include "nv/logger/log.h"
 #include "nv/logger/task.h"
@@ -55,16 +57,30 @@ void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_dat
     memcpy(&log_buffer_data[2], std::bit_cast<uint8_t*>(res_log.data.data()), res_log.size);
 }
 
-SlaveFunction get_slave_function(nv::i2c::Port port, uint8_t address)
+static_assert(nv::ipc::SlaveFunctionTable.size() < InvalidSlaveFunctionIndex,
+              "SlaveFunctionTable must not grow into InvalidSlaveFunctionIndex");
+
+/// Index into nv::ipc::SlaveFunctionTable for (port, address);
+/// InvalidSlaveFunctionIndex when the address is not claimed (callers
+/// default to MCTP handling)
+uint8_t get_slave_function(nv::i2c::Port port, uint8_t address)
 {
-    // Lookup in slave function table
-    for (const auto& entry : nv::ipc::SlaveFunctionTable) {
+    for (uint8_t i = 0; i < nv::ipc::SlaveFunctionTable.size(); i++) {
+        const auto& entry = nv::ipc::SlaveFunctionTable.at(i);
         if (entry.enabled && entry.port == port && entry.address == address) {
-            return entry.function;
+            return i;
         }
     }
-    // Default: MCTP/SMBus handling
-    return SlaveFunction::Mctp;
+    return InvalidSlaveFunctionIndex;
+}
+
+/// Shared weak default: no I2cForward destination on this project. A project
+/// that configures a forward provides a strong override in sys::i2c (see
+/// i2c_forward_dest.h and e.g. e4188/core0/i2c_forward_dest.cpp).
+// NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
+__attribute__((weak)) nv::ipc::TaskId forward_task_id(nv::i2c::Port /*source_port*/)
+{
+    return nv::ipc::TaskId::End;
 }
 
 /// EEPROM slave callback - handles all EEPROM cache operations
@@ -143,16 +159,39 @@ void Driver::target_callback_lookup(LPI2C_Type*             base,
         const auto address  = static_cast<uint8_t>(transfer->receivedAddress & 0xFF) >> 1U;
         const auto instance = LPI2C_GetInstance(base);
         NV_ASSERT(instance < nv::common::to_underlying(nv::i2c::Port::End));
-        const auto port   = static_cast<nv::i2c::Port>(instance);
-        context->function = get_slave_function(port, address);
+        const auto port      = static_cast<nv::i2c::Port>(instance);
+        const auto index     = get_slave_function(port, address);
+        context->target_addr = address;
+        // defaults for unclaimed addresses: MCTP/SMBus handling, no forward
+        context->function    = SlaveFunction::Mctp;
+        context->forward_dst = nv::ipchandler::Id::Unuse;
+        if (index != InvalidSlaveFunctionIndex) {
+            const auto& entry = nv::ipc::SlaveFunctionTable.at(index);
+            context->function = entry.function;
+            if (entry.function == SlaveFunction::I2cForward) {
+                const auto dest = forward_task_id(port);
+                if (dest != nv::ipc::TaskId::End) {
+                    context->forward_dst = entry.forward_dst;
+                    // NOLINTNEXTLINE(*-reinterpret-cast) same idiom as the EEPROM bridge
+                    nv::i2c::forward::set_window(
+                        reinterpret_cast<nv::i2c::Task&>(nv::ipc::Supervisor::inst().task(dest))
+                            .forward_state(),
+                        entry.shadow_base,
+                        entry.shadow_len);
+                }
+            }
+        }
     }
 
     // Dispatch to appropriate slave callback
     switch (context->function) {
         case SlaveFunction::Eeprom: target_callback_eeprom(base, transfer, user_data); break;
         case SlaveFunction::Erot  : target_callback_erot(base, transfer, user_data); break;
-        case SlaveFunction::Mctp  :
-        default                   : target_callback(base, transfer, user_data); break;
+        case SlaveFunction::I2cForward:
+            target_callback_i2c_forward(base, transfer, user_data);
+            break;
+        case SlaveFunction::Mctp:
+        default                 : target_callback(base, transfer, user_data); break;
     }
 }
 /// EROT slave callback - handles OCP Recovery 2-byte writes (reg, value) from
@@ -181,6 +220,78 @@ void Driver::target_callback_erot([[maybe_unused]] LPI2C_Type* base,
                 task->handle_erot_recovery(/*reg=*/context->buffer[2],
                                            /*value=*/context->buffer[3]);
             }
+            break;
+        default: break;
+    }
+}
+
+/// DAC forward slave callback - target writes are queued verbatim to the I2C
+/// task owning the real DAC bus; reads are served from the local shadow
+/// (see nv/i2c/i2c_forward.h, bug 6400342).
+void Driver::target_callback_i2c_forward(LPI2C_Type*             base,
+                                         lpi2c_slave_transfer_t* transfer,
+                                         void*                   user_data)
+{
+    using namespace nv::i2c;
+    const auto dest = forward_task_id(static_cast<nv::i2c::Port>(LPI2C_GetInstance(base)));
+    if (dest == nv::ipc::TaskId::End) {
+        return;  // no forward destination on this project; entries cannot match
+    }
+    auto                     context = static_cast<TargetContex*>(user_data);
+    const std::span<uint8_t> Buffer  = context->buffer;
+    /// shadow home: the destination task's private MPU block, resolved on
+    /// demand from the per-project weak forward_task_id() - the same idiom the
+    /// EEPROM bridge uses for its cache above
+    // NOLINTNEXTLINE(*-reinterpret-cast) same idiom as the EEPROM bridge
+    auto& fwd = reinterpret_cast<nv::i2c::Task&>(nv::ipc::Supervisor::inst().task(dest))
+                    .forward_state();
+
+    switch (transfer->event) {
+        case kLPI2C_SlaveAddressMatchEvent:
+            transfer->data     = nullptr;
+            transfer->dataSize = 0;
+            if ((transfer->receivedAddress & 0x01U) != 0U) {
+                /// combined write -> repeated-start -> read: the register
+                /// selection from the write phase is already in the buffer
+                /// but the completion event only fires after the read, so
+                /// grab it now (same approach as the EEPROM bridge above).
+                /// Gated on rx_seen: on a standalone read buffer[2] is stale,
+                /// possibly another slave function's traffic on the shared
+                /// per-port buffer, and the selection must stay where the
+                /// last write left it.
+                if (context->rx_seen) {
+                    forward::select_reg(fwd, context->buffer[2]);
+                    context->rx_seen = false;
+                }
+            }
+            else {
+                context->rx_seen = false;  // new write transaction starts clean
+            }
+            break;
+        case kLPI2C_SlaveReceiveEvent:
+            context->transmit  = false;
+            context->rx_seen   = true;
+            transfer->data     = Buffer.subspan(2).data();
+            transfer->dataSize = Buffer.subspan(2).size();
+            break;
+        case kLPI2C_SlaveTransmitEvent:
+            context->transmit  = true;
+            Buffer[0]          = forward::shadow_read(fwd, forward::selected_reg(fwd));
+            transfer->data     = Buffer.subspan(0, 1).data();
+            transfer->dataSize = 1;
+            break;
+        case kLPI2C_SlaveCompletionEvent:
+            /// forward only intact writes: a transaction that ended with a
+            /// bus error would hand truncated bytes to the real device (the
+            /// MCTP callback guards completionStatus the same way)
+            if (!context->transmit && transfer->transferredCount > 0
+                && transfer->completionStatus == kStatus_Success) {
+                (void)forward::on_target_write(fwd,
+                                               context->forward_dst,
+                                               context->target_addr,
+                                               Buffer.subspan(2, transfer->transferredCount));
+            }
+            context->rx_seen = false;
             break;
         default: break;
     }
@@ -516,6 +627,29 @@ bool Driver::get_status(uint8_t address)
         .subaddressSize = 0,
         .data           = packet.data(),
         .dataSize       = packet.size(),
+    };
+
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(_port));
+    if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
+        return false;
+    }
+    const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
+    mutex.unlock();
+    return Status == kStatus_Success;
+}
+
+bool Driver::ping(uint8_t address)
+{
+    // Zero-length write: send START + address + STOP and report the address-phase ACK/NAK.
+    // No payload is transmitted, so this never feeds MCTP (or any) data to the target.
+    lpi2c_master_transfer_t transfer = {
+        .flags          = kLPI2C_TransferDefaultFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Write,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = nullptr,
+        .dataSize       = 0,
     };
 
     auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(_port));

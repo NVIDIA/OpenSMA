@@ -23,6 +23,7 @@
 #include <cstring>
 
 #include "nv/i2c/common.h"
+#include "nv/i2c/i2c_forward.h"
 #include "nv/i2c/eeprom_cache.h"
 #include "nv/i2c/error_injection.h"
 #include "nv/i2c/helper.h"
@@ -106,6 +107,8 @@ void Task::entrypoint(void* params)
 Task::Task(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _client(config.client)
+, _ap_status_client(config.ap_status_client != nv::mctp::Client::End ? config.ap_status_client
+                                                                     : config.client)
 , _event(nv::ipc::Event::make(config.event_id))
 , _queue(nv::ipc::Queue::make(config.queue_id))
 , _port(config.port_id)
@@ -114,6 +117,9 @@ Task::Task(Config config) noexcept
 , _target_addr(config.target_addr)
 , _boot_event(config.boot_event)
 , _ipchandler_id(config.ipchandler_id)
+, _plain_status_probe(config.plain_status_probe)
+, _probe_ack_is_down(config.probe_ack_is_down)
+, _ap_probe_addr(config.ap_probe_addr)
 , _oob_bus(nv::perf_mon::Driver::flexcomm_port_to_oobBus(static_cast<uint8_t>(config.port_id)))
 {
     std::fill(_eid_addr_map.begin(), _eid_addr_map.end(), 0);
@@ -143,7 +149,13 @@ Task::Task(Config config) noexcept
                                       eeprom_update);
         }
     }
-    else if (ipc::UseI2cApStatusTimer && config.timer_id != ipc::TimerId::End) {
+    // Register the AP-status probe timer either when the project globally routes AP-status
+    // probing through the I2C tasks (UseI2cApStatusTimer), or when this specific task owns a
+    // dedicated liveness probe address (ap_probe_addr != 0). The latter lets a single task
+    // (e.g. an EROT recovery probe) run its own probe even on projects that keep
+    // UseI2cApStatusTimer disabled because another bus (e.g. UsI3c) owns the generic timer.
+    else if ((ipc::UseI2cApStatusTimer || config.ap_probe_addr != 0)
+             && config.timer_id != ipc::TimerId::End) {
         _timer = ipc::Timer::make(config.timer_id,
                                   std::chrono::microseconds(ipc::CheckApStatusTimerUs),
                                   check_ap_status);
@@ -417,6 +429,14 @@ void Task::start()
         if (_timer.id() == ipc::TimerId::SmbSensor) {
             set_tmp_sensor();
         }
+        _timer.start();
+    }
+
+    // Decoupled liveness probe (e.g. EROT): this task drives the AP-status timer but is
+    // not the MCTP data path (client == End, data path on SPI). The usual bootstrap
+    // (routing-table event -> handle_ap_status -> _timer.reset()) never runs without a
+    // client, so the AP-status timer would otherwise stay dormant. Start it explicitly.
+    if (_client == nv::mctp::Client::End && projectIsApStatusTimer(_timer)) {
         _timer.start();
     }
 
@@ -720,7 +740,11 @@ void Task::handle_update_routing_table()
         const bool is_ap_status_timer = projectIsApStatusTimer(_timer);
         if (!is_ap_status_timer || _ap_status == APStatus::ApUpNotEnumerated
             || _ap_status == APStatus::Querying) {
-            auto  myep    = nv::mctp::Control::get_routing_index(_client);
+            // Gate the AP-status endpoint, which may differ from this task's data-path
+            // client (e.g. EROT: probe over I2C but the MCTP endpoint is on Spi0, so
+            // _client == End and _ap_status_client == Spi0). Using _client here would look
+            // up the wrong routing entry and never see the EROT's enumerated state.
+            auto  myep    = nv::mctp::Control::get_routing_index(_ap_status_client);
             auto& myentry = _routing_table.at(myep);
             if (myentry.is_enumerated) {
                 // Set EID success
@@ -800,9 +824,18 @@ I2cStatus Task::smbus_block_read_wrapper(uint8_t            address,
         read_len = read_buffer[0] + 1 + extra_read_len;
     }
 
-    if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
-        && _repeated_start_timer.id() != ipc::TimerId::End) {
-        _repeated_start_timer.reset();
+    if (status == I2cStatus::Ok) {
+        if (flags & nv::i2c::I2cFlags::NoStop) {
+            // Block read kept the bus held for the BMC's follow-up; arm the timeout guard
+            // and leave the bus marked non-idle so the ping cannot intrude.
+            if (_repeated_start_timer.id() != ipc::TimerId::End) {
+                _repeated_start_timer.reset();
+            }
+        }
+        else {
+            // Block read terminated with STOP: bus is idle again.
+            _bus_idle = true;
+        }
     }
 
     return status;
@@ -830,6 +863,11 @@ I2cStatus Task::i2c_cmd(uint8_t            address,
 
         _event.clear(CtrlWaitEvents);
 
+        // A transaction is starting: the bus is no longer known idle. It is marked idle
+        // again only on a STOP-terminated success below (or recovered to idle on error by
+        // the caller), so the AP-status ping cannot intrude mid-transaction.
+        _bus_idle = false;
+
         if (flags & nv::i2c::I2cFlags::RecvLen) {
             return smbus_block_read_wrapper(
                 address, write_buffer, read_buffer, flags, read_len);
@@ -850,11 +888,22 @@ I2cStatus Task::i2c_cmd(uint8_t            address,
                 return status;
             }
 
-            status = _driver.i2c_read(address, read_buffer);
+            status = _driver.i2c_read(address, read_buffer, flags);
             if (status != I2cStatus::Ok) {
                 return status;
             }
-            return wait_for_i2c_completion();
+            status = wait_for_i2c_completion();
+            if (status == I2cStatus::Ok) {
+                if (flags & nv::i2c::I2cFlags::NoStop) {
+                    if (_repeated_start_timer.id() != ipc::TimerId::End) {
+                        _repeated_start_timer.reset();
+                    }
+                }
+                else {
+                    _bus_idle = true;
+                }
+            }
+            return status;
         }
 
         // Write only operation
@@ -864,9 +913,16 @@ I2cStatus Task::i2c_cmd(uint8_t            address,
                 return status;
             }
             status = wait_for_i2c_completion();
-            if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
-                && _repeated_start_timer.id() != ipc::TimerId::End) {
-                _repeated_start_timer.reset();
+            if (status == I2cStatus::Ok) {
+                if (flags & nv::i2c::I2cFlags::NoStop) {
+                    // Bus held for the BMC's follow-up; arm the timeout guard, stay non-idle.
+                    if (_repeated_start_timer.id() != ipc::TimerId::End) {
+                        _repeated_start_timer.reset();
+                    }
+                }
+                else {
+                    _bus_idle = true;
+                }
             }
             return status;
         }
@@ -878,9 +934,16 @@ I2cStatus Task::i2c_cmd(uint8_t            address,
                 return status;
             }
             status = wait_for_i2c_completion();
-            if (status == I2cStatus::Ok && (flags & nv::i2c::I2cFlags::NoStop)
-                && _repeated_start_timer.id() != ipc::TimerId::End) {
-                _repeated_start_timer.reset();
+            if (status == I2cStatus::Ok) {
+                if (flags & nv::i2c::I2cFlags::NoStop) {
+                    // Bus held for the BMC's follow-up; arm the timeout guard, stay non-idle.
+                    if (_repeated_start_timer.id() != ipc::TimerId::End) {
+                        _repeated_start_timer.reset();
+                    }
+                }
+                else {
+                    _bus_idle = true;
+                }
             }
             return status;
         }
@@ -994,6 +1057,19 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
         }
     }
 
+    // Do not let the MCU answer for its own I2C target address on LSTP-bridged
+    // scans. These downstream buses run the same Flexcomm as both master (LSTP
+    // bridge) and MCTP-over-SMBus target, so the controller self-ACKs its own
+    // slave address and the MCU shows up in the BMC's i2cdetect
+    if constexpr (nv::lstp::EnableI2c) {
+        if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Lstp)
+            && is_target_client(_client) && request.address == _driver.address()) {
+            std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
+            nv::lstp::LstpRouter::send_i2c(this->_ipchandler_id, 0, item, I2cStatus::Nak);
+            return;
+        }
+    }
+
     // Normal I2C transaction
     auto result = i2c_cmd(
         request.address, write_buffer_span, read_buffer_span, request.flags, ReadLength);
@@ -1004,6 +1080,36 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
         if (request.src_id != static_cast<uint8_t>(ipchandler::Id::Lstp)) {
             handle_error(result);
         }
+        // A NAK is STOP-terminated by the controller, so the bus is idle again. Any other
+        // failure may have left a NoStop sequence held, so keep the bus marked busy (as
+        // i2c_cmd() left it) and let a later transaction or an explicit RecoveryCmd settle
+        // it. Do not issue a recovery transfer here: quick_recovery() is itself a NoStop
+        // write-read that early-returns without a STOP, so on a bus that just failed it can
+        // hold the bus instead of settling it, and it drives an extra addressed transaction
+        // into a target that may be mid-protocol.
+        if (result == I2cStatus::Nak) {
+            _bus_idle = true;
+        }
+    }
+
+    // EROT recovery runs as a stateful multi-transaction Glacier upload over LSTP to the EROT
+    // (_target_addr, 0x62). The liveness probe targets the SAME physical EROT (it ACKs at its
+    // recovery-mode address 0x63 while in recovery), so a probe issued in the gap between two
+    // recovery command transactions disturbs the EROT's recovery state machine and the upload
+    // fails ("CRC check failed on the command parameters"). Defer the periodic probe on every
+    // EROT LSTP transaction so it only fires after the bus has been quiet for a full
+    // CheckApStatusTimerUs period; liveness itself still comes solely from the 0x63 probe (no
+    // liveness is derived from the LSTP result here). Restricted to EROT-addressed LSTP
+    // traffic: other addresses on this bus (e.g. i2cdetect scans) do not defer it.
+    //
+    // Gated on _ap_probe_addr != 0 so this only applies to the decoupled recovery-mode probe
+    // setup (EROT: probe address separate from the LSTP/device address). Products that share
+    // one address for probe and LSTP/device (_ap_probe_addr == 0, e.g. pg613_m) keep their
+    // original behavior and never defer the AP-status timer on LSTP traffic.
+    if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Lstp) && _target_addr != 0
+        && request.address == _target_addr && _ap_probe_addr != 0
+        && projectIsApStatusTimer(_timer)) {
+        _timer.reset();
     }
 
     std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
@@ -1035,6 +1141,10 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
                 nv::lstp::LstpRouter::send_i2c(this->_ipchandler_id, ReadLength, item, result);
             }
             break;
+        case static_cast<uint8_t>(ipchandler::Id::I2cForward):
+            /// this task owns the destination bus, so the shadow is its own
+            forward::on_forward_result(_forward_state, result, request);
+            break;
         default: break;
     }
 }
@@ -1062,6 +1172,12 @@ void Task::handle_i2c_recovery(std::span<uint8_t> buffer)
             break;
         case nv::i2c::RecoveryCmd::None:
         default                        : break;
+    }
+
+    // After any recovery the bus has been driven back to a known idle state (e.g. the
+    // repeated-start timeout path issues BusRecovery); allow the liveness ping to resume.
+    if (request.cmd != nv::i2c::RecoveryCmd::None) {
+        _bus_idle = true;
     }
 }
 
@@ -1622,52 +1738,162 @@ void Task::check_ap_status(nv::ipc::Timer& timer)
 
 void Task::handle_ap_status(APStatus set_status)
 {
-    bool     result = false;
-    APStatus status = _ap_status;
-
     if (set_status == APStatus::Querying) {
-        // if link is up, ping for status
-        if (_target_addr != 0) {
-            // perform an i2cdetect type operation to verify it's still alive
-            result = _driver.get_status(_target_addr);
-            switch (status) {
-                case APStatus::ApUpNotEnumerated:
-                case APStatus::ApDown:
-                default:
-                    status = (result ? APStatus::ApUpNotEnumerated : APStatus::ApDown);
-                    break;
-                case APStatus::ApUpEnumerated:
-                    status = (result ? APStatus::ApUpEnumerated : APStatus::ApDown);
-                    break;
-            }
+        // Route the periodic liveness probe: the EROT uses a dedicated, bus-idle-gated
+        // two-stage probe; every other product uses the original common single-address
+        // probe. Keeping these paths separate ensures the EROT changes cannot alter the
+        // behavior of the common AP-status check shared by all other products.
+        if (is_erot_ap_probe()) {
+            handle_erot_liveness();
+        }
+        else {
+            handle_common_ap_status();
+        }
+        return;
+    }
+
+    // Forced status change (e.g. from a routing-table update): reset the status timer since
+    // we just resolved the status out of band, then commit the transition.
+    if (projectIsApStatusTimer(_timer)) {
+        _timer.reset();
+    }
+    commit_ap_status(set_status);
+}
+
+void Task::handle_common_ap_status()
+{
+    // Original pre-EROT behavior: a single MCTP-over-SMBus GetEndpointID probe on the device
+    // address with immediate up/down (down_threshold == 1, no bus-idle gating). Kept separate
+    // from the EROT path so other products are completely unaffected by the EROT changes.
+    if (_target_addr == 0) {
+        return;
+    }
+    const bool alive = _driver.get_status(_target_addr);
+    apply_ap_liveness(alive, /*down_threshold=*/1, /*up_threshold=*/1);
+}
+
+void Task::handle_erot_liveness()
+{
+    // Skip this liveness probe unless the bus is known idle. An LSTP transaction in
+    // progress, a held repeated-start (NoStop) window, or an error that left the bus
+    // mid-sequence all clear _bus_idle; the armed repeated-start timer is an additional
+    // guard for the BMC-driven NoStop window. The probe issues a full START/STOP cycle,
+    // which would corrupt a half-finished LSTP block/repeated-start. Retry next tick.
+    if (!_bus_idle
+        || (_repeated_start_timer.id() != ipc::TimerId::End
+            && _repeated_start_timer.enabled())) {
+        return;
+    }
+    // Two-stage EROT liveness probe when a dedicated recovery-mode indicator address
+    // (_ap_probe_addr, EROT 0x63) is configured alongside the device address
+    // (_target_addr, EROT 0x62):
+    //   1. Probe 0x63. ACK => EROT is in recovery mode; its MCTP-over-SPI data path is
+    //      DOWN => remove the endpoint.
+    //   2. NAK on 0x63 => not in recovery; probe the device address 0x62. ACK => the EROT
+    //      is present and its SPI path should work => enumerate the endpoint. NAK => the
+    //      EROT is held in reset (not responding at all) => remove the endpoint.
+    // The endpoint is up only when 0x63 NAKs and 0x62 ACKs. The 0x62 probe fires only
+    // when 0x63 NAKs (never during recovery), so it cannot disturb the Glacier recovery
+    // sequence on 0x62.
+    const uint8_t probe_addr = (_ap_probe_addr != 0) ? _ap_probe_addr : _target_addr;
+    if (probe_addr == 0) {
+        return;
+    }
+    const bool ack   = probe_once(probe_addr);
+    bool       alive = false;
+    if (_probe_ack_is_down) {
+        if (ack) {
+            // Recovery-mode address ACKed: EROT is in recovery -> down.
+            alive = false;
+        }
+        else if (_target_addr != 0 && _target_addr != probe_addr) {
+            // Not in recovery: confirm the EROT is present on its device address.
+            // ACK -> up; NAK -> EROT held in reset -> down.
+            alive = probe_once(_target_addr);
+        }
+        else {
+            alive = true;
         }
     }
     else {
-        // Set status
-        status = set_status;
-        // reset status timer since we just forced a status change
-        if (projectIsApStatusTimer(_timer)) {
-            _timer.reset();
-        }
+        alive = ack;
     }
+    apply_ap_liveness(alive, ProbeDownThreshold, ProbeUpThreshold);
+}
 
-    // update and log on status change
-    if (status != _ap_status) {
-        auto myep = nv::mctp::Control::get_routing_index(_client);
-        logger::info(logger::Event::I2CApStatusUpdate,
-                     {static_cast<uint8_t>(myep),
-                      static_cast<uint8_t>(_ap_status),
-                      static_cast<uint8_t>(status)});
+bool Task::probe_once(uint8_t address)
+{
+    // Payload-free i2cdetect ping for non-MCTP-over-SMBus targets (e.g. EROT whose MCTP path
+    // is on SPI); otherwise the MCTP-over-SMBus GetEndpointID probe. AP-status transitions are
+    // recorded by commit_ap_status (I2CApStatusUpdate); a per-probe log is intentionally
+    // omitted since it fires every timer tick and floods the log.
+    const bool ack = _plain_status_probe ? _driver.ping(address) : _driver.get_status(address);
+    return ack;
+}
 
-        // update mctp driver with status for enumeration
-        if (projectIsApStatusTimer(_timer)) {
-            if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
-                nv::mctp::Driver::endpoint_status_change(
-                    myep, (status == APStatus::ApUpNotEnumerated));
+void Task::apply_ap_liveness(bool alive, uint8_t down_threshold, uint8_t up_threshold)
+{
+    APStatus status = _ap_status;
+
+    if (alive) {
+        // Alive: reset the miss counter. If already enumerated, stay up. Otherwise move to
+        // ApUpNotEnumerated after the caller-selected number of consecutive alive probes.
+        _probe_miss_count = 0;
+        if (status == APStatus::ApUpEnumerated) {
+            _probe_hit_count = 0;
+        }
+        else if (++_probe_hit_count >= up_threshold) {
+            _probe_hit_count = 0;
+            status           = APStatus::ApUpNotEnumerated;
+        }
+        // else: keep current status and wait for more consecutive alive observations.
+    }
+    else {
+        // A failed observation breaks the consecutive-alive sequence, even if the endpoint
+        // is already down.
+        _probe_hit_count = 0;
+        if (status != APStatus::ApDown) {
+            // Missed observation: declare down only after down_threshold consecutive misses.
+            // Common products pass 1 (immediate); the EROT probe passes ProbeDownThreshold to
+            // debounce, since its liveness bus (I2C) differs from the SPI data path.
+            if (++_probe_miss_count >= down_threshold) {
+                _probe_miss_count = 0;
+                status            = APStatus::ApDown;
             }
+            // else: keep current status and retry on the next observation.
         }
-        _ap_status = status;
     }
+
+    commit_ap_status(status);
+}
+
+void Task::commit_ap_status(APStatus status)
+{
+    // Only act on real status transitions. Retry of a failed enumeration is driven by the
+    // ApDown <-> ApUpNotEnumerated state cycle (a failed enumeration is promoted back to
+    // ApDown by handle_update_routing_table() once the enum-done window closes, and the
+    // next alive probe re-triggers enumeration). This keeps re-enumeration from restarting
+    // the driver's in-flight enum-done timer, which would otherwise never complete.
+    if (status == _ap_status) {
+        return;
+    }
+
+    // Gate the AP-status endpoint, which may differ from this task's data-path
+    // client (e.g. probe over I2C, gate the EROT's SPI endpoint).
+    auto myep = nv::mctp::Control::get_routing_index(_ap_status_client);
+    logger::info(logger::Event::I2CApStatusUpdate,
+                 {static_cast<uint8_t>(myep),
+                  static_cast<uint8_t>(_ap_status),
+                  static_cast<uint8_t>(status)});
+
+    // update mctp driver with status for enumeration
+    if (projectIsApStatusTimer(_timer)) {
+        if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
+            nv::mctp::Driver::endpoint_status_change(myep,
+                                                     (status == APStatus::ApUpNotEnumerated));
+        }
+    }
+    _ap_status = status;
 }
 
 // Weak function definition for projectTryRunAdcTrigger (for testrunner project(esp. in

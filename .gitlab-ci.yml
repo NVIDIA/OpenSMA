@@ -40,9 +40,9 @@ build:
     - ln -sf /toolchain/gcc-arm-none-eabi-10.3-2021.10 ${CI_PROJECT_DIR}/libexec/toolchain/gcc-arm-none-eabi-10.3-2021.10
     # Create SDK symlinks
     - mkdir -p ${CI_PROJECT_DIR}/libexec/sdk
-    - ln -sf /sdk/SDK_25_09_00_MCXN556S ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
+    - ln -sf /sdk/SDK_25_09_02_MCXN556S ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_02_MCXN556S
     # Patch SDK_25_09_00_MCXN556S
-    - cd ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_00_MCXN556S
+    - cd ${CI_PROJECT_DIR}/libexec/sdk/SDK_25_09_02_MCXN556S
     - xz -dc ${CI_PROJECT_DIR}/libexec/patch/mcu.patch.xz | patch -p1 -N
     # Create make symlink
     - mkdir -p ${CI_PROJECT_DIR}/corepdk/ubs/bin

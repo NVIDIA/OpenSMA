@@ -44,9 +44,7 @@ public:
      */
     void setup() override
     {
-        eeprom = emulation::At24c01();
         // Create another instance for testing different scenarios
-        eeprom2      = emulation::At24c01();
         auto memory2 = eeprom2.get_memory();
         std::iota(memory2.begin(), memory2.end(), 0);
         eeprom2.set_memory(memory2);

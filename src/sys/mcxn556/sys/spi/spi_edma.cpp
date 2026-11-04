@@ -92,11 +92,11 @@ LPSPI_Type* EdmaDriver::get_base(nv::spi::Flexcomm flexcomm)
     return bases.at(nv::common::to_underlying(flexcomm));
 }
 
-void EdmaDriver::bind(nv::spi::Flexcomm flexcomm, nv::ipc::EventId event_id)
+void EdmaDriver::bind(nv::spi::Flexcomm flexcomm, nv::ipc::TaskId task_id)
 {
     _base                     = get_base(flexcomm);
     _flexcomm                 = flexcomm;
-    _event                    = &nv::ipc::Event::make(event_id);
+    _notification_task_id     = task_id;
     _master_xfer_ctx.driver   = this;
     _master_xfer_ctx.xferDone = false;
 }
@@ -160,18 +160,16 @@ sys::spi::Status EdmaDriver::sendRecv(uint32_t                 send_len,
         return sys::spi::Status::EventXferFail;
     }
 
-    // wait complete
-    auto wait         = sys::spi::Event::XferDone | sys::spi::Event::XferError;
-    auto event_result = _event->wait(
-        wait, true, false, std::chrono::milliseconds(SPI_TRANSFER_TIMEOUT_MS));
+    auto notification_result = nv::ipc::TaskNotify::wait(
+        std::chrono::milliseconds(SPI_TRANSFER_TIMEOUT_MS), true);
 
-    if (!event_result) {
-        nv::info("sendRecv: wait_event failed with status %d\n",
-                 static_cast<int>(event_result.error()));
+    if (!notification_result) {
+        nv::info("sendRecv: task notification wait failed with status %d\n",
+                 static_cast<int>(notification_result.error()));
         return sys::spi::Status::EventTimeout;
     }
 
-    if (!(event_result.value() & sys::spi::Event::XferDone)) {
+    if (!(notification_result.value() & sys::spi::Event::XferDone)) {
         nv::info("sendRecv: transfer failed or timeout\n");
         return sys::spi::Status::EventXferFail;
     }
@@ -188,10 +186,12 @@ void EdmaDriver::master_edma_callback(LPSPI_Type* /*base*/,
     auto driver = static_cast<EdmaDriver*>(ctx->driver);
 
     if (status == kStatus_Success) {
-        (void)driver->_event->set(sys::spi::Event::XferDone);
+        (void)nv::ipc::TaskNotify::send(driver->_notification_task_id,
+                                        sys::spi::Event::XferDone);
     }
     else {
-        (void)driver->_event->set(sys::spi::Event::XferError);
+        (void)nv::ipc::TaskNotify::send(driver->_notification_task_id,
+                                        sys::spi::Event::XferError);
     }
     ctx->xferDone = true;
 }

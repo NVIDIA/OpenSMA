@@ -23,6 +23,7 @@
 #include "nv/usb/task.h"
 #include "nv/pldm/task.h"
 #include "nv/i2c/task.h"
+#include "nv/i2c/vr_i2c_task.h"
 #include "nv/i3c/task.h"
 #include "nv/mctp/driver.h"
 #include "nv/ssif/task.h"
@@ -98,6 +99,10 @@ void Runtime::query_task_status(TaskMonitorIndex index)
         case TaskMonitorIndex::I2c8:
         case TaskMonitorIndex::I2c9: {
             i2c::Task::wdt_notify(index);
+        } break;
+        case TaskMonitorIndex::VrI2c0:
+        case TaskMonitorIndex::VrI2c1: {
+            i2c::VrI2cTask::wdt_notify(index);
         } break;
         case TaskMonitorIndex::I3c0:
         case TaskMonitorIndex::I3c1: {

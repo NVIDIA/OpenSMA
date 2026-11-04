@@ -90,6 +90,7 @@ nv::spi::bm::SpiStatus Driver::transfer(nv::spi::bm::CsPins      cs,
 
     _is_busy            = true;
     _result.flags       = flags;
+    _result.status      = nv::spi::bm::SpiStatus::Ok;
     _result.read_length = read_length;
 
     const uint32_t data_size = std::max<uint32_t>(read_length,
@@ -111,6 +112,7 @@ nv::spi::bm::SpiStatus Driver::transfer(nv::spi::bm::CsPins      cs,
     status_t Status = kStatus_Success;
     if constexpr (nv::spi::WaitGpioSpiWar) {
         _is_wait_gpio_transaction = read_length > 0;
+        _wait_gpio_timeout_active = false;
         _wait_gpio_flags.store((_is_wait_gpio_transaction && send_buffer.size() == 0)
                                    ? WaitGpioEvents::WriteDone
                                    : 0,
@@ -130,9 +132,6 @@ nv::spi::bm::SpiStatus Driver::transfer(nv::spi::bm::CsPins      cs,
                 }
                 return nv::spi::bm::SpiStatus::EventXferFail;
             }
-            // Need to deassert CS during downtime between write and read to avoid bus
-            // contention
-            deassert_all_cs();
         }
     }
     else {
@@ -168,7 +167,9 @@ void Driver::callback(status_t sdk_status)
         if (_is_wait_gpio_transaction) {
             if ((_wait_gpio_flags.load(std::memory_order_acquire) & WaitGpioEvents::ReadDone)
                 != WaitGpioEvents::ReadDone) {
+                // Need to deassert CS between write and read to avoid bus contention
                 deassert_cs(_current_cs);
+                _wait_gpio_timeout_active = false;
                 _wait_gpio_flags.fetch_or(WaitGpioEvents::WriteDone, std::memory_order_acq_rel);
                 try_read_after_wait();
                 return;
@@ -197,10 +198,55 @@ void Driver::spi_gpio_wait_complete()
 {
     if constexpr (nv::spi::WaitGpioSpiWar) {
         if (_is_wait_gpio_transaction) {
+            _wait_gpio_timeout_active = false;
             _wait_gpio_flags.fetch_or(WaitGpioEvents::GpioWaitDone, std::memory_order_acq_rel);
             try_read_after_wait();
         }
     }
+}
+
+void Driver::check_gpio_wait_timeout(uint32_t now_ms, uint32_t timeout_ms)
+{
+    if constexpr (nv::spi::WaitGpioSpiWar) {
+        if (timeout_ms == 0U) {
+            _wait_gpio_timeout_active = false;
+            return;
+        }
+
+        if (!is_gpio_wait_pending()) {
+            return;
+        }
+
+        if (!_wait_gpio_timeout_active) {
+            _wait_gpio_timeout_active = true;
+            _wait_gpio_start_ms       = now_ms;
+            return;
+        }
+
+        if ((now_ms - _wait_gpio_start_ms) < timeout_ms) {
+            return;
+        }
+
+        _wait_gpio_timeout_active = false;
+        _is_wait_gpio_transaction = false;
+        _wait_gpio_flags.store(0U, std::memory_order_release);
+        _result.status = nv::spi::bm::SpiStatus::EventTimeout;
+        deassert_cs(_current_cs);
+        APP_EVENT_SET(*_event, _event_bit);
+    }
+}
+
+bool Driver::is_gpio_wait_pending() const
+{
+    if constexpr (nv::spi::WaitGpioSpiWar) {
+        const uint8_t flags = _wait_gpio_flags.load(std::memory_order_acquire);
+        return _is_busy && _is_wait_gpio_transaction
+            && ((flags & WaitGpioEvents::WriteDone) != 0U)
+            && ((flags & WaitGpioEvents::GpioWaitDone) == 0U)
+            && ((flags & WaitGpioEvents::ReadDone) == 0U);
+    }
+
+    return false;
 }
 
 bool Driver::is_busy()
@@ -214,6 +260,7 @@ void Driver::try_read_after_wait()
         uint8_t expected = WaitGpioEvents::Ready;
         if (_wait_gpio_flags.compare_exchange_strong(
                 expected, WaitGpioEvents::ReadDone, std::memory_order_acq_rel)) {
+            _wait_gpio_timeout_active = false;
             deassert_all_cs();
             assert_cs(_current_cs);
 

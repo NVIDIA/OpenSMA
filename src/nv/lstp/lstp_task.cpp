@@ -21,15 +21,17 @@
 #include <bit>
 #include <chrono>
 #include <cstring>
+#include <span>
 #include <task.h>
 
 #include "nv/bootloader.h"
 #include "nv/gpio/common.h"
 #include "nv/gpio/driver.h"
-#include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/nv.h"
 #include "nv/usb/task.h"
+#include "sys/ipc/supervisor.h"
 #include NV_IPC_CONFIG_H
 
 namespace nv::lstp {
@@ -91,12 +93,10 @@ void LstpTask::entrypoint(void* params)
     _irq_config.fill(LstpGpioIrqConfig::IrqDisabled);
 
     nv::bootloader::Driver::set_task_booted(_boot_event);
-    auto& event = nv::ipc::Event::make(nv::ipc::EventId::Lstp);
 
     // coverity[no_escape] should never leave here
     while (true) {
-        constexpr auto wait   = LstpTask::GpioReqBit | LstpTask::GpioIrqBit;
-        auto           result = event.wait(wait, true, false);
+        auto result = nv::ipc::TaskNotify::wait(nv::ipc::TaskNotify::Usecs::max(), true);
         if (!result.has_value()) {
             continue;
         }
@@ -127,8 +127,7 @@ LstpStatus LstpTask::submit_gpio_req(std::span<uint8_t>& req_buffer)
         return LstpStatus::Error;
     }
 
-    auto& event = nv::ipc::Event::make(nv::ipc::EventId::Lstp);
-    (void)event.set(GpioReqBit);
+    (void)nv::ipc::TaskNotify::send(nv::ipc::TaskId::Lstp, GpioReqBit);
     return LstpStatus::Success;
 }
 
@@ -205,7 +204,7 @@ void LstpTask::process_gpio_req()
                 }
                 const auto&         pin_info = PinConfigs.at(req.gpio_index);
                 nv::gpio::Direction dir{};
-                nv::gpio::Driver::getDirection(pin_info.port, pin_info.pin, dir);
+                gpio_get_direction(pin_info, dir);
                 if (dir != nv::gpio::Direction::Output) {
                     send_resp(0, LstpStatus::Error);
                     return;
@@ -250,10 +249,17 @@ void LstpTask::process_gpio_req()
             }
             const auto& [port, pin, pin_config, allow_set_irq, _] = PinConfigs.at(
                 req.gpio_index);
-            (void)pin_config;
             if (!allow_set_irq) {
                 send_resp(0, LstpStatus::NotSupported);
                 return;
+            }
+            if (port == nv::gpio::vrPort) {
+                if (pin_config.direction != LstpGpioDirection::Input) {
+                    send_resp(0, LstpStatus::Error);
+                    return;
+                }
+                _irq_config.at(req.gpio_index) = req.irq_type;
+                break;
             }
             nv::gpio::Direction dir{};
             nv::gpio::Driver::getDirection(port, pin, dir);
@@ -268,13 +274,15 @@ void LstpTask::process_gpio_req()
                     break;
                 }
             }
-            const nv::gpio::InterruptDetection irq_det = InterruptDetection_from(req.irq_type);
+            const auto                         prev_irq = _irq_config.at(req.gpio_index);
+            const nv::gpio::InterruptDetection irq_det  = InterruptDetection_from(req.irq_type);
+            _irq_config.at(req.gpio_index)              = req.irq_type;
             auto gpio_status = nv::gpio::Driver::init_interrupt(port, pin, irq_det, irq_sel);
             if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
+                _irq_config.at(req.gpio_index) = prev_irq;
                 send_resp(0, LstpStatus_from(gpio_status));
                 return;
             }
-            _irq_config.at(req.gpio_index) = req.irq_type;
             break;
         }
         default: send_resp(0, LstpStatus::NotSupported); return;
@@ -295,20 +303,23 @@ void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
 
     uint8_t     value    = 0;
     const auto& pin_info = PinConfigs.at(gpio_idx);
-    gpio_read(pin_info.port, pin_info.pin, value);
+    if (LstpStatus_from(gpio_read(pin_info.port, pin_info.pin, value)) != LstpStatus::Success) {
+        return;
+    }
 
     LstpGpioIrqEventRequest req{};
     req.gpio_index = gpio_idx;
     req.value      = static_cast<LstpGpioState>(value);
 
-    auto item   = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&req), sizeof(req));
-    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::LstpGpioIrq).send_isr(item);
+    auto  item   = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&req), sizeof(req));
+    auto& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::LstpGpioIrq);
+    auto  status = sys::ipc::is_in_isr() ? queue.send_isr(item)
+                                         : queue.send(item, std::chrono::microseconds(0));
     if (status != nv::ipc::Queue::Status::Ok) {
         return;  // queue full, drop event
     }
 
-    auto& event = nv::ipc::Event::make(nv::ipc::EventId::Lstp);
-    (void)event.set(GpioIrqBit);
+    (void)nv::ipc::TaskNotify::send(nv::ipc::TaskId::Lstp, GpioIrqBit);
 }
 
 void LstpTask::process_gpio_irq()
@@ -325,23 +336,33 @@ void LstpTask::process_gpio_irq()
     }
 
     while (irq_queue.size() > 0) {
-        if (irq_queue.recv(item, std::chrono::microseconds(0)) != nv::ipc::Queue::Status::Ok) {
+        std::array<uint8_t, nv::ipc::UsbLstpMsgSize> irq_buffer{};
+        auto&                                        irq_hdr = from<LstpHdr>(irq_buffer.data());
+        irq_hdr.channel_id                                   = ch_id;
+        irq_hdr.cmd_status_code = static_cast<uint8_t>(LstpGpioCommand::IrqEvent);
+        size_t payload_offset   = sizeof(LstpHdr);
+
+        while (irq_queue.size() > 0
+               && payload_offset + sizeof(LstpGpioIrqEventRequest) <= nv::ipc::UsbLstpMsgSize) {
+            if (irq_queue.recv(item, std::chrono::microseconds(0))
+                != nv::ipc::Queue::Status::Ok) {
+                break;
+            }
+            if (!LstpGpioIrqEventMatches(_irq_config.at(event.gpio_index), event.value)) {
+                continue;
+            }
+            auto& req       = from<LstpGpioIrqEventRequest>(&irq_buffer.data()[payload_offset]);
+            req             = event;
+            payload_offset += sizeof(LstpGpioIrqEventRequest);
+        }
+
+        const size_t payload_len = payload_offset - sizeof(LstpHdr);
+        if (payload_len == 0) {
             break;
         }
-        if (event.value == LstpGpioState::High
-            && !(_irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Rising
-                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::BothEdge
-                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::High)) {
-            continue;
-        }
-        if (event.value == LstpGpioState::Low
-            && !(_irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Falling
-                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::BothEdge
-                 || _irq_config.at(event.gpio_index) == LstpGpioIrqConfig::Low)) {
-            continue;
-        }
-        LstpRouter::send_gpio_irq_event(
-            ch_id, event.gpio_index, static_cast<uint8_t>(event.value));
+        irq_hdr.len_lsb = static_cast<uint8_t>(payload_len & LSB_MASK);
+        irq_hdr.len_msb = static_cast<uint8_t>(payload_len >> BYTE1_SHIFT);
+        LstpRouter::send_gpio(irq_buffer);
     }
 }
 }  // namespace nv::lstp

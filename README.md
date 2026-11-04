@@ -36,20 +36,20 @@ ln -sf /usr/bin/make corepdk/ubs/bin/make
 7. Move *gnat_arm_elf_14.2.1_524d4d41* into `libexec/toolchain/`
 
 ## Prepare SDK ##
-1. Download Processors MCXN556S SDK version 25.09.00 from https://mcuxpresso.nxp.com/en
+1. Download Processors MCXN556S SDK version 25.09.02 from https://mcuxpresso.nxp.com/en
     * Host OS: Linux
     * Toolchain/IDE: All toolchains
     * Select all middlewares
-2. Extract *25.09.00 SDK* into `libexec/sdk/SDK_25_09_00_MCXN556S`
+2. Extract *25.09.02 SDK* into `libexec/sdk/SDK_25_09_02_MCXN556S`
 ```
-mkdir -p libexec/sdk/SDK_25_09_00_MCXN556S
-tar -xvzf SDK_25_09_00_MCXN556S.tar.gz -C libexec/sdk/SDK_25_09_00_MCXN556S
+mkdir -p libexec/sdk/SDK_25_09_02_MCXN556S
+tar -xvzf SDK_25_09_02_MCXN556S.tar.gz -C libexec/sdk/SDK_25_09_02_MCXN556S
 ```
 
 ## Patch SDK ##
 ### MCU SDK ###
 ```
-cd libexec/sdk/SDK_25_09_00_MCXN556S
+cd libexec/sdk/SDK_25_09_02_MCXN556S
 xz -dc ../../patch/mcu.patch.xz | patch -p1 -N
 ```
 

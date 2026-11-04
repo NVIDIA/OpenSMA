@@ -17,8 +17,7 @@
  */
 #pragma once
 
-#include <array>
-#include <cstdint>
+#include "nv/emulation/emulation_device.h"
 #include "sys/i2c/i2c_slave.h"
 
 namespace nv::emulation {
@@ -43,7 +42,7 @@ namespace nv::emulation {
  * - Routing I2C operations to this emulator
  */
 
-class At24c01
+class At24c01 : public EmulationDevice
 {
 public:
     // Internal Constants
@@ -67,13 +66,6 @@ public:
     At24c01();
 
     /**
-     * @brief Default destructor for AT24C01 emulator
-     *
-     * Provides proper cleanup of the emulator instance.
-     */
-    ~At24c01() = default;
-
-    /**
      * @brief Handle I2C read operation
      *
      * Reads a byte from the current memory address and increments the internal
@@ -84,7 +76,7 @@ public:
      * @param new_transaction Indicates if this is a new I2C transaction (unused in current
      * implementation)
      */
-    void i2c_read(uint8_t& return_data, bool new_transaction);
+    void i2c_read(uint8_t& return_data, bool new_transaction) override;
 
     /**
      * @brief Handle I2C write operation
@@ -102,7 +94,7 @@ public:
      * @param data_length Number of bytes to write (including address byte)
      */
     void i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
-                   uint8_t                                                  data_length);
+                   uint8_t data_length) override;
 
     /**
      * @brief Get the current memory contents

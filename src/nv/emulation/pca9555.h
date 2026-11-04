@@ -17,6 +17,7 @@
  */
 #pragma once
 
+#include "nv/emulation/emulation_device.h"
 #include "sys/i2c/i2c_slave.h"
 
 /*
@@ -54,11 +55,14 @@ enum Pca9555Bank
     One
 };
 
-class Pca9555
+class Pca9555 final : public EmulationDevice
 {
 public:
     // Public Functions
     // ---------------------------------------------
+
+    // default constructor
+    Pca9555();
 
     // Constructor for PCA9555 initialization with required configuration masks.
     //     initial_input_values initializes pin states.
@@ -68,18 +72,21 @@ public:
             uint16_t required_output_mask = 0x0000,
             uint16_t required_input_mask  = 0x0000);
 
-    // default constructor
-    Pca9555();
+    // Re-apply the configuration above on an existing instance (e.g. after default
+    // construction).
+    void configure(uint16_t initial_input_values,
+                   uint16_t required_output_mask = 0x0000,
+                   uint16_t required_input_mask  = 0x0000);
 
     // Reads the active register value.
     // Handles new transactions and interrupts (clearing interrupt upon read).
     // Parent task must pull and manage interrupt changes afterwards.
-    void i2c_read(uint8_t& return_data, bool new_transaction);
+    void i2c_read(uint8_t& return_data, bool new_transaction) override;
 
     // Handles I2C write to the device.
     // Parent task must pull and manage interrupts and output changes afterwards.
-    void i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
-                   uint8_t                                            data_length);
+    void i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                   uint8_t data_length) override;
 
     // Updates GPIO input pins specified by `pin_mask` to the values in `target_pin_values`.
     // - Pins configured as outputs will not be modified and will trigger an error if included

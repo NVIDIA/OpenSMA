@@ -40,3 +40,14 @@ Timer& Timer::make(TimerId id, microseconds period, Callback cb, bool reload) no
     obj->obj_is_allocated = true;
     return *obj;
 }
+
+Timer::Status Timer::reset_by_id(TimerId id)
+{
+    nv::always_assert(common::is_in_range(id));
+
+    auto* obj_mem = Supervisor::inst().memory_for(id);
+    if ((obj_mem == nullptr) || (obj_mem->obj_is_allocated == 0U)) {
+        return Status::InvalidOperation;
+    }
+    return obj_mem->reset();
+}

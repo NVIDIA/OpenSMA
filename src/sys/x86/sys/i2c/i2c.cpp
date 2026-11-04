@@ -58,6 +58,11 @@ bool Driver::get_status([[maybe_unused]] uint8_t address)
     return true;
 }
 
+bool Driver::ping([[maybe_unused]] uint8_t address)
+{
+    return true;
+}
+
 nv::i2c::I2cStatus Driver::i2c_read([[maybe_unused]] uint8_t            address,
                                     [[maybe_unused]] std::span<uint8_t> buffer,
                                     [[maybe_unused]] nv::i2c::I2cFlags  flags)

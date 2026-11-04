@@ -22,6 +22,7 @@
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
+#include "nv/ipc/timer.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/spi/common.h"
 #include "nv/spi/port.h"
@@ -50,6 +51,10 @@ public:
         nv::ipc::BootedEventBits boot_event;
         bool                     overwrite_freq;
         uint8_t                  freq;
+        // AP-status (EROT 0x63 liveness) timer to reset whenever this SPI bus carries EROT
+        // traffic, so the recovery-mode probe is deferred while the EROT is actively driven
+        // over SPI (PLDM update / log read). End = feature disabled.
+        nv::ipc::TimerId ap_status_timer_id;
         Config(nv::ipc::TaskId          task_id_,
                std::string_view         task_name_,
                MasterDevice             master_device_,
@@ -63,7 +68,8 @@ public:
                nv::ipc::QueueId         queue_id_,
                nv::ipc::BootedEventBits boot_event_,
                bool                     overwrite_freq_,
-               uint8_t                  freq_)
+               uint8_t                  freq_,
+               nv::ipc::TimerId         ap_status_timer_id_ = nv::ipc::TimerId::End)
         : task_id(task_id_)
         , task_name(task_name_)
         , master_device(master_device_)
@@ -78,6 +84,7 @@ public:
         , boot_event(boot_event_)
         , overwrite_freq(overwrite_freq_)
         , freq(freq_)
+        , ap_status_timer_id(ap_status_timer_id_)
         {}
     };
 
@@ -118,6 +125,10 @@ private:
     Spb                      _spb;
     nv::perf_mon::OobBus     _oob_bus;
 
+    // Reset the EROT 0x63 liveness probe timer whenever this SPI bus carries EROT traffic,
+    // so the recovery-mode probe is deferred while the EROT is actively driven over SPI.
+    void defer_ap_status_probe();
+
     constexpr static bool EnableMctpOverSpiDebugLog = false;
 
     void handle_rx();
@@ -125,5 +136,7 @@ private:
     void handle_update_routing_table();
 
     void forward(Buffer& buffer);
+
+    nv::ipc::TimerId _ap_status_timer_id{nv::ipc::TimerId::End};
 };
 }  // namespace nv::spi

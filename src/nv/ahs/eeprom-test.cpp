@@ -24,29 +24,19 @@ using namespace ut;
 
 /**
  * @brief Unit test fixture for testing AHS EEPROM functionality
- * 
+ *
  * This test class provides test cases for verifying the AHS EEPROM
  * implementation, including constructor behavior, I2C read/write operations,
  * and memory initialization with AHS configuration values.
+ *
+ * Three EEPROM instances for testing:
+ * - Default constructor EEPROM
+ * - EEPROM with IO expander address 0x50
+ * - EEPROM with IO expander address 0x52 and single SSD configuration
  */
 class eepromtest : public ut::Fixture
 {
 public:
-    /**
-     * @brief Sets up test fixtures before each test case
-     *
-     * Initializes three EEPROM instances for testing:
-     * - Default constructor EEPROM
-     * - EEPROM with IO expander address 0x50
-     * - EEPROM with IO expander address 0x52 and single SSD configuration
-     */
-    void setup() override
-    {
-        //eeprom = ahs::EEPROM();
-        ahs_eeprom = ahs::EEPROM(0x50U);
-        ahs_eeprom2 = ahs::EEPROM(0x52U, ahs::IO_EXPANDER_ONE_SSD);
-    }
-
     /**
      * @brief Cleans up test fixtures after each test case
      *
@@ -58,10 +48,10 @@ public:
 public:
     /** @brief Default EEPROM instance for testing default constructor */
     ahs::EEPROM eeprom;
-    /** @brief EEPROM instance with IO expander address 0x50 for testing */
-    ahs::EEPROM ahs_eeprom;
-    /** @brief EEPROM instance with IO expander address 0x52 and single SSD config */
-    ahs::EEPROM ahs_eeprom2;
+    /** @brief EEPROM instance with IO expander address 0x50 */
+    ahs::EEPROM ahs_eeprom{0x50U};
+    /** @brief EEPROM instannce with IO expander address 0x52 and single SSD configuration */
+    ahs::EEPROM ahs_eeprom2{0x52U, ahs::IO_EXPANDER_ONE_SSD};
 };
 
 /**

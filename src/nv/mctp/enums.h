@@ -363,11 +363,11 @@ typedef enum
     L4verifyL5CertFail                = 18,
     InvalidTemplate                   = 19,
     NpdsFmcNumericVersionReadFail     = 20,
-#ifdef EDGELOCK2GO_CERT
-    OtpL4SerialNumberReadFail       = 21,
-    OtpL4SerialNumberProgrammedFail = 22,
-    OtpL4SerialNumberCheckFail      = 23,
-#endif
+    OtpL4SerialNumberReadFail         = 21,
+    OtpL4SerialNumberProgrammedFail   = 22,
+    OtpL4SerialNumberCheckFail        = 23,
+    NpdsDdaOrdinalReadFail            = 24,
+    NpdsDdaOrdinalSetFail             = 25,
 } ProgramCertificateStatus;
 
 // NVIDIA TYPE 2 PciLinks Command Code

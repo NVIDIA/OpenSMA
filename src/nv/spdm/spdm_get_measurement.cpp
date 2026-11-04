@@ -429,10 +429,13 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
                 copy_identity_view.begin(), copy_identity_view.end(), output_buffer.begin());
 
         } break;
-        case MeasApFirmwareHash: {
+        case MeasAp1FirmwareHash:
+        case MeasAp2FirmwareHash: {
             auto& hash_data = *std::bit_cast<
                 std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            nv::spdm::ap_measurement::get_ap_firmware_hash(hash_data);
+            const auto ap_id = index == MeasAp1FirmwareHash ? nv::vrot::ApId::AP0
+                                                            : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_firmware_hash(ap_id, hash_data);
         } break;
         case MeasApRollbackFuses: {
             auto& ap_rollback_fuse_value = *std::bit_cast<uint32_t*>(buffer);
@@ -442,22 +445,48 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
             auto& key_revocation_fuse_value = *std::bit_cast<uint32_t*>(buffer);
             nv::spdm::ap_measurement::get_ap_key_revocation_fuses(key_revocation_fuse_value);
         } break;
-        case MeasApMetadataHash: {
+        case MeasAp1MetadataHash:
+        case MeasAp2MetadataHash: {
             auto& hash_data = *std::bit_cast<
                 std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            nv::spdm::ap_measurement::get_ap_metadata_hash(hash_data);
+            const auto ap_id = index == MeasAp1MetadataHash ? nv::vrot::ApId::AP0
+                                                            : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_metadata_hash(ap_id, hash_data);
         } break;
-        case MeasApFirmwareSecurityVersion: {
-            auto& security_version = *std::bit_cast<uint64_t*>(buffer);
-            nv::spdm::ap_measurement::get_ap_firmware_security_version(security_version);
+        case MeasAp1FirmwareSecurityVersion:
+        case MeasAp2FirmwareSecurityVersion: {
+            auto&      security_version = *std::bit_cast<uint64_t*>(buffer);
+            const auto ap_id = index == MeasAp1FirmwareSecurityVersion ? nv::vrot::ApId::AP0
+                                                                       : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_firmware_security_version(ap_id, security_version);
         } break;
-        case MeasApFirmwareVersion: {
+        case MeasAp1FirmwareVersion:
+        case MeasAp2FirmwareVersion: {
             auto& firmware_version = *std::bit_cast<nv::fw_parser::ap::ApFwVersion*>(buffer);
-            nv::spdm::ap_measurement::get_ap_firmware_version(firmware_version);
+            const auto ap_id       = index == MeasAp1FirmwareVersion ? nv::vrot::ApId::AP0
+                                                                     : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_firmware_version(ap_id, firmware_version);
         } break;
-        case MeasApBootStatus: {
-            auto& authenticated_status = *std::bit_cast<uint8_t*>(buffer);
-            nv::spdm::ap_measurement::get_ap_authenticated_status(authenticated_status);
+        case MeasAp1BootStatus:
+        case MeasAp2BootStatus: {
+            auto&      boot_status = *std::bit_cast<uint8_t*>(buffer);
+            const auto ap_id       = index == MeasAp1BootStatus ? nv::vrot::ApId::AP0
+                                                                : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_boot_status(ap_id, boot_status);
+        } break;
+        case MeasAp1ChipId:
+        case MeasAp2ChipId: {
+            auto&      chip_id = *std::bit_cast<nv::vrot::ApMeasurementChipId*>(buffer);
+            const auto ap_id   = index == MeasAp1ChipId ? nv::vrot::ApId::AP0
+                                                        : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_chip_id(ap_id, chip_id);
+        } break;
+        case MeasAp1FuseMask:
+        case MeasAp2FuseMask: {
+            auto&      fuse_mask = *std::bit_cast<uint32_t*>(buffer);
+            const auto ap_id     = index == MeasAp1FuseMask ? nv::vrot::ApId::AP0
+                                                            : nv::vrot::ApId::AP1;
+            nv::spdm::ap_measurement::get_ap_fuse_mask(ap_id, fuse_mask);
         } break;
 
         case MeasApType: {
@@ -475,17 +504,12 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         }
         case MeasReservedIndex3:
         case MeasReservedIndex20:
-        case MeasReservedIndex22:
         case MeasReservedIndex23:
         case MeasReservedIndex24:
         case MeasReservedIndex25:
         case MeasReservedIndex34:
-        case MeasReservedIndex35:
-        case MeasReservedIndex36:
         case MeasReservedIndex37:
-        case MeasReservedIndex40:
-        case MeasReservedIndex42:
-        case MeasReservedIndex45: {
+        case MeasReservedIndex40: {
             // type 0x82/0x83: (meas_type & 0x80) == 0x80 → preserved value
             using Reserved1b                     = std::array<uint8_t, 1>;
             Reserved1b&       input_reserved     = *std::bit_cast<Reserved1b*>(buffer);
@@ -498,14 +522,10 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex6:
         case MeasReservedIndex7:
         case MeasReservedIndex8:
-        case MeasReservedIndex10:
         case MeasReservedIndex11:
         case MeasReservedIndex12:
-        case MeasReservedIndex27:
-        case MeasReservedIndex28:
         case MeasReservedIndex29:
         case MeasReservedIndex30:
-        case MeasReservedIndex32:
         case MeasReservedIndex33:
         case MeasReservedIndex46:
         case MeasReservedIndex47:
@@ -651,13 +671,18 @@ void update_dbg_token_nonce_meas()
     if (!pds_valid || !success) {
         // get a new nonce
         spdm_get_and_save_dbg_token_nonce(MeasDebugTokenTlvConfiguration, nonce_status);
+        if (nonce_status) {
+            // Read back the new PDS nonce so RAM uses the same value as the token request.
+            success      = get_pds_dbg_token_nonce(nonce);
+            nonce_status = success;
+        }
     }
 
     // mark the nonce in static memory measurement record as valid or invalid
     debugtoken::dbg_token_nonce_meas_valid = nonce_status;
 
     // Update DTconfig with the current nonce if we successfully got it
-    if (success && pds_valid) {
+    if (success) {
         std::copy(nonce.begin(),
                   nonce.end(),
                   static_cast<uint8_t*>(debugtoken::DTconfig.nonce.value));

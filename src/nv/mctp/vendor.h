@@ -59,6 +59,8 @@ protected:
     void on_query_ap_provision_status(const Packet& rx, Packet& tx) const;
     void on_download_coverage(const Packet& rx, Packet& tx) const;
     void on_fan_control(const Packet& rx, Packet& tx) const;
+    void on_get_key_exchange_info(const Packet& rx, Packet& tx) const;
+    void on_install_exchanged_key(const Packet& rx, Packet& tx) const;
 
     void action_background_copy(const Packet& rx, Packet& tx) const;
 

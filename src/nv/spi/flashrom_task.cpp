@@ -54,7 +54,7 @@ FlashromTask::FlashromTask(Config config) noexcept
 , _flashrom(*config.edma_driver)
 {
     _flashrom.bind(config.flexcomm_id,
-                   nv::ipc::EventId::Spi0EdmaDriverEvent,
+                   config.task_id,
                    config.cs_port_id,
                    config.cs_pin_id,
                    config.cs1_port_id,

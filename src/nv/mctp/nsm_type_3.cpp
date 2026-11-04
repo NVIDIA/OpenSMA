@@ -640,17 +640,7 @@ TelemetryValue getPowerTelemetry(const uint8_t sensorId)
     else {
         switch (sensorId) {
             case Type3PowerSensors::Power_Gpu1:
-            case Type3PowerSensors::Power_Gpu2: {
-                auto cacheId = nv::telemetry::getTelemIdFromPowerSensorId(sensorId);
-                if (cacheId == nv::telemetry::TelemId::MaxItem) {
-                    return TelemetryInvalid;
-                }
-                nv::telemetry::Cache& telemetry = nv::telemetry::Cache::inst();
-                (void)telemetry.get_table();
-                // gets corresponding sensor id in Cache
-                telemetry_value = telemetry.get_cache(cacheId);
-                break;
-            }
+            case Type3PowerSensors::Power_Gpu2:
             case Type3PowerSensors::PowerHsc:
             case Type3PowerSensors::PowerHsc_2:
             case Type3PowerSensors::PowerHsc_3:

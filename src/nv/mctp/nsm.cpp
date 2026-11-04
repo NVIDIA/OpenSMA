@@ -41,7 +41,7 @@
 #include "nv/nv.h"
 #include "nv/pldm/task.h"
 #include "nv/vrot/ap_background_copy.h"
-#include "nv/vrot/interface/types.h"
+#include "nv/vrot/interface/interface.h"
 #include NV_IPC_CONFIG_H
 #include "nv/iox/task.h"
 #include "sys/flash/flash_config.h"
@@ -84,7 +84,8 @@ bool mctp::Nsm::can_revoke_otp(Rcode& reason_code)
 
     // Check PdsUpdateState
     if (flash::Flash::get_data(flash::Key::PdsUpdateState, state) != flash::Status::Ok
-        || state != static_cast<flash::Data>(bootloader::Driver::State::Idle)) {
+        || (state != static_cast<flash::Data>(bootloader::Driver::State::Idle)
+            && state != static_cast<flash::Data>(bootloader::Driver::State::Complete))) {
         reason_code = Rcode::ErrorPldmProcessing;
         return false;
     }
@@ -135,7 +136,15 @@ bool mctp::Nsm::can_initiate_image_copy(Ccode& completion_code, Rcode& reason_co
     flash::Data allow_bg_copy{};
     flash_status = flash::Flash::get_data(flash::Key::NpdsAllowInitBackgroundCopy,
                                           allow_bg_copy);
-    if (flash_status != flash::Status::Ok || allow_bg_copy == 0) {
+
+    if (flash_status != flash::Status::Ok) {
+        // NpdsAllowInitBackgroundCopy is not set -> BootStatusMask not all set
+        completion_code = Ccode::ErrorInvalidStateForCommand;
+        reason_code     = Rcode::NoBootComplete;
+        return false;
+    }
+
+    if (allow_bg_copy == 0) {
         // Check bg copy status
         nv::flash::ProgressPercent progress{};
         flash_status = flash::Flash::background_copy_query(progress);
@@ -150,14 +159,18 @@ bool mctp::Nsm::can_initiate_image_copy(Ccode& completion_code, Rcode& reason_co
             return false;
         }
         else if (flash_status == flash::Status::BackgroundCopyFailed) {
-            completion_code = Ccode::ErrorGeneral;
-            reason_code     = Rcode::Null;
             // allow bg copy to do again when failure
             return true;
         }
+        // NpdsAllowInitBackgroundCopy will be set to 0 when both slots are identical
+        else if (flash_status == flash::Status::BackgroundCopyIdle) {
+            completion_code = Ccode::ErrorInvalidStateForCommand;
+            reason_code     = Rcode::ImageCopyCompleted;
+            return false;
+        }
         // Should not happen
-        completion_code = Ccode::ErrorInvalidStateForCommand;
-        reason_code     = Rcode::ImageCopyInProgress;
+        completion_code = Ccode::ErrorGeneral;
+        reason_code     = Rcode::Null;
         return false;
     }
 
@@ -2998,9 +3011,12 @@ void mctp::Nsm::update_min_sec_ver_num(const Packet&          rx,
         }
     }
 
-    // revoke rollback otp only if input_min_svn > min_svn_data
-    // If input_min_svn <= min_svn_data, will not revoke rollback otp but also doesn't mean
-    // failed
+    if (RequestType == UpdateKeySpecifiedValue && input_min_svn < min_svn_data) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    // Equal values are ignored; higher values update the rollback-protection OTP.
     if (input_min_svn > min_svn_data) {
         if (revoke_rollback_protection((uint32_t)input_min_svn) != Ccode::Success) {
             fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
@@ -3072,9 +3088,12 @@ void mctp::Nsm::update_ap_min_sec_ver_num(const Packet&          rx,
         return;
     }
 
-    // revoke rollback otp only if input_min_svn > min_svn_data
-    // If input_min_svn <= min_svn_data, will not revoke rollback otp but also doesn't mean
-    // failed
+    if (RequestType == UpdateKeySpecifiedValue && input_min_svn < min_svn_data) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    // Equal values are ignored; higher values update the rollback-protection OTP.
     if (input_min_svn > min_svn_data) {
         if (revoke_ap_rollback_protection((uint32_t)input_min_svn) != Ccode::Success) {
             fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
@@ -3318,7 +3337,7 @@ void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
     Ccode      completion_code = Ccode::Success;
     Rcode      reason_code     = Rcode::Null;
     const bool can_initiate    = ap_target ? can_initiate_ap_image_copy(
-                                              *ap_target, completion_code, reason_code)
+                                              ap_target.value(), completion_code, reason_code)
                                            : can_initiate_image_copy(completion_code, reason_code);
     if (!can_initiate) {
         fill_error_packet_v2(completion_code, reason_code, rx, tx);
@@ -3328,9 +3347,9 @@ void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
     if constexpr (!nv::vrot::ApList.empty()) {
         if (ap_target) {
             const auto start_status = nv::vrot::ap_background_copy::start(
-                *ap_target,
-                nv::vrot::ap_background_copy::Slot0,
-                nv::vrot::ap_background_copy::Slot1);
+                ap_target.value(),
+                nv::vrot::active_slot(ap_target.value()),
+                nv::vrot::inactive_slot(ap_target.value()));
             if (start_status != nv::flash::Status::Ok) {
                 fill_error_packet_v2(
                     Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
@@ -3596,7 +3615,7 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
     // Check if GPIO spoofing error injection is active
     const bool gpio_spoofing_active = is_gpio_spoofing_activate();
 
-    // Virtual and physical GPIOs use the same spoofing path (get_gpi_spoofing_value) when EI
+    // Virtual and physical GPIOs use the same spoofing path (get_gpio_spoofing_value) when EI
     // on. Read GPIOs directly starting from offset
     for (uint16_t i = 0; i < length; i++) {
         const uint16_t gpio_index = offset + i;
@@ -3608,7 +3627,7 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
 
         // Read GPIO value
         uint8_t pin_value = 0;
-        if ((gpio_spoofing_active && get_gpi_spoofing_value(gpio_index, pin_value))
+        if ((gpio_spoofing_active && get_gpio_spoofing_value(gpio_index, pin_value))
             || (nv::gpio::Driver::read_virtual_physical_gpio(port, pin, pin_value)
                 == nv::gpio::Status::Ok)) {
             // Calculate position in response array
@@ -3791,7 +3810,7 @@ bool mctp::Nsm::get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value)
     return true;
 }
 
-bool mctp::Nsm::get_gpi_spoofing_value(uint16_t gpio_index, uint8_t& pin_value)
+bool mctp::Nsm::get_gpio_spoofing_value(uint16_t gpio_index, uint8_t& pin_value)
 {
     // Check if gpio_index is valid
     if (gpio_index >= nv::ipc::GpioSetup.size()) {

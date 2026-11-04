@@ -18,10 +18,13 @@
 
 #include NV_IPC_CONFIG_H
 #include "nhp_config.h"
+#include "board/peripherals.h"
 
 #include "nv/gpio/common.h"
 #include "nv/nv.h"
 #include "nv/ahs/task.h"
+#include "nv/volt_mon/ahs/mcu_internal_temp.h"
+#include "sys/adc/adc.h"
 #include "sys/gpio/constant.h"
 #include "sys/gpio/driver.h"
 
@@ -124,6 +127,26 @@ bool getNhpAdcCallback(uint8_t  peripheral,
 #endif
     }
     return false;
+}
+
+void process_pgood_adc_result(sys::adc::AdcPeripheral             peripheral,
+                              const sys::adc::ADC::AdcConvResult& result)
+{
+    uint8_t nhpInstance   = 0;
+    uint8_t nhpDriveIndex = 0;
+    if (getNhpAdcCallback(peripheral, result.commandIdSource, nhpInstance, nhpDriveIndex)) {
+        nv::ahs::Task::adc_interrupt_callback(result.convValue, nhpInstance, nhpDriveIndex);
+    }
+}
+
+void drain_adc_fifo(sys::adc::AdcPeripheral peripheral, uint8_t fifo_num)
+{
+    sys::adc::ADC::AdcConvResult discard{};
+    while (sys::adc::ADC::get_fifo_count(peripheral, fifo_num) != 0) {
+        if (!sys::adc::ADC::get_adc_reading(peripheral, discard, fifo_num)) {
+            break;
+        }
+    }
 }
 
 extern "C" {
@@ -258,39 +281,72 @@ void GPIO51_IRQHandler()
 
 void ADC_Common_IRQHandler(sys::adc::AdcPeripheral peripheral, uint8_t fifo_num)
 {
-    // nv::debug("ADC_Common_IRQHandler: %d, %d\n", peripheral, fifo_num);
-    // Process all available ADC data from the FIFO, with a max number of iterations
-    const int max_iterations = 1000;
-    int       iterations     = 0;
+    // Generic PGOOD/VMON drain for Trigger 0/1/2 (no MCU-temp CMD15 on these chains).
+    constexpr int MaxIterations = 1000;
+    int           iterations    = 0;
 
     while (sys::adc::ADC::get_fifo_count(peripheral, fifo_num) != 0
-           && iterations++ < max_iterations) {
-        // NOLINTNEXTLINE: value gets modified in pop_fifo below
-        uint16_t value = 0;
-        // NOLINTNEXTLINE: command gets modified in pop_fifo below
-        uint32_t command = 0;
-        if (!sys::adc::ADC::pop_fifo(peripheral, fifo_num, value, command)) {
-            nv::error("Failed to read ADC0 FIFO 0\n");
+           && iterations++ < MaxIterations) {
+        sys::adc::ADC::AdcConvResult result{};
+        if (!sys::adc::ADC::get_adc_reading(peripheral, result, fifo_num)) {
+            nv::error("Failed to read ADC FIFO\n");
             return;
         }
-
-        // NOLINTNEXTLINE: nhpInstance gets modified in getNhpAdcCallback below
-        uint8_t nhpInstance = 0;
-        // NOLINTNEXTLINE: nhpDriveIndex gets modified in getNhpAdcCallback below
-        uint8_t nhpDriveIndex = 0;
-
-        // Ensure that the peripheral and command match a drive in any AHS instance
-        if (getNhpAdcCallback(peripheral, command, nhpInstance, nhpDriveIndex)) {
-            // nv::debug("A%d:%d:%d\n", peripheral, command, value);
-            nv::ahs::Task::adc_interrupt_callback(value, nhpInstance, nhpDriveIndex);
-        }
-        else {
-            // nv::debug("Unrecognized ADC interrupt: Peripheral: %d, Command: %d, Value: %d\n",
-            //          peripheral,
-            //          command,
-            //          value);
-        }
+        process_pgood_adc_result(peripheral, result);
     }
+}
+
+// ADC0 Trigger 3 → FIFO1: fixed batch CMD7, CMD8, CMD15(VBE1), CMD15(VBE8).
+void ADC_Trigger3_IRQHandler(sys::adc::AdcPeripheral peripheral)
+{
+    constexpr uint8_t  Fifo1         = 1U;
+    constexpr uint32_t ExpectedCount = 4U;
+
+    if (sys::adc::ADC::get_fifo_count(peripheral, Fifo1) != ExpectedCount) {
+        nv::error("ADC0 Trig3: unexpected FIFO1 count\n");
+        drain_adc_fifo(peripheral, Fifo1);
+        return;
+    }
+
+    sys::adc::ADC::AdcConvResult result{};
+
+    // 1) CMD7 — SSD6 PGOOD
+    if (!sys::adc::ADC::get_adc_reading(peripheral, result, Fifo1)
+        || result.commandIdSource != ADC0_CMD_VMON_SSD6) {
+        nv::error("ADC0 Trig3: expected CMD7\n");
+        drain_adc_fifo(peripheral, Fifo1);
+        return;
+    }
+    process_pgood_adc_result(peripheral, result);
+
+    // 2) CMD8 — SSD7 PGOOD
+    if (!sys::adc::ADC::get_adc_reading(peripheral, result, Fifo1)
+        || result.commandIdSource != ADC0_CMD_VMON_SSD7) {
+        nv::error("ADC0 Trig3: expected CMD8\n");
+        drain_adc_fifo(peripheral, Fifo1);
+        return;
+    }
+    process_pgood_adc_result(peripheral, result);
+
+    // 3) CMD15 — VBE1
+    if (!sys::adc::ADC::get_adc_reading(peripheral, result, Fifo1)
+        || result.commandIdSource != ADC0_CMD_INTERNAL_TEMP) {
+        nv::error("ADC0 Trig3: expected CMD15 VBE1\n");
+        drain_adc_fifo(peripheral, Fifo1);
+        return;
+    }
+    const uint16_t vbe1 = result.convValue;
+
+    // 4) CMD15 — VBE8
+    if (!sys::adc::ADC::get_adc_reading(peripheral, result, Fifo1)
+        || result.commandIdSource != ADC0_CMD_INTERNAL_TEMP) {
+        nv::error("ADC0 Trig3: expected CMD15 VBE8\n");
+        drain_adc_fifo(peripheral, Fifo1);
+        return;
+    }
+    const uint16_t vbe8 = result.convValue;
+
+    nv::mcu_internal_temp::ahs::accumulate_pair_from_isr(vbe1, vbe8);
 }
 
 // ADC n
@@ -320,10 +376,16 @@ void ADCn_IRQHandler(ADC_Type* baseAddr, uint8_t peripheral)
             ADC_Common_IRQHandler(peripheral, 1U);
         }
         if (trigger & kLPADC_Trigger2CompletedFlag) {
-            ADC_Common_IRQHandler(peripheral, 0U);
+            // ADC1 Trigger 2 → FIFO0: AHS SSD4/SSD5 VMON.
+            if (peripheral == 1U) {
+                ADC_Common_IRQHandler(peripheral, 0U);
+            }
         }
         if (trigger & kLPADC_Trigger3CompletedFlag) {
-            ADC_Common_IRQHandler(peripheral, 1U);
+            // ADC0 Trigger 3 → FIFO1: SSD6/SSD7 PGOOD + CMD15 MCU temp.
+            if (peripheral == 0U) {
+                ADC_Trigger3_IRQHandler(peripheral);
+            }
         }
     }
 }
@@ -344,7 +406,11 @@ void ADC1_IRQHandler()
 
 void projectTryRunAdcTrigger(void)
 {
+    // Publish any completed temp window before starting the next soft-trigger.
+    nv::mcu_internal_temp::ahs::service();
+
     static uint8_t trigger = 0;
+
     switch (trigger) {
         case 0:
             if (sys::adc::ADC::adc_ready(0U)) {

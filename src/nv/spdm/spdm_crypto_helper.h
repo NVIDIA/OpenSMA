@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <variant>
 #include "nv/crypto/aes_gcm.h"
+#include "nv/crypto/ecdh_p384.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "nv/ipc/task.h"
 #include "nv/fw_parser/fw_parser_ap.h"
@@ -54,6 +55,8 @@ typedef enum
     Sha384HashSize = 384 / 8,
     Sha512HashSize = 512 / 8,
 } HashSizeT;
+
+using Sha384Digest = std::array<uint8_t, Sha384HashSize>;
 
 typedef enum
 : uint32_t
@@ -139,17 +142,27 @@ constexpr size_t AesGcmPrimitiveMaxPlaintextBytes = 16;
 constexpr size_t AesGcmPrimitiveTagBytes          = 16;
 constexpr size_t AesGcmPrimitiveMaxOutputBytes    = AesGcmPrimitiveMaxPlaintextBytes
                                                + AesGcmPrimitiveTagBytes;
-constexpr size_t TrngPrimitiveOutputBytes   = 32;
+constexpr size_t TrngPrimitiveMaxOutputBytes   = 32;
+constexpr size_t EcdhP384PrimitiveMaxSaltBytes = 32;
+constexpr size_t EcdhP384PrimitiveMaxInfoBytes = 256;
+constexpr size_t EcdhP384PrimitiveMaxAadBytes  = 256;
+// This primitive unwraps one AES-256 model-weight key.
+constexpr size_t EcdhP384PrimitiveMaxCiphertextBytes = nv::crypto::Aes256KeyBytes;
+
 constexpr size_t CryptoPrimitiveOutputBytes = std::max(
     AesGcmPrimitiveMaxOutputBytes,
-    std::max(PufWrapPrimitiveOutputBytes, TrngPrimitiveOutputBytes));
+    std::max(PufWrapPrimitiveOutputBytes, TrngPrimitiveMaxOutputBytes));
 
 enum class CryptoPrimitiveRequestId : uint32_t
 {
-    TrngGenerate     = 1U,
-    PufWrap          = 2U,
-    PufUnwrap        = 3U,
-    Aes256GcmEncrypt = 4U,
+    TrngGenerate                       = 1U,
+    PufWrap                            = 2U,
+    PufUnwrap                          = 3U,
+    Aes256GcmEncrypt                   = 4U,
+    EcdhP384GenerateKeyPair            = 5U,
+    EcdhP384ClearKeyPair               = 6U,
+    EcdhP384HkdfSha384Aes256GcmDecrypt = 7U,
+    Ecdsa384Sha384Sign                 = 8U,
 };
 
 enum class CryptoPrimitiveQueueType : uint8_t
@@ -163,7 +176,8 @@ struct TrngGenerateRequestParameter
     nv::ipc::TaskId          request_task_id;
     nv::ipc::CoreId          request_core_id;
     uint32_t                 request_id;
-    std::array<uint32_t, 21> reserved;
+    uint32_t                 output_size;
+    std::array<uint32_t, 20> reserved;
 };
 
 struct PufWrapRequestParameter
@@ -196,6 +210,50 @@ struct Aes256GcmEncryptRequestParameter
     alignas(uint32_t) std::array<uint8_t, AesGcmPrimitiveMaxPlaintextBytes> plaintext;
 };
 
+struct EcdhP384GenerateKeyPairRequestParameter
+{
+    nv::ipc::TaskId                request_task_id;
+    nv::ipc::CoreId                request_core_id;
+    uint32_t                       request_id;
+    nv::crypto::EcdhP384PublicKey* public_key;
+};
+
+struct EcdhP384ClearKeyPairRequestParameter
+{
+    nv::ipc::TaskId request_task_id;
+    nv::ipc::CoreId request_core_id;
+    uint32_t        request_id;
+};
+
+struct EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter
+{
+    nv::ipc::TaskId                      request_task_id;
+    nv::ipc::CoreId                      request_core_id;
+    uint32_t                             request_id;
+    const nv::crypto::EcdhP384PublicKey* peer_public_key;
+    const uint8_t*                       salt;
+    uint32_t                             salt_size;
+    const uint8_t*                       info;
+    uint32_t                             info_size;
+    const uint8_t*                       aad;
+    uint32_t                             aad_size;
+    const uint8_t*                       iv;
+    const uint8_t*                       ciphertext;
+    uint32_t                             ciphertext_size;
+    const uint8_t*                       tag;
+    uint8_t*                             plaintext_out;
+    uint32_t                             plaintext_out_size;
+};
+
+struct Ecdsa384Sha384SignRequestParameter
+{
+    nv::ipc::TaskId                             request_task_id;
+    nv::ipc::CoreId                             request_core_id;
+    uint32_t                                    request_id;
+    const Sha384Digest*                         hash;
+    std::array<uint8_t, Ecdsa384SignatureSize>* signature;
+};
+
 struct CryptoPrimitiveResponseParameters
 {
     nv::ipc::TaskId request_task_id;
@@ -211,13 +269,25 @@ using CryptoReqResParameters = std::variant<AuthenticateMcuFirmwareRequestParame
 static_assert(sizeof(CryptoReqResParameters) == nv::ipc::SpdmCryptoHelperQueueSize,
               "the SpdmCryptoHelperQueueSize value shopuld equal to structure size");
 
-using CryptoPrimitiveRequestParameters = std::variant<TrngGenerateRequestParameter,
-                                                      PufWrapRequestParameter,
-                                                      PufUnwrapRequestParameter,
-                                                      Aes256GcmEncryptRequestParameter>;
+using CryptoPrimitiveRequestParameters = std::variant<
+    TrngGenerateRequestParameter,
+    PufWrapRequestParameter,
+    PufUnwrapRequestParameter,
+    Aes256GcmEncryptRequestParameter,
+    EcdhP384GenerateKeyPairRequestParameter,
+    EcdhP384ClearKeyPairRequestParameter,
+    EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter,
+    Ecdsa384Sha384SignRequestParameter>;
 
 CryptoStatus spdm_hash_data(uint8_t* ret, const uint8_t* data, uint32_t data_len);
 CryptoStatus spdm_hash_sha1(uint8_t* ret, const uint8_t* data, uint32_t data_len);
+bool         hmac_sha384(std::span<const uint8_t> key,
+                         std::span<const uint8_t> message,
+                         Sha384Digest&            hmac);
+bool         hkdf_sha384(std::span<const uint8_t> ikm,
+                         std::span<const uint8_t> salt,
+                         std::span<const uint8_t> info,
+                         Sha384Digest&            output);
 CryptoStatus spdm_random_data(uint8_t* data, size_t data_len);
 CryptoStatus
 spdm_ecdsa_sign(uint8_t* signature, size_t sig_size, const uint8_t* hash, size_t hash_size);
@@ -234,6 +304,16 @@ send_authenticate_firmware_request(const nv::vrot::ApInfo&            ap,
                                    nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
                                    uint8_t&                           auth_request_id,
                                    nv::ipc::TaskId request_task_id = nv::ipc::TaskId::Begin);
+
+// SecureBoot supplies a storage slot. SPDM resolves it to the logical
+// authentication target used by the firmware parser and persistence paths.
+CryptoStatus
+send_authenticate_firmware_request(const nv::vrot::ApInfo& ap,
+                                   uint8_t                 slot,
+                                   uint8_t&                auth_request_id,
+                                   nv::ipc::TaskId request_task_id = nv::ipc::TaskId::Begin);
+
+nv::vrot::ApOpErrCode request_runtime_consistency();
 
 CryptoStatus authenticate_ap_firmware(const nv::vrot::ApInfo&            ap,
                                       nv::fw_parser::ap::ParsingApFwType InputParseingApFwType,
@@ -266,6 +346,17 @@ CryptoStatus     aes_256_gcm_encrypt(const nv::crypto::Aes256Key&               
                                      std::span<const uint8_t>                            plaintext,
                                      std::span<uint8_t>                                  ciphertext,
                                      std::span<uint8_t, nv::crypto::AesGcmTagBytes>      tag);
+CryptoStatus     ecdh_p384_generate_key_pair(nv::crypto::EcdhP384PublicKey& public_key);
+CryptoStatus     ecdh_p384_clear_key_pair();
+CryptoStatus     ecdh_p384_hkdf_sha384_aes_256_gcm_decrypt(
+        const nv::crypto::EcdhP384PublicKey&                 peer_public_key,
+        std::span<const uint8_t>                             salt,
+        std::span<const uint8_t>                             info,
+        std::span<const uint8_t>                             aad,
+        std::span<const uint8_t, nv::crypto::AesGcmIvBytes>  iv,
+        std::span<const uint8_t>                             ciphertext,
+        std::span<const uint8_t, nv::crypto::AesGcmTagBytes> tag,
+        std::span<uint8_t>                                   plaintext_out);
 
 template<nv::ipc::TaskId task_id>
 requires(task_id == nv::ipc::TaskId::Pldm)

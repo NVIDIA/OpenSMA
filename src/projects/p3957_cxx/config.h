@@ -53,6 +53,7 @@
 #include "nv/telemetry/utils.h"
 #include "sys/common/common.h"
 #include "nv/iox/common.h"
+#include "nv/i2c/vr_i2c_bus_slot.h"
 #include "nv/pldm/common.h"
 #include "nv/vrot/interface/types.h"
 #include "nv/volt_mon/common.h"
@@ -90,7 +91,7 @@ constexpr auto UartInstance           = NV_UART_INSTANCE;
 namespace nv::lstp {
 
 constexpr uint8_t  LstpNumChannels = (nv::ipc::UartInstance == 2) ? 9 : 10;
-constexpr uint16_t LstpGpioNum     = 8;
+constexpr uint16_t LstpGpioNum     = 8 + 24;
 
 // clang-format off
 constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
@@ -280,6 +281,8 @@ enum class QueueId
     I2c7,
     I2c8,
     I2c9,
+    VrI2c0,
+    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -355,7 +358,6 @@ enum class EventId
     TaskBootStatus,
     TaskAliveStatus,
     Spi0EdmaDriverEvent,
-    Lstp,
     End
 };
 
@@ -388,7 +390,6 @@ constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
     EventInfo{     EventId::TaskBootStatus,                       CoreId::Core0},
     EventInfo{    EventId::TaskAliveStatus,                       CoreId::Core0},
     EventInfo{EventId::Spi0EdmaDriverEvent, get_core_from_task(TaskId::Invalid)},
-    EventInfo{               EventId::Lstp,    get_core_from_task(TaskId::Lstp)},
 };
 
 using ClientInfo = std::tuple<mctp::Client, TaskId>;
@@ -516,6 +517,8 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {               QueueId::I2c7,  16,                                                528,    get_core_from_task(TaskId::I2c7)},
     {               QueueId::I2c8,  16,                                                528,    get_core_from_task(TaskId::I2c8)},
     {               QueueId::I2c9,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {             QueueId::VrI2c0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {             QueueId::VrI2c1,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c1,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
@@ -584,6 +587,7 @@ enum class TimerId
     EndpointStatusChangeStart,
     EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     I2CTargetTimeoutCheck,
+    McuHeartbeat,
     End
 };
 
@@ -623,7 +627,7 @@ constexpr auto make_timer_infos()
     }
 
     infos[idx++] = TimerInfo{TimerId::I2CTargetTimeoutCheck, get_core_from_task(TaskId::I2c0)};
-
+    infos[idx++] = TimerInfo{TimerId::McuHeartbeat, CoreId::Core0};
     return infos;
 }
 }  // namespace
@@ -638,7 +642,9 @@ constexpr inline std::array<I2cTimerInfo, 0> I2cTimerInfos{};
 [[maybe_unused]] constexpr auto MaxQueuesPerTask = 4;
 [[maybe_unused]] constexpr auto MaxEventsPerTask = 4;
 
-constexpr uint8_t GpioNum = 8 + 11 + 10 + 18 + 11 + 8;
+// Physical GPIOs per port (8+11+10+18+11+8) plus 24 virtual (vrPort) amber LED
+// state pins (3 per drive x 8 drives) exposed to the BMC over LSTP.
+constexpr uint8_t GpioNum = 8 + 11 + 10 + 18 + 11 + 8 + 24;
 enum Port : gpio::GpioPort
 {
     GlobalWpPort = nv::gpio::InvalidGpioPort,
@@ -714,7 +720,11 @@ enum Port : gpio::GpioPort
     PCIE_SSD2_PERST_L_PORT = 5,
     MCU_CLKSEL_MODE_PORT   = 5,
     MCU_V_SSD0_DIS_PORT    = 5,
-    MCU_V_SSD1_DIS_PORT    = 5
+    MCU_V_SSD1_DIS_PORT    = 5,
+    // Virtual (vrPort) amber LED state pins. These have no physical GPIO; the
+    // BMC writes them over LSTP and the AHS task decodes them into amber LED
+    // blink patterns for each SSD drive.
+    vSSD_AMBER_PORT = nv::gpio::vrPort
 };
 
 enum Pin : gpio::GpioPin
@@ -792,7 +802,33 @@ enum Pin : gpio::GpioPin
     PCIE_SSD2_PERST_L_PIN = 4,
     MCU_CLKSEL_MODE_PIN   = 5,
     MCU_V_SSD0_DIS_PIN    = 6,
-    MCU_V_SSD1_DIS_PIN    = 7
+    MCU_V_SSD1_DIS_PIN    = 7,
+    // Virtual amber LED state pins (vrPort). Unique pin numbers per vrPort pin;
+    // 3 bits per drive encode the BMC amber state (bit0 = LSB): state = b2<<2 | b1<<1 | b0.
+    vSSD0_AMBER_B0_PIN = 0,
+    vSSD0_AMBER_B1_PIN = 1,
+    vSSD0_AMBER_B2_PIN = 2,
+    vSSD1_AMBER_B0_PIN = 3,
+    vSSD1_AMBER_B1_PIN = 4,
+    vSSD1_AMBER_B2_PIN = 5,
+    vSSD2_AMBER_B0_PIN = 6,
+    vSSD2_AMBER_B1_PIN = 7,
+    vSSD2_AMBER_B2_PIN = 8,
+    vSSD3_AMBER_B0_PIN = 9,
+    vSSD3_AMBER_B1_PIN = 10,
+    vSSD3_AMBER_B2_PIN = 11,
+    vSSD4_AMBER_B0_PIN = 12,
+    vSSD4_AMBER_B1_PIN = 13,
+    vSSD4_AMBER_B2_PIN = 14,
+    vSSD5_AMBER_B0_PIN = 15,
+    vSSD5_AMBER_B1_PIN = 16,
+    vSSD5_AMBER_B2_PIN = 17,
+    vSSD6_AMBER_B0_PIN = 18,
+    vSSD6_AMBER_B1_PIN = 19,
+    vSSD6_AMBER_B2_PIN = 20,
+    vSSD7_AMBER_B0_PIN = 21,
+    vSSD7_AMBER_B1_PIN = 22,
+    vSSD7_AMBER_B2_PIN = 23
 };
 
 using Gpios = std::tuple<gpio::GpioPort, gpio::GpioPin>;
@@ -869,7 +905,33 @@ constexpr inline std::array<Gpios, GpioNum> GpioSetup{
     Gpios{PCIE_SSD2_PERST_L_PORT, PCIE_SSD2_PERST_L_PIN}, // 62
     Gpios{  MCU_CLKSEL_MODE_PORT,   MCU_CLKSEL_MODE_PIN}, // 63
     Gpios{   MCU_V_SSD0_DIS_PORT,    MCU_V_SSD0_DIS_PIN}, // 64
-    Gpios{   MCU_V_SSD1_DIS_PORT,    MCU_V_SSD1_DIS_PIN}  // 65
+    Gpios{   MCU_V_SSD1_DIS_PORT,    MCU_V_SSD1_DIS_PIN}, // 65
+    // Virtual amber LED state pins (vrPort). Order defines the shadow-state slot;
+    // it does not need to match the LSTP gpio_index order.
+    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B0_PIN}, // 66
+    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B1_PIN}, // 67
+    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B2_PIN}, // 68
+    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B0_PIN}, // 69
+    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B1_PIN}, // 70
+    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B2_PIN}, // 71
+    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B0_PIN}, // 72
+    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B1_PIN}, // 73
+    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B2_PIN}, // 74
+    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B0_PIN}, // 75
+    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B1_PIN}, // 76
+    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B2_PIN}, // 77
+    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B0_PIN}, // 78
+    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B1_PIN}, // 79
+    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B2_PIN}, // 80
+    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B0_PIN}, // 81
+    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B1_PIN}, // 82
+    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B2_PIN}, // 83
+    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B0_PIN}, // 84
+    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B1_PIN}, // 85
+    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B2_PIN}, // 86
+    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B0_PIN}, // 87
+    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B1_PIN}, // 88
+    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B2_PIN}  // 89
 };
 
 // Product-specific NSM Event GPIO configuration
@@ -954,7 +1016,13 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 13> TaskMonitorList{
 constexpr bool EnableRuntimeWdt       = true;
 constexpr bool EnableCP2112NativeGpio = false;
 constexpr bool EnablePufEngine        = false;
+constexpr bool EnableEcdhP384Engine   = false;
 constexpr bool EnableAesGCM           = false;
+
+// MCU heartbeat config
+constexpr bool           EnableMcuHeartbeat = false;
+constexpr gpio::GpioPort McuHeartbeatPort   = nv::gpio::InvalidGpioPort;
+constexpr gpio::GpioPin  McuHeartbeatPin    = nv::gpio::InvalidGpioPin;
 
 // Debugtoken config
 constexpr bool DebugTokenEnabled = true;
@@ -1104,6 +1172,13 @@ constexpr uint32_t                                      IoxFilterSeconds   = 0;
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
+/******** ******** Virtual I2C Config Starts ******** ********/
+constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
+constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
+/******** ******** Virtual I2C Config Ends ******** ********/
+
 constexpr bool EnableForwardNvlInfo = false;
 
 // SMA_READY pin configuration
@@ -1186,6 +1261,32 @@ constexpr inline std::array<LstpGpioPinInfo, LstpGpioNum> PinConfigs{
         {SSD5_PRSNT_L_PORT,SSD5_PRSNT_L_PIN,{{"SSD5_PRSNT_L"},LstpGpioDirection::Input,LstpGpioState::Low,LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::PullUp,0,10,100,100,0,0,0}},
         {SSD6_PRSNT_L_PORT,SSD6_PRSNT_L_PIN,{{"SSD6_PRSNT_L"},LstpGpioDirection::Input,LstpGpioState::Low,LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::PullUp,0,10,100,100,0,0,0}},
         {SSD7_PRSNT_L_PORT,SSD7_PRSNT_L_PIN,{{"SSD7_PRSNT_L"},LstpGpioDirection::Input,LstpGpioState::Low,LstpGpioOutputDriveConfig::OpenDrain,false,LstpGpioBiasPullConfig::PullUp,0,10,100,100,0,0,0}},
+        // Virtual amber LED state pins (vrPort, Output). The BMC writes these 3 bits per
+        // drive (bit0 = LSB) to select the amber LED pattern. gpio_index = 8 + drive*3 + bit.
+        {vSSD_AMBER_PORT,vSSD0_AMBER_B0_PIN,{{"SSD0_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD0_AMBER_B1_PIN,{{"SSD0_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD0_AMBER_B2_PIN,{{"SSD0_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD1_AMBER_B0_PIN,{{"SSD1_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD1_AMBER_B1_PIN,{{"SSD1_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD1_AMBER_B2_PIN,{{"SSD1_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD2_AMBER_B0_PIN,{{"SSD2_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD2_AMBER_B1_PIN,{{"SSD2_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD2_AMBER_B2_PIN,{{"SSD2_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD3_AMBER_B0_PIN,{{"SSD3_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD3_AMBER_B1_PIN,{{"SSD3_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD3_AMBER_B2_PIN,{{"SSD3_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD4_AMBER_B0_PIN,{{"SSD4_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD4_AMBER_B1_PIN,{{"SSD4_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD4_AMBER_B2_PIN,{{"SSD4_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD5_AMBER_B0_PIN,{{"SSD5_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD5_AMBER_B1_PIN,{{"SSD5_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD5_AMBER_B2_PIN,{{"SSD5_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD6_AMBER_B0_PIN,{{"SSD6_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD6_AMBER_B1_PIN,{{"SSD6_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD6_AMBER_B2_PIN,{{"SSD6_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD7_AMBER_B0_PIN,{{"SSD7_AMBER_B0"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD7_AMBER_B1_PIN,{{"SSD7_AMBER_B1"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
+        {vSSD_AMBER_PORT,vSSD7_AMBER_B2_PIN,{{"SSD7_AMBER_B2"},LstpGpioDirection::Output,LstpGpioState::Low,LstpGpioOutputDriveConfig::PushPull,false,LstpGpioBiasPullConfig::PullDown,0,0,0,0,0,0,0}},
     }
 };
 // clang-format on
@@ -1195,10 +1296,10 @@ namespace nv::gpio {
 
 struct VirtualGpioEvent
 {
-    GpioPort         port = vrPort;
-    GpioPin          pin{};
-    nv::ipc::EventId event{};
-    uint32_t         bits{};
+    GpioPort                      port = vrPort;
+    GpioPin                       pin{};
+    VirtualGpioNotificationTarget notification_target{};
+    uint32_t                      bits{};
 };
 
 constexpr inline std::array<VirtualGpioEvent, 0> VirtualGpioEventSetup{};
@@ -1292,7 +1393,7 @@ constexpr std::array<uint8_t, nsm_msg::NvMctpEventSupportedNum> gen_type0_event_
 constexpr auto mcuTemperatureSensorsSize = 1;
 /** List of active MCU sensors for NSM type 3 Temperature Reading */
 constexpr inline std::array<Type3TemperatureSensors, mcuTemperatureSensorsSize>
-    mcuTemperatureSensors{TempSMAInternal};
+    mcuTemperatureSensors{SMA_Internal};
 
 // Temperature Sensors Config for VR products
 constexpr uint8_t I2cTempSensorSize = 0;
@@ -1317,8 +1418,8 @@ constexpr T3TagId NoT3Tag        = 0xff;
 using McuDiagnosticTelemetry     = std::
     tuple<Type4McuDiagnosticEntries, Type4TelemetryTypes, T3TagId>;
 constexpr inline std::array<McuDiagnosticTelemetry, T4TelemetriesSize> mcuDiagnosticTelemetries{
-    McuDiagnosticTelemetry{DIAG_GPIO_VALUE_BITMAP,        GpioTelemetry,         NoT3Tag},
-    McuDiagnosticTelemetry{    DIAG_INTERNAL_TEMP, TemperatureTelemetry, TempSMAInternal},
+    McuDiagnosticTelemetry{DIAG_GPIO_VALUE_BITMAP,        GpioTelemetry,      NoT3Tag},
+    McuDiagnosticTelemetry{    DIAG_INTERNAL_TEMP, TemperatureTelemetry, SMA_Internal},
 };
 
 }  // namespace nv::mctp
@@ -1416,19 +1517,20 @@ static_assert(EnableI2c ? (I2cSmallBuffer ? nv::i2c::I2cBufferSize < 512
                         : !I2cSmallBuffer);
 }  // namespace nv::lstp
 
-/******** ******** Voltage Monitor Config (Disabled) ******** ********/
-// clang-format off
+/******** ******** Voltage Monitor Config ******** ********/
+// MCU internal temp (ADC0 CH26 CMD15) rides Trigger 3 PGOOD chain:
+// CMD7 → CMD8 → CMD15 → END → FIFO1. ISR accumulates VBE pairs (Collecting/Ready);
+// task service() averages and publishes tempCelsius before the next soft-trigger.
 namespace nv::ipc::voltage_monitor_config {
 using namespace nv::volt_mon;
-// MCU_INTERNAL_TEMP_USE_LEGACY_API  (expanded inline per code review)
 constexpr bool EnableDbgInfo = false;
 constexpr bool SensorOnAdc0  = false;
 constexpr bool SensorOnAdc1  = false;
 
 constexpr size_t         LeakDetectSensorNum                     = 0;
 constexpr SensorId       LeakDetectSensorId[LeakDetectSensorNum] = {};
-constexpr gpio::GpioPort AlertGpioPort = nv::gpio::InvalidGpioPort;
-constexpr gpio::GpioPin  AlertGpioPin  = nv::gpio::InvalidGpioPin;
+constexpr gpio::GpioPort AlertGpioPort                           = nv::gpio::InvalidGpioPort;
+constexpr gpio::GpioPin  AlertGpioPin                            = nv::gpio::InvalidGpioPin;
 template<size_t Index>
 constexpr nv::volt_mon::LeakDetectSensor leak_detect_get_sensor_config()
 {
@@ -1454,21 +1556,20 @@ constexpr nv::volt_mon::PgoodVoltSensor pgood_volt_get_sensor_config()
     return {};
 }
 
-
 constexpr nv::volt_mon::McuInternalTempSensor mcu_internal_temp_get_sensor_config()
 {
     return {
         {
-            nv::volt_mon::AdcInstance::Invalid,
-            nv::volt_mon::AdcChannel::Invalid,
-            nv::volt_mon::AdcScanMode::Invalid,
-            nv::volt_mon::AdcCommand::None,
-            nv::volt_mon::AdcCommand::None,
-            nv::volt_mon::AdcCommand::None,
-            nv::volt_mon::AdcTriggerSrc::Invalid,
-            0,
-        },
-        nv::volt_mon::Sensor::Invalid,
+         AdcInstance::_0,                      // adcId
+            AdcChannel::_26,                      // channel (on-die temp)
+            AdcScanMode::DifferentialBothSideAB,  // scanMode
+            // Qualify AdcCommand: nv::ipc::AdcCommand shadows volt_mon in this namespace
+            nv::volt_mon::AdcCommand::None,  // cmdScanning (unused; chained on Trig3)
+            nv::volt_mon::AdcCommand::None,  // cmdNext
+            nv::volt_mon::AdcCommand::_15,   // cmdOneShot (board CMD_INTERNAL_TEMP)
+            AdcTriggerSrc::_3,               // shares PGOOD Trigger 3 chain
+            0, },
+        Sensor::McuInternalTemp,
         0.0f
     };
 }

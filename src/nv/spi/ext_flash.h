@@ -43,6 +43,7 @@ constexpr uint8_t SE4   = 0x21;  // Sector Erase 4KB (4-byte address)
 constexpr uint8_t BE4   = 0xDC;  // Block Erase 64KB (4-byte address)
 constexpr uint8_t CE    = 0xC7;  // Chip Erase (whole device)
 constexpr uint8_t RDID  = 0x9F;  // Read JEDEC ID
+constexpr uint8_t SFDP  = 0x5A;  // Read SFDP (JESD216)
 }  // namespace ExtFlashCmd
 
 namespace ExtFlashAddr {
@@ -67,7 +68,10 @@ public:
         Timeout,
         InvalidParam,
         Busy,
-        IdMismatch,
+        SfdpInvalid,
+        CapacityMismatch,
+        EraseTypeUnsupported,
+        AddressModeUnsupported,
     };
 
     ExtFlash(sys::spi::EdmaDriver&           driver,
@@ -84,7 +88,14 @@ public:
     static ExtFlash& inst();
 
     std::span<const FlashPartition> partitions() const { return _partitions; }
-    uint32_t                        sector_size() const { return _spec.sector_size; }
+    uint32_t                        sector_size() const { return _sector_size; }
+
+    // Discover geometry over SPI via SFDP and verify the part's capacity
+    // matches expected_capacity. Called automatically on the first
+    // read/write/erase, so the flash must be accessible then (SPI bus up and,
+    // on mux-shared boards, claimed by the MCU). Safe to retry: nothing is
+    // cached on failure.
+    Status init();
 
     Status read_id(uint32_t& jedec_id);
     Status read_status(uint8_t& status_reg);
@@ -107,17 +118,23 @@ private:
     FlashSpec                       _spec;
     uint32_t                        _last_written_addr = UINT32_MAX;
 
+    uint32_t _page_size   = 0;
+    uint32_t _sector_size = 4096;
+    uint32_t _block_size  = 65536;
+    uint32_t _max_address = 0;
+    bool     _initialized = false;
+
     const FlashPartition* get_partition_at(uint8_t idx) const;
 
     void cs_assert();
     void cs_deassert();
 
-    Status verify_id();
     Status write_enable();
     Status wait_busy(uint32_t timeout_ms);
     Status page_program(uint32_t address, std::span<const uint8_t> data);
     Status erase_sector(const FlashPartition& partition, uint32_t offset);
     Status erase_block(const FlashPartition& partition, uint32_t offset);
+    Status read_sfdp(uint32_t sfdp_addr, std::span<uint8_t> buffer);
 
     uint8_t addr_bytes() const;
 

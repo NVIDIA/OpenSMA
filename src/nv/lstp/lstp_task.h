@@ -24,9 +24,10 @@
 #include NV_IPC_CONFIG_H
 
 #include "sys/gpio/constant.h"
+#include "nv/common/literals.h"
 #include "nv/gpio/common.h"
-#include "nv/ipc/event.h"
 #include "nv/ipc/task.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/lstp/lstp_common.h"
 #include "nv/lstp/lstp_router.h"
 
@@ -35,14 +36,18 @@ namespace nv::lstp {
 /** @brief (port, pin) -> lstp_idx. LstpGpioNum = not LSTP. */
 constexpr auto BuildLstpGpioIdxMap()
 {
-    std::array<std::array<uint16_t, sys::gpio::PinsPerPort>, sys::gpio::PortsNumber> result{};
+    std::array<std::array<GpioIndex, sys::gpio::PinsPerPort>, sys::gpio::PortsNumber + 1>
+        result{};
     for (auto& row : result) {
         row.fill(LstpGpioNum);
     }
     for (size_t i = 0; i < LstpGpioNum; ++i) {
         const auto& pin_info = PinConfigs.at(i);
-        if (pin_info.port < sys::gpio::PortsNumber && pin_info.pin < sys::gpio::PinsPerPort) {
-            result[pin_info.port][pin_info.pin] = static_cast<uint16_t>(i);
+        if (pin_info.port == nv::gpio::vrPort) {
+            result[sys::gpio::PortsNumber][pin_info.pin] = static_cast<GpioIndex>(i);
+        }
+        else {
+            result[pin_info.port][pin_info.pin] = static_cast<GpioIndex>(i);
         }
     }
     return result;
@@ -50,9 +55,9 @@ constexpr auto BuildLstpGpioIdxMap()
 constexpr inline auto LstpGpioIdxMap = BuildLstpGpioIdxMap();
 
 /**
- * @brief LSTP GPIO task: event-driven loop for GPIO channel requests.
+ * @brief LSTP GPIO task: notification-driven loop for GPIO channel requests.
  *
- * Waits for request event, processes from task buffers, sends response.
+ * Waits for a task notification, processes from task buffers, sends response.
  * Other LSTP channels are unaffected; the GPIO channel returns Busy while a request
  * is being processed. Mutex protects _req_pkt/_resp_payload; _processing allows at most
  * one request in progress.
@@ -89,7 +94,7 @@ public:
 
     /** @brief Submits event and returns immediately (non-blocking).
      * Sends IRQ event to LstpGpioIrq queue. Events sent async via
-     * LstpRouter::send_gpio_irq_event. Drops event if queue is full.
+     * LstpRouter::send_gpio. Drops event if queue is full.
      */
     static void submit_gpio_irq(GpioIndex gpio_idx);
 
@@ -98,11 +103,11 @@ private:
      * via LstpRouter::send_gpio. */
     void process_gpio_req();
 
-    /** @brief Drain IRQ buffer, send each event via LstpRouter::send_gpio_irq_event. */
+    /** @brief Drain IRQ queue, compose packet buffer(s), send via LstpRouter::send_gpio. */
     void process_gpio_irq();
 
-    static constexpr nv::ipc::Event::Bits GpioReqBit = 1U << 0; /* bit of Lstp */
-    static constexpr nv::ipc::Event::Bits GpioIrqBit = 1U << 1; /* bit of Lstp */
+    static constexpr nv::ipc::TaskNotify::Bits GpioReqBit = 0_bit;
+    static constexpr nv::ipc::TaskNotify::Bits GpioIrqBit = 1_bit;
 
     nv::ipc::BootedEventBits _boot_event;
 

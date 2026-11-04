@@ -21,7 +21,7 @@
 #include "nv/gpio/driver.h"
 #include "fsl_lpspi_edma.h"
 #include "fsl_edma.h"
-#include "nv/ipc/event.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/common/literals.h"
 
 #define TRANSFER_SIZE 512U /* Transfer dataSize */
@@ -30,7 +30,7 @@ namespace sys::spi {
 
 using nv::operator""_bit;
 
-enum Event : nv::ipc::Event::Bits
+enum Event : nv::ipc::TaskNotify::Bits
 {
     XferDone  = 1_bit,
     XferError = 2_bit,
@@ -53,7 +53,7 @@ struct MasterTransferContext
 class EdmaDriver
 {
 public:
-    void             bind(nv::spi::Flexcomm flexcomm, nv::ipc::EventId event_id);
+    void             bind(nv::spi::Flexcomm flexcomm, nv::ipc::TaskId task_id);
     void             init();
     sys::spi::Status sendRecv(uint32_t                 send_len,
                               const std::span<uint8_t> sbuf,
@@ -63,7 +63,7 @@ public:
 private:
     LPSPI_Type*       _base;
     nv::spi::Flexcomm _flexcomm;
-    nv::ipc::Event*   _event;
+    nv::ipc::TaskId   _notification_task_id;
 
     static LPSPI_Type* get_base(nv::spi::Flexcomm flexcomm);
     static void        master_edma_callback(LPSPI_Type*                 base,

@@ -402,6 +402,47 @@ void AHS::peripheral_recovery()
     i2c_driver.peripheral_recovery();
 }
 
+void AHS::service_amber(uint32_t elapsed_ms)
+{
+    for (uint8_t d = 0; d < nhp::NumE1sDrives; d++) {
+        if (!e1s_hssms.at(d).has_value()) {
+            continue;
+        }
+        const auto& out = e1s_pin_out.at(d);
+        // Feature disabled for this drive (default): nothing to do.
+        if (out.amber_state_pins.at(0) == nv::gpio::InvalidGpioPin) {
+            continue;
+        }
+
+        uint8_t state = 0U;
+        // Only honor the BMC amber override for a populated slot; Evaluated every
+        // tick, so hot-insert/remove is picked up within one AmberTickMs.
+        if (!prsntL_vals.at(d)) {
+            // Decode the 3-bit amber state from the virtual GPIO shadow (bit0 = LSB).
+            for (uint8_t b = 0; b < out.amber_state_pins.size(); b++) {
+                const auto pin = out.amber_state_pins.at(b);
+                if (pin == nv::gpio::InvalidGpioPin) {
+                    continue;
+                }
+                uint8_t bit = 0U;
+                if (nv::gpio::Driver::read_virtual_physical_gpio(out.amber_state_port, pin, bit)
+                    == nv::gpio::Status::Ok) {
+                    state = static_cast<uint8_t>(state | ((bit & 1U) << b));
+                }
+            }
+        }
+
+        const bool was_active = e1s_hssms.at(d)->amber_active();
+        e1s_hssms.at(d)->set_amber_state(state);
+        // Amber is orthogonal to HSSM: on release, re-run the normal hot-swap
+        // path so update_pins()/set_leds() restore indication (with real perstL).
+        if (was_active && !e1s_hssms.at(d)->amber_active()) {
+            updateHotSwap(d);
+        }
+        e1s_hssms.at(d)->tick_amber(elapsed_ms);
+    }
+}
+
 /**
  * @brief Updates the interrupt pin state based on IO expander status
  *

@@ -188,7 +188,7 @@ enum class State : uint8_t
     PgoodLow  = 6,
     PgoodHigh = 7,
     /* invalid state */
-    Invalid
+    Invalid = 8
 };
 
 using Threshold = uint16_t;

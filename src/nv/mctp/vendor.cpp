@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ranges>
+#include <span>
 
 #include "nv/flash/driver.h"
 #include "nv/flash/flash.h"
@@ -67,13 +68,15 @@ bool Vendor::process(const Packet& rx, Packet& tx)
                 on_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus         : on_get_gpio_status(rx, tx); break;
-        case VdmCmd::ReadDevIkCsr          : on_read_devik_csr(rx, tx); break;
-        case VdmCmd::ProgramCertificate    : on_program_certificate(rx, tx); break;
-        case VdmCmd::RegTableAccess        : result = on_register_table_access(rx, tx); break;
-        case VdmCmd::AddExtTimestamp       : on_add_ext_timestamp(rx, tx); break;
-        case VdmCmd::ApProvision           : on_ap_provision(rx, tx); break;
-        case VdmCmd::QueryApProvisionStatus: on_query_ap_provision_status(rx, tx); break;
+        case VdmCmd::GetGpioStatus            : on_get_gpio_status(rx, tx); break;
+        case VdmCmd::ReadDevIkCsr             : on_read_devik_csr(rx, tx); break;
+        case VdmCmd::ProgramCertificate       : on_program_certificate(rx, tx); break;
+        case VdmCmd::RegTableAccess           : result = on_register_table_access(rx, tx); break;
+        case VdmCmd::AddExtTimestamp          : on_add_ext_timestamp(rx, tx); break;
+        case VdmCmd::ApProvision              : on_ap_provision(rx, tx); break;
+        case VdmCmd::QueryApProvisionStatus   : on_query_ap_provision_status(rx, tx); break;
+        case VdmCmd::GetModelWeightKeyWrapInfo: on_get_key_exchange_info(rx, tx); break;
+        case VdmCmd::InstallModelWeightKey    : on_install_exchanged_key(rx, tx); break;
         case VdmCmd::ScanI2c:
             on_scan_i2c(rx, tx);
             break;
@@ -101,14 +104,16 @@ bool Vendor::action(const Packet& rx, Packet& tx) const
                 action_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus         : break;
-        case VdmCmd::DownloadLog           : break;
-        case VdmCmd::ReadDevIkCsr          : break;
-        case VdmCmd::ProgramCertificate    : break;
-        case VdmCmd::AddExtTimestamp       : break;
-        case VdmCmd::ApProvision           : break;
-        case VdmCmd::QueryApProvisionStatus: break;
-        case VdmCmd::ScanI2c               : break;
+        case VdmCmd::GetGpioStatus            : break;
+        case VdmCmd::DownloadLog              : break;
+        case VdmCmd::ReadDevIkCsr             : break;
+        case VdmCmd::ProgramCertificate       : break;
+        case VdmCmd::AddExtTimestamp          : break;
+        case VdmCmd::ApProvision              : break;
+        case VdmCmd::QueryApProvisionStatus   : break;
+        case VdmCmd::GetModelWeightKeyWrapInfo:
+        case VdmCmd::InstallModelWeightKey    : break;
+        case VdmCmd::ScanI2c                  : break;
 #if ENABLE_FANCONTROL
         case VdmCmd::FanControl: break;
 #endif
@@ -419,6 +424,93 @@ void Vendor::on_read_devik_csr(const Packet& rx, Packet& tx) const
     }
 }
 
+void Vendor::on_get_key_exchange_info(const Packet& rx, Packet& tx) const
+{
+    if constexpr (!has_key_exchange(vrot::ApList)) {
+        unsupported_command(rx, tx);
+        return;
+    }
+
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vtx = VendorPktRes::from(tx);
+    auto& vrx = VendorPktReq::from(rx);
+
+    vtx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+
+    if (vrx.msg_version != 0x01) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    const uint32_t rx_data_length = rx.priv.packet_length >= VendorRequestHeaderSize
+                                      ? rx.priv.packet_length - VendorRequestHeaderSize
+                                      : 0U;
+    auto           tenant_nonce   = std::span<const uint8_t>(&vrx.data[0], rx_data_length);
+    auto&          response       = *std::bit_cast<
+                       std::array<uint8_t,
+                                  nv::mctp::Constants::MctpTxBufSize - sizeof(Header) - HeaderSizeResponse>*>(
+        &vtx.data[0]);
+
+    size_t     response_length{};
+    const auto status = nv::vrot::get_key_exchange_info(
+        tenant_nonce, response, response_length);
+    if (status == nv::vrot::ApOpErrCode::NotSupported) {
+        unsupported_command(rx, tx);
+        return;
+    }
+    if (status != nv::vrot::ApOpErrCode::Success || response_length > response.size()) {
+        vtx.completion_code = Ccode::ErrorGeneral;
+        return;
+    }
+
+    tx.priv.packet_length += response_length;
+}
+
+void Vendor::on_install_exchanged_key(const Packet& rx, Packet& tx) const
+{
+    if constexpr (!has_key_exchange(vrot::ApList)) {
+        unsupported_command(rx, tx);
+        return;
+    }
+
+    fill_packet_header(rx, tx);
+    fill_vendor_msg_header(rx, tx);
+    auto& vtx = VendorPktRes::from(tx);
+    auto& vrx = VendorPktReq::from(rx);
+
+    vtx.completion_code   = Ccode::Success;
+    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
+
+    if (vrx.msg_version != 0x01) {
+        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+        return;
+    }
+
+    const uint32_t rx_data_length = rx.priv.packet_length >= VendorRequestHeaderSize
+                                      ? rx.priv.packet_length - VendorRequestHeaderSize
+                                      : 0U;
+    auto           wrapped_key    = std::span<const uint8_t>(&vrx.data[0], rx_data_length);
+    auto&          response       = *std::bit_cast<
+                       std::array<uint8_t,
+                                  nv::mctp::Constants::MctpTxBufSize - sizeof(Header) - HeaderSizeResponse>*>(
+        &vtx.data[0]);
+
+    size_t     response_length{};
+    const auto status = nv::vrot::install_exchanged_key(wrapped_key, response, response_length);
+    if (status == nv::vrot::ApOpErrCode::NotSupported) {
+        unsupported_command(rx, tx);
+        return;
+    }
+    if (status != nv::vrot::ApOpErrCode::Success || response_length > response.size()) {
+        vtx.completion_code = Ccode::ErrorGeneral;
+        return;
+    }
+
+    tx.priv.packet_length += response_length;
+}
+
 void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
 {
     using namespace nv::spdm::certlib;
@@ -593,6 +685,12 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     vtx.data[1] = OtpDdaOrdinalProgrammedFail;
                     break;
                 }
+                if (nv::flash::Flash::set_data(nv::flash::Key::NpdsDdaOrdinalNumber,
+                                               dda_ordinal_number_cert)
+                    != nv::flash::Status::Ok) {
+                    vtx.data[1] = NpdsDdaOrdinalSetFail;
+                    break;
+                }
             } break;
             case L4Type: {
                 constexpr size_t FuseArrSizeForSinature                                    = 12;
@@ -600,6 +698,27 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43};
                 constexpr std::array<uint32_t, FuseArrSizeForSinature> SignatureEfuseAddrS = {
                     44, 45, 46, 47, 48, 49, 50, 63, 64, 65, 66, 67};
+                constexpr std::array<uint32_t, 4> SerialNumberEfuseAddr = {68, 69, 70, 71};
+
+                nv::flash::Data provisioned_dda_ordinal{};
+                if (nv::flash::Flash::get_data(nv::flash::Key::NpdsDdaOrdinalNumber,
+                                               provisioned_dda_ordinal)
+                    != nv::flash::Status::Ok) {
+                    vtx.data[1] = NpdsDdaOrdinalReadFail;
+                    break;
+                }
+                const auto certificate_profile = nv::spdm::ik::certificate_profile_from_dda(
+                    provisioned_dda_ordinal);
+                nv::flash::Data fmc_numeric_version{};
+                if (nv::flash::Flash::get_data(nv::flash::Key::NpdsFmcNumericVersion,
+                                               fmc_numeric_version)
+                    != nv::flash::Status::Ok) {
+                    vtx.data[1] = NpdsFmcNumericVersionReadFail;
+                    break;
+                }
+                const bool  isFmcV3 = fmc_numeric_version < nv::spdm::ik::FmcV4NumericThreshold;
+                const auto& template_layout = nv::spdm::ik::get_dev_ik_template_layout(
+                    certificate_profile, isFmcV3);
 
                 // check otp of signature is not programed
                 auto check_efuse_programed =
@@ -624,25 +743,15 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     || !check_efuse_programed(SignatureEfuseAddrS)) {
                     break;
                 }
-#ifdef EDGELOCK2GO_CERT
-                // serial number is 16 bytes = 4 uint32_t efuse addresses
-                constexpr size_t FuseArrSizeForSerialNumber = 4;
-                constexpr std::array<uint32_t, FuseArrSizeForSerialNumber>
-                    SerialNumberEfuseAddr = {68, 69, 70, 71};
-
-                // check otp of serial number is not programed
-                auto check_serial_number_efuse_programed =
-                    [&](const std::array<uint32_t, FuseArrSizeForSerialNumber>&
-                            EfuseAddrArray) {
-                        for (const auto EfuseAddr : EfuseAddrArray) {
+                if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+                    auto check_serial_number_efuse_programed = [&]() {
+                        for (const auto EfuseAddr : SerialNumberEfuseAddr) {
                             uint32_t data = 0;
                             auto     ret  = nv::flash::Flash::read_efuse(EfuseAddr, data);
-                            // encounter error when read efuse
                             if (ret != nv::flash::Status::Ok) {
                                 vtx.data[1] = OtpL4SerialNumberReadFail;
                                 return false;
                             }
-                            // already programed
                             if (data != 0) {
                                 vtx.data[1] = AlreadyExists;
                                 return false;
@@ -650,10 +759,10 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                         }
                         return true;
                     };
-                if (!check_serial_number_efuse_programed(SerialNumberEfuseAddr)) {
-                    break;
+                    if (!check_serial_number_efuse_programed()) {
+                        break;
+                    }
                 }
-#endif
 
                 // check l3 exist
                 if (nv::spdm::cert::get_l3_cert_len() == 0) {
@@ -692,7 +801,8 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     const auto l3_cert_view = std::span<const uint8_t>(l3_cert_array)
                                                   .first(l3_cert_len);
                     if (l4_dda_ordinal_number_cert != parse_dda_ordinal_number(l3_cert_view)
-                        || otp_dda_ordinal_number != l4_dda_ordinal_number_cert) {
+                        || otp_dda_ordinal_number != l4_dda_ordinal_number_cert
+                        || provisioned_dda_ordinal != l4_dda_ordinal_number_cert) {
                         vtx.data[1] = InvalidDdaOrdinalNumber;
                         break;
                     }
@@ -721,51 +831,52 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                                   "CertArray is not large enough to hold the DevIkTemplate");
                     static_assert(sizeof(nv::spdm::ik::DevIkTemplateV3) <= sizeof(CertArray),
                                   "CertArray is not large enough to hold the DevIkTemplateV3");
-                    CertArray l4_cert_array{};
-                    auto      l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
-                    nv::spdm::cert::read_l4_cert(l4_cert_array_span);
-
-                    nv::flash::Data FmcNumericVersionData{};
-                    auto            fmc_version_status = nv::flash::Flash::get_data(
-                        nv::flash::Key::NpdsFmcNumericVersion, FmcNumericVersionData);
-                    if (fmc_version_status != nv::flash::Status::Ok) {
-                        vtx.data[1] = NpdsFmcNumericVersionReadFail;
-                        break;
+                    static_assert(sizeof(nv::spdm::ik::EdgeLock2GoDevIkTemplate)
+                                      <= sizeof(CertArray),
+                                  "CertArray is not large enough for the EdgeLock2Go template");
+                    static_assert(
+                        sizeof(nv::spdm::ik::EdgeLock2GoDevIkTemplateV3) <= sizeof(CertArray),
+                        "CertArray is not large enough for the EdgeLock2Go V3 template");
+                    nv::spdm::ik::DevIkRequest expected_request{};
+                    {
+                        CertArray l3_cert_array{};
+                        if (!nv::spdm::cert::read_devik_request(
+                                expected_request, otp_dda_ordinal_number, l3_cert_array)) {
+                            vtx.data[1] = InvalidTemplate;
+                            break;
+                        }
                     }
-                    const uint32_t fmc_numeric_version = FmcNumericVersionData;
-                    nv::info("fmc_numeric_version: %d\n", fmc_numeric_version);
-                    const bool isFmcV3 = fmc_numeric_version
-                                       < nv::spdm::ik::FmcV4NumericThreshold;
+                    constexpr size_t PublicKeyWithTokenSize = Ecdsa384PublicKeySize + 1;
+                    std::array<uint8_t, PublicKeyWithTokenSize> public_key_with_token{};
+                    public_key_with_token.at(0) = UncompressToken;
+                    std::copy(expected_request.public_key.begin(),
+                              expected_request.public_key.end(),
+                              public_key_with_token.begin() + 1);
+                    nv::spdm::crypto::spdm_hash_sha1(
+                        expected_request.subject_key_identifier.data(),
+                        public_key_with_token.data(),
+                        public_key_with_token.size());
 
-                    const size_t expected_template_size = isFmcV3
-                                                            ? sizeof(
-                                                                  nv::spdm::ik::DevIkTemplateV3)
-                                                            : sizeof(
-                                                                  nv::spdm::ik::DevIkTemplate);
-                    if (InputCertlength < expected_template_size) {
+                    nv::spdm::ik::DevIkHelper expected_helper(expected_request,
+                                                              certificate_profile);
+                    CertArray                 l4_cert_array{};
+                    auto l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
+                    expected_helper.construct_cert(l4_cert_array_span);
+
+                    nv::info("fmc_numeric_version: %d\n", fmc_numeric_version);
+                    if (InputCertlength < template_layout.template_size) {
                         vtx.data[1] = InvalidTemplate;
                         break;
                     }
-                    nv::spdm::ik::TemplateComparisonError
-                        comparison_result = nv::spdm::ik::TemplateComparisonError::Success;
-                    if (isFmcV3) {
-                        auto& template_generate_by_fw = *std::bit_cast<
-                            nv::spdm::ik::DevIkTemplateV3*>(&l4_cert_array[0]);
-                        const auto& template_from_input_data = *std::bit_cast<
-                            const nv::spdm::ik::DevIkTemplateV3*>(input_cert_span.data());
-                        template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
-                        comparison_result = nv::spdm::ik::check_two_template_is_same(
-                            template_generate_by_fw, template_from_input_data);
-                    }
-                    else {
-                        auto& template_generate_by_fw = *std::bit_cast<
-                            nv::spdm::ik::DevIkTemplate*>(&l4_cert_array[0]);
-                        const auto& template_from_input_data = *std::bit_cast<
-                            const nv::spdm::ik::DevIkTemplate*>(input_cert_span.data());
-                        template_generate_by_fw.dda_ordinal_number = dda_number_in_char;
-                        comparison_result = nv::spdm::ik::check_two_template_is_same(
-                            template_generate_by_fw, template_from_input_data);
-                    }
+                    std::copy(dda_number_in_char.begin(),
+                              dda_number_in_char.end(),
+                              l4_cert_array.begin()
+                                  + template_layout.dda_ordinal_number_value_offset);
+                    const auto comparison_result = nv::spdm::ik::check_two_template_is_same(
+                        std::span<const uint8_t>(l4_cert_array)
+                            .first(template_layout.template_size),
+                        input_cert_span.first(template_layout.template_size),
+                        template_layout);
                     if (comparison_result != nv::spdm::ik::TemplateComparisonError::Success) {
                         // Log the specific error for debugging
                         nv::logger::error(nv::logger::Event::SpdmTemplateComparisonFailed,
@@ -846,15 +957,13 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     break;
                 }
 
-#ifdef EDGELOCK2GO_CERT
-                // program the serial number into efuse
-                // serial number is at the beginning of the certificate template after
-                // template_to_serial_number
-                {
-                    const nv::spdm::ik::DevIkTemplate& template_from_input = *std::bit_cast<
-                        const nv::spdm::ik::DevIkTemplate*>(input_cert_span.data());
-                    const std::array<uint8_t, 16>& serial_number = template_from_input
-                                                                       .serial_number;
+                if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+                    std::array<uint8_t, 16> serial_number{};
+                    std::copy_n(input_cert_span.begin()
+                                    + template_layout.serial_number_value_offset,
+                                serial_number.size(),
+                                serial_number.begin());
+
                     // program each 4-byte chunk to the corresponding efuse address
                     // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
                     for (size_t i = 0; i < SerialNumberEfuseAddr.size(); ++i) {
@@ -882,7 +991,6 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     }
                     // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
                 }
-#endif
 
             } break;
 

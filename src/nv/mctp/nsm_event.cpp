@@ -75,7 +75,7 @@ bool PrepareEventMessage(uint8_t                       nsmType,
     // Fill event id, data size and payload
     switch (nsm_msg_type) {
         case NsmMsgType::DeviceCapabilityDiscovery:
-            ProcessType0Event(event_id, nsm_event_msg, eventInfo);
+            ProcessType0Event(nsm, event_id, nsm_event_msg, eventInfo);
             break;
         default:
             return false;
@@ -109,7 +109,8 @@ bool PrepareEventMessage(uint8_t                       nsmType,
     return true;
 }
 
-void ProcessType0Event(uint8_t                       eventId,
+void ProcessType0Event(nv::mctp::Nsm&                nsm,
+                       uint8_t                       eventId,
                        nv::mctp::NsmEventMsg&        nsm_event_msg,
                        const nv::mctp::MctpCmdData3& eventInfo)
 {
@@ -121,11 +122,12 @@ void ProcessType0Event(uint8_t                       eventId,
         // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
         std::memcpy(&gpioInfo, eventInfo.data(), sizeof(GpioEventInfo));
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access)
-        ProcessGpioEvent(nsm_event_msg, gpioInfo.port, gpioInfo.gpioEventBits);
+        ProcessGpioEvent(nsm, nsm_event_msg, gpioInfo.port, gpioInfo.gpioEventBits);
     }
 }
 
-bool ProcessGpioEvent(nv::mctp::NsmEventMsg& nsm_event_msg,
+bool ProcessGpioEvent(nv::mctp::Nsm&         nsm,
+                      nv::mctp::NsmEventMsg& nsm_event_msg,
                       nv::gpio::GpioPort     port,
                       uint32_t               eventData)
 {
@@ -136,7 +138,8 @@ bool ProcessGpioEvent(nv::mctp::NsmEventMsg& nsm_event_msg,
     gpio_event_payload.header.timestampLo = sys::ipc::get_os_ticks();
     gpio_event_payload.header.timestampHi = 0;
 
-    auto event_count = 0;
+    auto    event_count = 0;
+    uint8_t gpio_value{0};
 
     // Iterate through configured GPIO NSM events
     for (const auto& gpio : nv::ipc::GpioNsmEventSetup) {
@@ -147,14 +150,19 @@ bool ProcessGpioEvent(nv::mctp::NsmEventMsg& nsm_event_msg,
             if (pin < sys::gpio::PinsPerPort && (eventData & (1u << pin))) {
                 gpio_event_payload.gpio_event_entries.at(event_count)
                     .gpioIndex = gpio.gpioSetupIndex;
-                gpio_event_payload.gpio_event_entries.at(event_count)
-                    .gpioValue = static_cast<uint8_t>(gpio.gpioAssertedValue);
+
+                if (!nsm.is_gpio_spoofing_activate()
+                    || !nsm.get_gpio_spoofing_value(gpio.gpioSetupIndex, gpio_value)) {
+                    gpio_value = static_cast<uint8_t>(gpio.gpioAssertedValue);
+                }
+                // else gpio spoofing is activated and gpio_value contains the value
+                gpio_event_payload.gpio_event_entries.at(event_count).gpioValue = gpio_value;
                 ++event_count;
                 nv::info("GPIO Event: index %d, port %d, pin %d, value %d\n",
                          gpio.gpioSetupIndex,
                          port,
                          pin,
-                         static_cast<uint8_t>(gpio.gpioAssertedValue));
+                         gpio_value);
             }
         }
     }

@@ -49,7 +49,7 @@ constexpr uint16_t MSB_MASK    = 0xff00;
 Flashrom::Flashrom(sys::spi::EdmaDriver& driver) : _driver(driver) {}
 
 void Flashrom::bind(nv::spi::Flexcomm flexcomm,
-                    nv::ipc::EventId  event_id,
+                    nv::ipc::TaskId   task_id,
                     uint8_t           cs0_port_id,
                     uint8_t           cs0_pin_id,
                     uint8_t           cs1_port_id,
@@ -59,7 +59,7 @@ void Flashrom::bind(nv::spi::Flexcomm flexcomm,
     _cs0_pin_id  = cs0_pin_id;
     _cs1_port_id = cs1_port_id;
     _cs1_pin_id  = cs1_pin_id;
-    _driver.bind(flexcomm, event_id);
+    _driver.bind(flexcomm, task_id);
 }
 
 void Flashrom::init()

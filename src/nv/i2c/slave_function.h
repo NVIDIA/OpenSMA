@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include "nv/i2c/port.h"
+#include "nv/ipchandler/enums.h"
 
 namespace nv::i2c {
 
@@ -30,6 +31,9 @@ enum class SlaveFunction : uint8_t
     Eeprom,        ///< EEPROM cache bridge
     Erot,          ///< OCP Recovery 2-byte writes from a downstream EROT (push-based
                    ///< boot-completion notification, see EROT_RECOVERY_DESIGN.md)
+    I2cForward,    ///< Generic target forward: writes relayed verbatim to a real
+                   ///< device on another bus (forward_dst), reads served from a
+                   ///< local shadow (see i2c_forward.h)
     End
 };
 
@@ -40,6 +44,13 @@ struct SlaveFunctionEntry
     uint8_t       address;
     SlaveFunction function;
     bool          enabled;
+    /// I2cForward only: I2C task owning the bus where the real device lives
+    nv::ipchandler::Id forward_dst = nv::ipchandler::Id::Unuse;
+    /// I2cForward only: shadowed register window served on target reads.
+    /// shadow_len == 0 (default) disables the shadow; reads return the
+    /// default value. Clamped to nv::i2c::forward::ShadowCapacity.
+    uint8_t shadow_base = 0;
+    uint8_t shadow_len  = 0;
 };
 
 }  // namespace nv::i2c

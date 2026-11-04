@@ -177,6 +177,17 @@ static void make_lstp_task()
     }
 }
 
+// Bug-6129052: FMC (ROM) remaps slot1 but only invalidates CACHE64, not LPCAC
+// (which fronts internal flash) -> stale LPCAC corrupts the early .sramx_code
+// flash->SRAM copy. Flush LPCAC here (SystemInitHook runs before that copy).
+extern "C" void SystemInitHook(void)
+{
+    SYSCON->LPCAC_CTRL |= SYSCON_LPCAC_CTRL_CLR_LPCAC_MASK;
+    SYSCON->LPCAC_CTRL &= ~SYSCON_LPCAC_CTRL_CLR_LPCAC_MASK;
+    __DSB();
+    __ISB();
+}
+
 int main()
 {
     // IRQ is enabled by default, disable it
@@ -215,7 +226,7 @@ int main()
     sys::adc::ADC::init_adc(0U);
     sys::adc::ADC::init_adc(1U);
 
-    // Initialize the Hotplug Support Module/Task
+    // Hotplug + MCU on-die temp
     ahs::Task::make(nhp::ahs_task_config);
 
     ipc::Supervisor::inst().startup(0, nullptr);

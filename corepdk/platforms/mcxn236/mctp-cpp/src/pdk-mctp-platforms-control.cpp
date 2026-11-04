@@ -66,6 +66,17 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
             fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
             return;
         }
+
+        auto eid_pool_size = EidPoolSize;
+        if constexpr (nv::ipc::I2cIsEndpoint) {
+            if (rx.priv.packet_interface == common::to_underlying(mctp::Client::UsI2c)) {
+                eid_pool_size = 0;
+            }
+        }
+
+        auto eid_allocation_status = eid_pool_size > 0 ? SetEndpoint::EidAcceptedAndEidPool
+                                                       : SetEndpoint::EidAcceptedAndNoEidPool;
+
         switch (static_cast<SetEndpoint>(crx.data[0])) {
             case SetEndpoint::SetEidNormal:
             case SetEndpoint::SetEidForced:
@@ -74,29 +85,10 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
                 fill_packet_header(rx, tx);
                 fill_control_msg_header(rx, tx);
 
-                if constexpr (nv::ipc::I2cIsEndpoint) {
-                    if (rx.priv.packet_interface
-                        == static_cast<uint16_t>(mctp::Client::UsI2c)) {
-                        // GFWLYNT1-792: upstream I2C WAR for FPGA bringup
-                        ctx.completion_code = Ccode::Success;
-                        ctx.data[0]         = static_cast<uint8_t>(
-                            SetEndpoint::EidAcceptedAndNoEidPool);
-                        ctx.data[1] = _router.ec.cur_eid.at(rx.priv.packet_interface);
-                        ctx.data[2] = 0;
-                    }
-                    else {
-                        ctx.completion_code = Ccode::Success;
-                        ctx.data[0] = static_cast<uint8_t>(SetEndpoint::EidAcceptedAndEidPool);
-                        ctx.data[1] = _router.ec.cur_eid.at(rx.priv.packet_interface);
-                        ctx.data[2] = EidPoolSize;
-                    }
-                }
-                else {
-                    ctx.completion_code = Ccode::Success;
-                    ctx.data[0] = static_cast<uint8_t>(SetEndpoint::EidAcceptedAndEidPool);
-                    ctx.data[1] = _router.ec.cur_eid.at(rx.priv.packet_interface);
-                    ctx.data[2] = EidPoolSize;
-                }
+                ctx.completion_code = Ccode::Success;
+                ctx.data[0]         = static_cast<uint8_t>(eid_allocation_status);
+                ctx.data[1]         = _router.ec.cur_eid.at(rx.priv.packet_interface);
+                ctx.data[2]         = eid_pool_size;
 
                 if constexpr (ipc::I2cTransparent) {
                     if (rx.priv.packet_interface
@@ -140,9 +132,9 @@ void Control::on_set_endpoint_id(const app::Packet& rx, app::Packet& tx)
 
                 // fill the payload/message data
                 ctx.completion_code = Ccode::Success;
-                ctx.data[0]         = static_cast<uint8_t>(SetEndpoint::EidAcceptedAndEidPool);
+                ctx.data[0]         = static_cast<uint8_t>(eid_allocation_status);
                 ctx.data[1]         = _router.ec.cur_eid.at(rx.priv.packet_interface);
-                ctx.data[2]         = EidPoolSize;
+                ctx.data[2]         = eid_pool_size;
                 break;
             default: fill_error_packet(Ccode::ErrorInvalidData, rx, tx); break;
         }

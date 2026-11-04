@@ -41,6 +41,16 @@
 
 namespace nv::lstp {
 
+nv::gpio::Status gpio_get_direction(const LstpGpioPinInfo& info, nv::gpio::Direction& dir)
+{
+    if (info.port == nv::gpio::vrPort) {
+        dir = info.config.direction == LstpGpioDirection::Output ? nv::gpio::Direction::Output
+                                                                 : nv::gpio::Direction::Input;
+        return nv::gpio::Status::Ok;
+    }
+    return nv::gpio::Driver::getDirection(info.port, info.pin, dir);
+}
+
 /*****************************************************
  * LSTP General
  *****************************************************/
@@ -151,11 +161,11 @@ LstpStatus LstpRouter::receive_ch0(std::span<uint8_t>& buffer)
     auto cmd = static_cast<LstpManagementCommand>(hdr.cmd_status_code);
 
     switch (cmd) {
-        case LstpManagementCommand::ReadConfig : return read_channel_config(buffer);
-        case LstpManagementCommand::WriteConfig: return write_channel_config(buffer);
-        case LstpManagementCommand::Lock       : return LstpStatus::NotSupported;
-        case LstpManagementCommand::ReadLock   : return read_lock(buffer);
-        default                                : return LstpStatus::NotSupported;
+        case LstpManagementCommand::ReadConfig     : return read_channel_config(buffer);
+        case LstpManagementCommand::WriteConfig    : return write_channel_config(buffer);
+        case LstpManagementCommand::WriteConfigMode: return write_config_mode(buffer);
+        case LstpManagementCommand::ReadConfigMode : return read_config_mode(buffer);
+        default                                    : return LstpStatus::NotSupported;
     }
 }
 
@@ -221,14 +231,19 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
             static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpSpiChannelConfig)
                           <= LstpMaxPayloadSize);
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Spi) == true) {
-                auto& spiConfigResp = from<LstpSpiChannelConfig>(
+                auto& spi_config_response = from<LstpSpiChannelConfig>(
                     &resp_buffer.data()[resp_offset]);
                 resp_offset += sizeof(LstpSpiChannelConfig);
 
                 // Config type validated at compile time via static_assert in config.h
-                const auto& spi_cfg          = std::get<LstpSpiChannelConfig>(channel_cfg);
-                spiConfigResp.channel_num_cs = spi_cfg.channel_num_cs;
-                spiConfigResp.freq_hz        = spi_cfg.freq_hz;
+                const auto& spi_config = std::get<LstpSpiChannelConfig>(channel_cfg);
+                spi_config_response.channel_num_cs           = spi_config.channel_num_cs;
+                spi_config_response.freq_hz                  = spi_config.freq_hz;
+                spi_config_response.output_drive_strength_ma = spi_config
+                                                                   .output_drive_strength_ma;
+                spi_config_response.slew_rate_100_ps       = spi_config.slew_rate_100_ps;
+                spi_config_response.input_debounce_time_us = spi_config.input_debounce_time_us;
+                spi_config_response.glitch_filter_width_ns = spi_config.glitch_filter_width_ns;
             }
             else {
                 return LstpStatus::NotSupported;
@@ -258,13 +273,21 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::I2c) == true) {
                 static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpI2cChannelConfig)
                               <= LstpMaxPayloadSize);
-                auto& i2cConfigResp = from<LstpI2cChannelConfig>(
+                auto& i2c_config_response = from<LstpI2cChannelConfig>(
                     &resp_buffer.data()[resp_offset]);
                 resp_offset += sizeof(LstpI2cChannelConfig);
 
                 // Config type validated at compile time via static_assert in config.h
-                const auto& i2c_cfg = std::get<LstpI2cChannelConfig>(channel_cfg);
-                i2cConfigResp.speed = i2c_cfg.speed;
+                const auto& i2c_config    = std::get<LstpI2cChannelConfig>(channel_cfg);
+                i2c_config_response.speed = i2c_config.speed;
+                i2c_config_response.output_drive_strength_ma = i2c_config
+                                                                   .output_drive_strength_ma;
+                i2c_config_response.slew_rate_100_ps        = i2c_config.slew_rate_100_ps;
+                i2c_config_response.input_debounce_time_us  = i2c_config.input_debounce_time_us;
+                i2c_config_response.glitch_filter_width_ns  = i2c_config.glitch_filter_width_ns;
+                i2c_config_response.bus_low_timeout_ms      = i2c_config.bus_low_timeout_ms;
+                i2c_config_response.bus_arbitration_retries = i2c_config
+                                                                  .bus_arbitration_retries;
             }
             else {
                 return LstpStatus::NotSupported;
@@ -286,15 +309,22 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Uart) == true) {
                 static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpUartChannelConfig)
                               <= LstpMaxPayloadSize);
-                auto& uartConfigResp = from<LstpUartChannelConfig>(
+                auto& uart_config_response = from<LstpUartChannelConfig>(
                     &resp_buffer.data()[resp_offset]);
                 resp_offset += sizeof(LstpUartChannelConfig);
 
-                const auto& uart_cfg     = std::get<LstpUartChannelConfig>(channel_cfg);
-                uartConfigResp.speed     = uart_cfg.speed;
-                uartConfigResp.data_bits = uart_cfg.data_bits;
-                uartConfigResp.stop_bits = uart_cfg.stop_bits;
-                uartConfigResp.parity    = uart_cfg.parity;
+                const auto& uart_config        = std::get<LstpUartChannelConfig>(channel_cfg);
+                uart_config_response.speed     = uart_config.speed;
+                uart_config_response.data_bits = uart_config.data_bits;
+                uart_config_response.stop_bits = uart_config.stop_bits;
+                uart_config_response.parity    = uart_config.parity;
+                uart_config_response.output_drive_strength_ma = uart_config
+                                                                    .output_drive_strength_ma;
+                uart_config_response.slew_rate_100_ps       = uart_config.slew_rate_100_ps;
+                uart_config_response.input_debounce_time_us = uart_config
+                                                                  .input_debounce_time_us;
+                uart_config_response.glitch_filter_width_ns = uart_config
+                                                                  .glitch_filter_width_ns;
             }
             else {
                 return LstpStatus::NotSupported;
@@ -387,9 +417,9 @@ LstpRouter::read_gpio_config_helper(size_t                                      
         const auto& config_pin_info = PinConfigs.at(pin);
         auto        config_pin      = config_pin_info.config;
 
-        // Refresh the pin direction in config from hardware before copying bytes out.
+        // vrPort pins report configured direction; physical pins read live hardware.
         nv::gpio::Direction hw_dir{};
-        nv::gpio::Driver::getDirection(config_pin_info.port, config_pin_info.pin, hw_dir);
+        gpio_get_direction(config_pin_info, hw_dir);
         config_pin.direction = LstpGpioDirection_from(hw_dir);
 
         const auto pin_bytes = std::bit_cast<std::array<uint8_t, sizeof(LstpGpioConfig)>>(
@@ -510,7 +540,7 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
 
 LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
 {
-    if (ReadLockState(PinConfigs) == LstpLockState::Locked) {
+    if (GpioWriteConfigMode(PinConfigs) == LstpConfigMode::Locked) {
         return LstpStatus::NotSupported;
     }
 
@@ -575,7 +605,7 @@ LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
         const auto& config_pin      = config_pin_info.config;
 
         nv::gpio::Direction hw_dir{};
-        nv::gpio::Driver::getDirection(config_pin_info.port, config_pin_info.pin, hw_dir);
+        gpio_get_direction(config_pin_info, hw_dir);
         const auto current_direction = LstpGpioDirection_from(hw_dir);
         if (req_direction == current_direction) {
             continue;
@@ -602,33 +632,57 @@ LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
     return status;
 }
 
-LstpStatus LstpRouter::read_lock(std::span<uint8_t> req_buffer)
+LstpStatus LstpRouter::write_config_mode(std::span<uint8_t> req_buffer)
 {
-    static_assert(sizeof(LstpReadLockResponse) <= LstpMaxPayloadSize);
+    static_assert(sizeof(LstpConfigModePayload) <= LstpMaxPayloadSize);
 
     const auto&  req_hdr  = from<LstpHdr>(req_buffer.data());
     const size_t req_size = static_cast<size_t>(req_hdr.len_lsb)
                           | (static_cast<size_t>(req_hdr.len_msb) << BYTE1_SHIFT);
 
-    if (req_size != 0) {
+    if (req_size < sizeof(LstpConfigModePayload)) {
         return LstpStatus::Error;
     }
 
+    const auto& request = from<LstpConfigModePayload>(&req_buffer.data()[sizeof(LstpHdr)]);
+
+    if (request.config_mode != CurrentConfigMode) {
+        return LstpStatus::NotSupported;
+    }
+
     std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buffer{};
-    size_t                                       resp_offset = 0;
-    auto&                                        resp_hdr  = from<LstpHdr>(resp_buffer.data());
-    resp_offset                                           += sizeof(LstpHdr);
+    auto&                                        resp_hdr = from<LstpHdr>(resp_buffer.data());
 
-    auto& lock_resp  = from<LstpReadLockResponse>(&resp_buffer.data()[resp_offset]);
-    resp_offset     += sizeof(LstpReadLockResponse);
-
-    lock_resp.lock_state = ReadLockState(PinConfigs);
-
-    const auto len           = static_cast<uint16_t>(resp_offset - sizeof(LstpHdr));
     resp_hdr.channel_id      = req_hdr.channel_id;
     resp_hdr.cmd_status_code = static_cast<uint8_t>(LstpStatus::Success) | LstpResponseBit;
-    resp_hdr.len_lsb         = len & LSB_MASK;
-    resp_hdr.len_msb         = len >> BYTE1_SHIFT;
+    resp_hdr.len_lsb         = 0U;
+    resp_hdr.len_msb         = 0U;
+
+    std::span<uint8_t> item(resp_buffer.data(), resp_buffer.size());
+    nv::usb::Task::to_usbLstp(item);
+
+    return LstpStatus::Success;
+}
+
+LstpStatus LstpRouter::read_config_mode(std::span<uint8_t> req_buffer)
+{
+    static_assert(sizeof(LstpConfigModePayload) <= LstpMaxPayloadSize);
+
+    const auto& req_hdr = from<LstpHdr>(req_buffer.data());
+
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> resp_buffer{};
+    size_t                                       resp_offset = sizeof(LstpHdr);
+    auto&                                        resp_hdr = from<LstpHdr>(resp_buffer.data());
+
+    auto& response        = from<LstpConfigModePayload>(&resp_buffer.data()[resp_offset]);
+    resp_offset          += sizeof(LstpConfigModePayload);
+    response.config_mode  = CurrentConfigMode;
+
+    const auto response_length = static_cast<uint16_t>(resp_offset - sizeof(LstpHdr));
+    resp_hdr.channel_id        = req_hdr.channel_id;
+    resp_hdr.cmd_status_code   = static_cast<uint8_t>(LstpStatus::Success) | LstpResponseBit;
+    resp_hdr.len_lsb           = response_length & LSB_MASK;
+    resp_hdr.len_msb           = response_length >> BYTE1_SHIFT;
 
     std::span<uint8_t> item(resp_buffer.data(), resp_buffer.size());
     nv::usb::Task::to_usbLstp(item);
@@ -671,34 +725,9 @@ LstpStatus LstpRouter::receive_gpio(std::span<uint8_t>& req_buffer)
     return LstpStatus::NotSupported;
 }
 
-void LstpRouter::send_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_buffer)
+void LstpRouter::send_gpio(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer)
 {
-    std::span<uint8_t> item(resp_buffer.data(), resp_buffer.size());
-    nv::usb::Task::to_usbLstp(item);
-}
-
-void LstpRouter::send_gpio_irq_event(uint8_t ch_id, uint16_t gpio_index, uint8_t value)
-{
-    if (sizeof(LstpHdr) + sizeof(LstpGpioIrqEventRequest) > LstpMaxPayloadSize) {
-        return;
-    }
-
-    // Build and send IRQ event packet
-    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> irq_buffer{};
-
-    auto&      irq_hdr      = from<LstpHdr>(irq_buffer.data());
-    const auto resp_len     = sizeof(LstpGpioIrqEventRequest);
-    irq_hdr.channel_id      = ch_id;
-    irq_hdr.cmd_status_code = static_cast<uint8_t>(LstpGpioCommand::IrqEvent);
-    irq_hdr.len_lsb         = resp_len & LSB_MASK;
-    irq_hdr.len_msb         = resp_len >> BYTE1_SHIFT;
-
-    constexpr size_t irq_offset = sizeof(LstpHdr);
-    auto&            req        = from<LstpGpioIrqEventRequest>(&irq_buffer.data()[irq_offset]);
-    req.gpio_index              = gpio_index;
-    req.value                   = static_cast<LstpGpioState>(value);
-
-    std::span<uint8_t> item(irq_buffer.data(), irq_buffer.size());
+    std::span<uint8_t> item(buffer.data(), buffer.size());
     nv::usb::Task::to_usbLstp(item);
 }
 

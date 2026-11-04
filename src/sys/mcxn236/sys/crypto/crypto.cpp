@@ -274,4 +274,38 @@ aes_256_gcm_encrypt([[maybe_unused]] const nv::crypto::Aes256Key&               
     return nv::spdm::crypto::CryptoStatus::FailAesGcmEncrypt;
 }
 
+nv::spdm::crypto::CryptoStatus
+aes_256_gcm_decrypt([[maybe_unused]] const nv::crypto::Aes256Key&                        key,
+                    [[maybe_unused]] std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
+                    [[maybe_unused]] std::span<const uint8_t>                            aad,
+                    [[maybe_unused]] std::span<const uint8_t> ciphertext,
+                    [[maybe_unused]] std::span<const uint8_t, nv::crypto::AesGcmTagBytes> tag,
+                    [[maybe_unused]] std::span<uint8_t> plaintext)
+{
+    return nv::spdm::crypto::CryptoStatus::FailAesGcmDecrypt;
+}
+
+nv::spdm::crypto::CryptoStatus
+ecdh_p384_generate_key_pair([[maybe_unused]] nv::crypto::EcdhP384KeyPair& key_pair)
+{
+    return nv::spdm::crypto::CryptoStatus::FailEcdhKeyGeneration;
+}
+
+nv::spdm::crypto::CryptoStatus ecdh_p384_compute_shared_secret(
+    [[maybe_unused]] const nv::crypto::EcdhP384PrivateKey& private_key,
+    [[maybe_unused]] const nv::crypto::EcdhP384PublicKey&  peer_public_key,
+    [[maybe_unused]] nv::crypto::EcdhP384SharedSecret&     shared_secret)
+{
+    return nv::spdm::crypto::CryptoStatus::FailEcdhKeyAgreement;
+}
+
+nv::spdm::crypto::CryptoStatus
+hkdf_sha384([[maybe_unused]] std::span<const uint8_t> input_key_material,
+            [[maybe_unused]] std::span<const uint8_t> salt,
+            [[maybe_unused]] std::span<const uint8_t> info,
+            [[maybe_unused]] std::span<uint8_t>       output)
+{
+    return nv::spdm::crypto::CryptoStatus::FailHkdf;
+}
+
 }  // namespace sys::crypto

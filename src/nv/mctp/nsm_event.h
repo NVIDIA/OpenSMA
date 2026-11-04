@@ -194,22 +194,26 @@ bool PrepareEventMessage(uint8_t                       nsmType,
 
 /**
  * @brief Process Type 0 (Device Capability Discovery) event
+ * @param NSM object
  * @param eventId Event ID to process
  * @param nsm_event_msg Reference to NSM event message to populate
  * @param eventInfo Event generation information (8-byte array)
  */
-void ProcessType0Event(uint8_t                       eventId,
+void ProcessType0Event(nv::mctp::Nsm&                nsm,
+                       uint8_t                       eventId,
                        nv::mctp::NsmEventMsg&        nsm_event_msg,
                        const nv::mctp::MctpCmdData3& eventInfo);
 
 /**
  * @brief Process GPIO event and populate NSM event message
+ * @param NSM object
  * @param nsm_event_msg Reference to NSM event message to populate
  * @param port GPIO port number
  * @param eventData GPIO event data (bit mask of triggered pins)
  * @return true if event was processed successfully, false otherwise
  */
-bool ProcessGpioEvent(nv::mctp::NsmEventMsg& nsm_event_msg,
+bool ProcessGpioEvent(Nsm&                   nsm,
+                      nv::mctp::NsmEventMsg& nsm_event_msg,
                       nv::gpio::GpioPort     port,
                       uint32_t               eventData);
 

@@ -65,13 +65,18 @@ public:
         AuthenticateRequestBit    = 4_bit,  // notify the spdm task to auth
         AuthenticateTaskIdle      = 5_bit,  // act as a lock to access spdm auth functionality
         CryptoPrimitiveRequestBit = 6_bit,
-        CertReadyBit              = 22_bit,
+        RuntimeConsistencyBit     = 7_bit,
+        RuntimeConsistencySuccessBit = 8_bit,
+        RuntimeConsistencyFailureBit = 9_bit,
+        CertReadyBit                 = 22_bit,
     };
     static constexpr nv::ipc::Event::Bits
         CryptoRequestEventBit = static_cast<nv::ipc::Event::Bits>(
                                     spdm::Task::EventBits::AuthenticateRequestBit)
                               | static_cast<nv::ipc::Event::Bits>(
-                                    spdm::Task::EventBits::CryptoPrimitiveRequestBit);
+                                    spdm::Task::EventBits::CryptoPrimitiveRequestBit)
+                              | static_cast<nv::ipc::Event::Bits>(
+                                    spdm::Task::EventBits::RuntimeConsistencyBit);
     static constexpr auto RxWaitEventBit = (nv::ipc::SpdmI2cResponder == true
                                                 ? spdm::Task::EventBits::UsbRxBit
                                                       | spdm::Task::EventBits::I2cRxBit

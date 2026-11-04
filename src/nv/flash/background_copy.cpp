@@ -20,6 +20,7 @@
 #include <algorithm>
 
 #include "nv/common/utils.h"
+#include "nv/mctp/driver.h"
 #include "nv/nv.h"
 
 using namespace nv::flash;
@@ -29,7 +30,7 @@ Status BackgroundCopy::start()
     if (_state != State::InProgress) {
         current_offset = 0x0;
         _state         = State::InProgress;
-        nv::info("Background copy start\n");
+        nv::mctp::Driver::mctp_send_cmd(nv::mctp::Driver::CmdCode::RotStateInfoChange);
     }
     else {
         // Handling TBD, initiate BG during it is on-going
@@ -73,11 +74,6 @@ Status BackgroundCopy::status_progress(Response& response)
     return Status;
 }
 
-void BackgroundCopy::stop()
-{
-    _state = State::Idle;
-}
-
 void BackgroundCopy::next(Driver& driver)
 {
     if (_state != State::InProgress) {
@@ -90,9 +86,8 @@ void BackgroundCopy::next(Driver& driver)
         auto erase_status = driver.erase(WriteAddress);
         nv::info("Bg erase at 0x%x\n", WriteAddress);
         if (erase_status != Status::Ok) {
-            stop();
-            nv::info("BG copy erase failed\n");
             _state = State::Failed;
+            nv::mctp::Driver::mctp_send_cmd(nv::mctp::Driver::CmdCode::RotStateInfoChange);
             return;
         }
     }
@@ -102,25 +97,22 @@ void BackgroundCopy::next(Driver& driver)
 
     auto read_status = driver.read(ReadAddress, CurSize, read_buffer);
     if (read_status != Status::Ok) {
-        stop();
-        nv::info("BG copy read failed\n");
         _state = State::Failed;
+        nv::mctp::Driver::mctp_send_cmd(nv::mctp::Driver::CmdCode::RotStateInfoChange);
         return;
     }
 
     auto write_status = driver.write(WriteAddress, CurSize, read_buffer);
     if (write_status != Status::Ok) {
-        stop();
-        nv::info("BG copy write failed\n");
         _state = State::Failed;
+        nv::mctp::Driver::mctp_send_cmd(nv::mctp::Driver::CmdCode::RotStateInfoChange);
         return;
     }
 
     current_offset = nv::common::add(current_offset, CurSize);
 
     if (current_offset >= CopySize) {
-        stop();
         _state = State::Done;
-        nv::info("BG copy done\n");
+        nv::mctp::Driver::mctp_send_cmd(nv::mctp::Driver::CmdCode::RotStateInfoChange);
     }
 }

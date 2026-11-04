@@ -90,7 +90,6 @@ struct SlotPartitions
         case Status::InvalidParam: return ApOpErrCode::InvalidParam;
         case Status::Timeout     : return ApOpErrCode::Timeout;
         case Status::Busy        : return ApOpErrCode::Busy;
-        case Status::IdMismatch  :
         case Status::Error       :
         default                  : return ApOpErrCode::Fail;
     }

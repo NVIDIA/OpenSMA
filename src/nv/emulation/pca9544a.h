@@ -17,6 +17,7 @@
  */
 #pragma once
 
+#include "nv/emulation/emulation_device.h"
 #include "sys/i2c/i2c_slave.h"
 
 /*
@@ -28,7 +29,7 @@ namespace nv::emulation {
 // PCA9544A Emulator Class:
 // -----------------------------
 
-class Pca9544a
+class Pca9544a final : public EmulationDevice
 {
 public:
     // Public Functions
@@ -39,12 +40,12 @@ public:
 
     // Reads the control register value.
     // Parent task must pull and manage interrupt changes afterwards.
-    void i2c_read(uint8_t& return_data);
+    void i2c_read(uint8_t& return_data, bool new_transaction) override;
 
     // Handles I2C write to the device.
     // Parent task must pull and manage interrupts and output changes afterwards.
-    void i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
-                   uint8_t                                            data_length);
+    void i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                   uint8_t data_length) override;
 
     // Returns the current channel
     // This is for parent class to route I2C signals internally

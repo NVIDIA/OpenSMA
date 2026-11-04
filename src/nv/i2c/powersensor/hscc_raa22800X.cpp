@@ -49,10 +49,14 @@ constexpr float    TempOffsetB = 0.0f;    // b coefficient
 constexpr float    TempExpMult = 1.0f;    // 10^(-R), where R=0
 constexpr uint16_t TempMask    = 0xFFFF;  // 16-bit data mask
 
-// READ_PIN (0x97) - Input Power coefficients
-constexpr float    PowerSlopeM  = 5.0f;    // m coefficient (Resolution: 0.2W/LSB)
+// READ_PIN (0x97) - Input Power coefficients: m=2, b=0, R=-1 -> P(W) = raw x 5 (5W/LSB),
+// per the datasheet Definition and Renesas' Linux driver (isl68137.c, raa_dmpvr2_hv).
+// NOTE: the datasheet's Equation line "(Direct value)/5" contradicts its own "5W per LSB"
+// Definition and is an erratum -- /5 is what this driver used to do, under-reporting 25x
+// (e.g. Fractal HSCC read 18W with the GPU alone at 312W).
+constexpr float    PowerSlopeM  = 2.0f;    // m coefficient (Resolution: 5W/LSB)
 constexpr float    PowerOffsetB = 0.0f;    // b coefficient
-constexpr float    PowerExpMult = 1.0f;    // 10^(-R), where R=0
+constexpr float    PowerExpMult = 10.0f;   // 10^(-R), where R=-1
 constexpr uint16_t PowerMask    = 0xFFFF;  // 16-bit data mask
 }  // namespace
 

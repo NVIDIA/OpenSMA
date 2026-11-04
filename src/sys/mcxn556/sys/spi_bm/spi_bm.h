@@ -89,6 +89,16 @@ public:
      */
     void spi_gpio_wait_complete();
 
+    /**
+     * @brief Checks whether an active wait-GPIO transfer timed out.
+     */
+    void check_gpio_wait_timeout(uint32_t now_ms, uint32_t timeout_ms);
+
+    /**
+     * @brief Returns true when a transfer is blocked waiting for the GPIO handshake.
+     */
+    bool is_gpio_wait_pending() const;
+
     bool is_busy();
 
 private:
@@ -132,6 +142,8 @@ private:
         Ready        = WriteDone | GpioWaitDone,
     };
     std::atomic<uint8_t> _wait_gpio_flags{0};
+    bool                 _wait_gpio_timeout_active{false};
+    uint32_t             _wait_gpio_start_ms{0};
     void                 try_read_after_wait();
 };
 

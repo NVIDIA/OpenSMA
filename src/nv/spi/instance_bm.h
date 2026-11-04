@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include NV_IPC_CONFIG_H
 #include "nv/spi/spi_types.h"
 #include "sys/spi_bm/spi_bm.h"
@@ -49,6 +50,17 @@ public:
     static void spi_gpio_wait_complete(nv::spi::Port port)
     {
         get(port).spi_gpio_wait_complete();
+    }
+
+    static void
+    check_gpio_wait_timeout(nv::spi::Port port, uint32_t now_ms, uint32_t timeout_ms)
+    {
+        get(port).check_gpio_wait_timeout(now_ms, timeout_ms);
+    }
+
+    static bool is_gpio_wait_pending(nv::spi::Port port)
+    {
+        return get(port).is_gpio_wait_pending();
     }
 
     static bool is_busy(nv::spi::Port port) { return get(port).is_busy(); }

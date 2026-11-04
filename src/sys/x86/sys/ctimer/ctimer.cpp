@@ -22,6 +22,11 @@ nv::ctimer::NV_Ticks nv::ctimer::Driver::read_ticks()
     return 0;
 }
 
+uint32_t nv::ctimer::Driver::ticks_to_us(NV_Ticks ticks)
+{
+    return ticks;
+}
+
 sys::ctimer::Ticks
 sys::ctimer::Driver::get_counter_difference([[maybe_unused]] Ticks start_count,
                                             [[maybe_unused]] Ticks cur_count)

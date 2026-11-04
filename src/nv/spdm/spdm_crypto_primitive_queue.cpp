@@ -27,8 +27,11 @@
 #include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/supervisor.h"
+#include "nv/mctp/task.h"
 #include "nv/spdm/task.h"
 #include "sys/crypto/crypto.h"
+
+#include NV_IPC_CONFIG_H
 
 namespace nv::spdm::crypto {
 namespace {
@@ -75,9 +78,25 @@ uint32_t get_request_id_for_primitive(const CryptoPrimitiveRequestParameters& re
             else if constexpr (std::is_same_v<Request, PufUnwrapRequestParameter>) {
                 return static_cast<uint32_t>(CryptoPrimitiveRequestId::PufUnwrap);
             }
-            else {
-                static_assert(std::is_same_v<Request, Aes256GcmEncryptRequestParameter>);
+            else if constexpr (std::is_same_v<Request, Aes256GcmEncryptRequestParameter>) {
                 return static_cast<uint32_t>(CryptoPrimitiveRequestId::Aes256GcmEncrypt);
+            }
+            else if constexpr (std::is_same_v<Request,
+                                              EcdhP384GenerateKeyPairRequestParameter>) {
+                return static_cast<uint32_t>(CryptoPrimitiveRequestId::EcdhP384GenerateKeyPair);
+            }
+            else if constexpr (std::is_same_v<Request, EcdhP384ClearKeyPairRequestParameter>) {
+                return static_cast<uint32_t>(CryptoPrimitiveRequestId::EcdhP384ClearKeyPair);
+            }
+            else if constexpr (std::is_same_v<Request, Ecdsa384Sha384SignRequestParameter>) {
+                return static_cast<uint32_t>(CryptoPrimitiveRequestId::Ecdsa384Sha384Sign);
+            }
+            else {
+                static_assert(
+                    std::is_same_v<Request,
+                                   EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter>);
+                return static_cast<uint32_t>(
+                    CryptoPrimitiveRequestId::EcdhP384HkdfSha384Aes256GcmDecrypt);
             }
         },
         request);
@@ -150,6 +169,103 @@ bool receive_matching_response(nv::ipc::Queue&                    response_queue
         }
     }
     return false;
+}
+
+[[maybe_unused]] void
+process_ecdsa_sign_request(CryptoPrimitiveRequestParameters&  request_parameters,
+                           nv::ipc::TaskId                    requester_task_id,
+                           CryptoPrimitiveResponseParameters& response_parameters,
+                           bool&                              response_ready)
+{
+    auto* request = std::get_if<Ecdsa384Sha384SignRequestParameter>(&request_parameters);
+    if (request == nullptr) {
+        return;
+    }
+
+    const auto hash      = std::span<const Sha384Digest>{request->hash,
+                                                    request->hash == nullptr ? 0U : 1U};
+    const auto signature = std::span<std::array<uint8_t, Ecdsa384SignatureSize>>{
+        request->signature, request->signature == nullptr ? 0U : 1U};
+    if (requester_task_id != nv::ipc::TaskId::Mctp || request->hash == nullptr
+        || request->signature == nullptr
+        || !nv::mctp::get_task().checking_parameter_is_from_self_stack(hash, signature)) {
+        response_parameters.status = CryptoStatus::FailEcdsaSign;
+    }
+    else {
+        response_parameters.status = spdm_ecdsa_sign(request->signature->data(),
+                                                     request->signature->size(),
+                                                     request->hash->data(),
+                                                     request->hash->size());
+    }
+    response_ready = true;
+}
+
+[[maybe_unused]] void
+process_ecdh_request(CryptoPrimitiveRequestParameters&  request_parameters,
+                     nv::ipc::TaskId                    requester_task_id,
+                     CryptoPrimitiveResponseParameters& response_parameters,
+                     bool&                              response_ready)
+{
+    if (auto* request = std::get_if<EcdhP384GenerateKeyPairRequestParameter>(
+            &request_parameters)) {
+        const auto public_key = std::span<nv::crypto::EcdhP384PublicKey>{
+            request->public_key, request->public_key == nullptr ? 0U : 1U};
+        if (requester_task_id != nv::ipc::TaskId::Mctp || request->public_key == nullptr
+            || !nv::mctp::get_task().checking_parameter_is_from_self_stack(public_key)) {
+            response_parameters.status = CryptoStatus::FailEcdhKeyGeneration;
+        }
+        else {
+            response_parameters.status = ecdh_p384_generate_key_pair(*request->public_key);
+        }
+        response_ready = true;
+    }
+    else if (auto* request = std::get_if<EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter>(
+                 &request_parameters)) {
+        if (requester_task_id != nv::ipc::TaskId::Mctp || request->peer_public_key == nullptr
+            || request->salt == nullptr || request->info == nullptr || request->aad == nullptr
+            || request->iv == nullptr || request->ciphertext == nullptr
+            || request->tag == nullptr || request->plaintext_out == nullptr
+            || request->salt_size > EcdhP384PrimitiveMaxSaltBytes
+            || request->info_size > EcdhP384PrimitiveMaxInfoBytes
+            || request->aad_size > EcdhP384PrimitiveMaxAadBytes
+            || request->ciphertext_size == 0U
+            || request->ciphertext_size > EcdhP384PrimitiveMaxCiphertextBytes
+            || request->plaintext_out_size != request->ciphertext_size
+            || request->plaintext_out_size > EcdhP384PrimitiveMaxCiphertextBytes) {
+            response_parameters.status = CryptoStatus::FailAesGcmInvalidInput;
+        }
+        else {
+            const auto peer_public_key = std::span<const nv::crypto::EcdhP384PublicKey>{
+                request->peer_public_key, 1U};
+            const auto salt = std::span<const uint8_t>{request->salt, request->salt_size};
+            const auto info = std::span<const uint8_t>{request->info, request->info_size};
+            const auto aad  = std::span<const uint8_t>{request->aad, request->aad_size};
+            const auto iv   = std::span<const uint8_t, nv::crypto::AesGcmIvBytes>{
+                request->iv, nv::crypto::AesGcmIvBytes};
+            const auto ciphertext = std::span<const uint8_t>{request->ciphertext,
+                                                             request->ciphertext_size};
+            const auto tag        = std::span<const uint8_t, nv::crypto::AesGcmTagBytes>{
+                request->tag, nv::crypto::AesGcmTagBytes};
+            auto  plaintext = std::span<uint8_t>{request->plaintext_out,
+                                                 request->plaintext_out_size};
+            auto& mctp_task = nv::mctp::get_task();
+            if (!mctp_task.checking_parameter_is_from_self_stack(
+                    peer_public_key, salt, info, aad, iv, ciphertext, tag, plaintext)) {
+                response_parameters.status = CryptoStatus::FailAesGcmInvalidInput;
+            }
+            else {
+                response_parameters.status = ecdh_p384_hkdf_sha384_aes_256_gcm_decrypt(
+                    peer_public_key.front(), salt, info, aad, iv, ciphertext, tag, plaintext);
+            }
+        }
+        response_ready = true;
+    }
+    else if (std::get_if<EcdhP384ClearKeyPairRequestParameter>(&request_parameters)) {
+        response_parameters.status = requester_task_id == nv::ipc::TaskId::Mctp
+                                       ? ecdh_p384_clear_key_pair()
+                                       : CryptoStatus::FailEcdhKeyAgreement;
+        response_ready             = true;
+    }
 }
 
 }  // namespace
@@ -271,16 +387,23 @@ void process_primitive_request_queue()
         if (!is_valid_requester_core(requester_core_id)) {
             response_ready = false;
         }
-        else if (std::get_if<TrngGenerateRequestParameter>(&request_parameters)) {
-            response_parameters.status = sys::crypto::trng_generate(
-                std::span<uint8_t>(response_parameters.output.data(), UdsKeyBytes));
+        else if (auto* request = std::get_if<TrngGenerateRequestParameter>(
+                     &request_parameters)) {
+            if (request->output_size == 0U
+                || request->output_size > TrngPrimitiveMaxOutputBytes) {
+                response_parameters.status = CryptoStatus::FailRandomGen;
+            }
+            else {
+                response_parameters.status = sys::crypto::trng_generate(std::span<uint8_t>(
+                    response_parameters.output.data(), request->output_size));
+            }
             response_ready = true;
         }
         else if (auto* request = std::get_if<PufWrapRequestParameter>(&request_parameters)) {
             const nv::crypto::KeyClearGuard request_guard{std::span<uint8_t>(request->key)};
             response_parameters.status = sys::crypto::puf_wrap(
                 std::span<const uint8_t>(request->key),
-                std::span<uint8_t>(response_parameters.output));
+                std::span<uint8_t>(response_parameters.output.data(), PufWrappedBytes));
             response_ready = true;
         }
         else if (auto* request = std::get_if<PufUnwrapRequestParameter>(&request_parameters)) {
@@ -314,6 +437,25 @@ void process_primitive_request_queue()
                         response_parameters.output.data() + request->plaintext_size,
                         nv::crypto::AesGcmTagBytes));
             }
+            response_ready = true;
+        }
+        else if constexpr (nv::ipc::EnableEcdhP384Engine) {
+            if (std::holds_alternative<EcdhP384GenerateKeyPairRequestParameter>(
+                    request_parameters)
+                || std::holds_alternative<EcdhP384ClearKeyPairRequestParameter>(
+                    request_parameters)
+                || std::holds_alternative<EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter>(
+                    request_parameters)) {
+                process_ecdh_request(
+                    request_parameters, requester_task_id, response_parameters, response_ready);
+            }
+            else if (std::holds_alternative<Ecdsa384Sha384SignRequestParameter>(
+                         request_parameters)) {
+                process_ecdsa_sign_request(
+                    request_parameters, requester_task_id, response_parameters, response_ready);
+            }
+        }
+        else {
             response_ready = true;
         }
 

@@ -24,7 +24,8 @@ enum class ParsingApFwType : uint8_t
 {
     Begin,
     ActiveSlot,
-    UpdateSlot,  // for pldm update fw
+    UpdateSlot,    // for pldm update fw
+    InactiveSlot,  // for SecureBoot recovery
     End,
 };
 

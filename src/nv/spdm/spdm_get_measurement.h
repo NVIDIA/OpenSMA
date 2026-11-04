@@ -53,7 +53,7 @@ typedef struct [[gnu::packed]]
     uint8_t minor_msb;
     uint8_t major;
 } MeasurementVersionValueT;
-constexpr MeasurementVersionValueT MeasurementVersion{0x0, 0x0, 0x0, 0x02};
+constexpr MeasurementVersionValueT MeasurementVersion{0x00, 0x01, 0x00, 0x02};
 
 typedef struct [[gnu::packed]]
 {
@@ -82,8 +82,8 @@ typedef enum
     MeasReservedIndex6,        // Index 6: Reserved
     MeasReservedIndex7,        // Index 7: Reserved
     MeasReservedIndex8,        // Index 8: Reserved
-    MeasApFirmwareHash,        // Index 9: AP Firmware (Update)
-    MeasReservedIndex10,       // Index 10: Reserved
+    MeasAp1FirmwareHash,       // Index 9: AP1 Firmware
+    MeasAp2FirmwareHash,       // Index 10: AP2 Firmware
     MeasReservedIndex11,       // Index 11: Reserved
     MeasReservedIndex12,       // Index 12: Reserved
     MeasFuses,                 // Index 13: Fuses
@@ -94,31 +94,31 @@ typedef enum
     MeasMcuActiveFirmwareSecurityVersion,    // Index 18: Firmware Security Version (Active)
     MeasMcuInactiveFirmwareSecurityVersion,  // Index 19: Firmware Security Version (Inactive)
     MeasReservedIndex20,                     // Index 20: Reserved
-    MeasApFirmwareSecurityVersion,           // Index 21: AP Firmware Security Version (Update)
-    MeasReservedIndex22,                     // Index 22: Reserved
+    MeasAp1FirmwareSecurityVersion,          // Index 21: AP1 Firmware Security Version
+    MeasAp2FirmwareSecurityVersion,          // Index 22: AP2 Firmware Security Version
     MeasReservedIndex23,                     // Index 23: Reserved
     MeasReservedIndex24,                     // Index 24: Reserved
     MeasReservedIndex25,                     // Index 25: Reserved
     MeasMcxnUuid,                            // Index 26: MCXN556 UUID
-    MeasReservedIndex27,                     // Index 27: Reserved
-    MeasReservedIndex28,                     // Index 28: Reserved
+    MeasAp1ChipId,                           // Index 27: AP1 Chip ID
+    MeasAp2ChipId,                           // Index 28: AP2 Chip ID
     MeasReservedIndex29,                     // Index 29: Reserved
     MeasReservedIndex30,                     // Index 30: Reserved
-    MeasApMetadataHash,                      // Index 31: AP metadata hash (Update)
-    MeasReservedIndex32,                     // Index 32: Reserved
+    MeasAp1MetadataHash,                     // Index 31: AP1 metadata hash
+    MeasAp2MetadataHash,                     // Index 32: AP2 metadata hash
     MeasReservedIndex33,                     // Index 33: Reserved
     MeasReservedIndex34,                     // Index 34: Reserved
-    MeasReservedIndex35,                     // Index 35: Reserved
-    MeasReservedIndex36,                     // Index 36: Reserved
+    MeasAp1FuseMask,                         // Index 35: AP1 fuse mask
+    MeasAp2FuseMask,                         // Index 36: AP2 fuse mask
     MeasReservedIndex37,                     // Index 37: Reserved
     MeasReservedIndex38,                     // Index 38: Reserved
     MeasReservedIndex39,                     // Index 39: Reserved
     MeasReservedIndex40,                     // Index 40: Reserved
-    MeasApFirmwareVersion,                   // Index 41: AP Firmware Version (Update)
-    MeasReservedIndex42,                     // Index 42: Reserved
+    MeasAp1FirmwareVersion,                  // Index 41: AP1 Firmware Version
+    MeasAp2FirmwareVersion,                  // Index 42: AP2 Firmware Version
     MeasMcuBootStatus,                       // Index 43: MCU Boot Status
-    MeasApBootStatus,                        // Index 44: AP Boot Status
-    MeasReservedIndex45,                     // Index 45: Reserved
+    MeasAp1BootStatus,                       // Index 44: AP1 Boot Status
+    MeasAp2BootStatus,                       // Index 45: AP2 Boot Status
     MeasReservedIndex46,                     // Index 46: Reserved
     MeasReservedIndex47,                     // Index 47: Reserved
     MeasReservedIndex48,                     // Index 48: Reserved
@@ -159,8 +159,8 @@ constexpr std::array<MeasInfoT, MeasMax> MeasInfos = {
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex6
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex7
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex8
-     {.meas_type = 0x1, .meas_size = 48},   // MeasApFirmwareHash
-     {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex10
+     {.meas_type = 0x1, .meas_size = 48},   // MeasAp1FirmwareHash
+     {.meas_type = 0x1, .meas_size = 48},   // MeasAp2FirmwareHash
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex11
      {.meas_type = 0x1, .meas_size = 48},   // MeasReservedIndex12
      {.meas_type = 0x2, .meas_size = 48},   // MeasFuses
@@ -171,31 +171,31 @@ constexpr std::array<MeasInfoT, MeasMax> MeasInfos = {
      {.meas_type = 0x87, .meas_size = 8},   // MeasMcuActiveFirmwareSecurityVersion
      {.meas_type = 0x87, .meas_size = 8},   // MeasMcuInactiveFirmwareSecurityVersion
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex20
-     {.meas_type = 0x87, .meas_size = 8},   // MeasApFirmwareSecurityVersion
-     {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex22
+     {.meas_type = 0x87, .meas_size = 8},   // MeasAp1FirmwareSecurityVersion
+     {.meas_type = 0x87, .meas_size = 8},   // MeasAp2FirmwareSecurityVersion
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex23
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex24
      {.meas_type = 0x82, .meas_size = 1},   // MeasReservedIndex25
      {.meas_type = 0x82, .meas_size = 16},  // MeasMcxnUuid
-     {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex27
-     {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex28
+     {.meas_type = 0x82, .meas_size = 16},  // MeasAp1ChipId
+     {.meas_type = 0x82, .meas_size = 16},  // MeasAp2ChipId
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex29
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex30
-     {.meas_type = 0x3, .meas_size = 48},   // MeasApMetadataHash
-     {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex32
+     {.meas_type = 0x3, .meas_size = 48},   // MeasAp1MetadataHash
+     {.meas_type = 0x3, .meas_size = 48},   // MeasAp2MetadataHash
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex33
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex34
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex35
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex36
+     {.meas_type = 0x83, .meas_size = 4},   // MeasAp1FuseMask
+     {.meas_type = 0x83, .meas_size = 4},   // MeasAp2FuseMask
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex37
      {.meas_type = 0x86, .meas_size = 7},   // MeasReservedIndex38
      {.meas_type = 0x86, .meas_size = 7},   // MeasReservedIndex39
      {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex40
-     {.meas_type = 0x86, .meas_size = 4},   // MeasApFirmwareVersion
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex42
+     {.meas_type = 0x86, .meas_size = 4},   // MeasAp1FirmwareVersion
+     {.meas_type = 0x86, .meas_size = 4},   // MeasAp2FirmwareVersion
      {.meas_type = 0x83, .meas_size = 1},   // MeasMcuBootStatus (Index 43: MCU Boot Status)
-     {.meas_type = 0x83, .meas_size = 1},   // MeasApBootStatus (Index 44: AP Boot Status)
-     {.meas_type = 0x83, .meas_size = 1},   // MeasReservedIndex45
+     {.meas_type = 0x83, .meas_size = 1},   // MeasAp1BootStatus
+     {.meas_type = 0x83, .meas_size = 1},   // MeasAp2BootStatus
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex46
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex47
      {.meas_type = 0x3, .meas_size = 48},   // MeasReservedIndex48

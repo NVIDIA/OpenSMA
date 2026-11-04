@@ -1613,6 +1613,99 @@ TEST_F(nsmtest, type5_get_sma_baseboard_WP_settings)
     ensure::is_eq(ntx.completion_code, Ccode::Success);
 };
 
+TEST_F(nsmtest, type5_get_device_mode_settings)
+{
+    constexpr auto ProgramCpldIndex = static_cast<uint8_t>(
+        DeviceModeIndex::ProgramCpldFeatureRow);
+    constexpr auto    OtpCpldIndex = static_cast<uint8_t>(DeviceModeIndex::OtpCpldFeatureRow);
+    constexpr uint8_t ProgramCpldResponseLength = 18;
+    constexpr uint8_t OtpCpldResponseLength     = 5;
+    constexpr uint16_t ProgramCpldCurrentLength  = ProgramCpldResponseLength
+                                                - sizeof(nv::mctp::CpldFeatureRowResponse);
+    constexpr uint16_t OtpCpldCurrentLength = OtpCpldResponseLength
+                                            - sizeof(nv::mctp::CpldFeatureRowResponse);
+
+    arr8_req reqV1{0x05,              // nvmsg
+                   0x83,              // cmd
+                   0x04,              // size
+                   ProgramCpldIndex,  // index using 32 bits
+                   0x0,
+                   0x0,
+                   0x0};
+
+    arr8_req reqV2{0x05,  // nvmsg
+                   0x83,  // cmd
+                   0x00,  // rsvd8
+                   0x04,  // size16
+                   0x00,
+                   0x00,  // rsvd16
+                   0x00,
+                   ProgramCpldIndex,  // index using 32 bits
+                   0x0,
+                   0x0,
+                   0x0};
+
+    arr8_res res{};
+
+    // V1 request for ProgramCpldFeatureRow
+    fixture.sendRecv_nsm(reqV1, res, 7, false);
+    auto& response = fixture.from(fixture.result);
+    auto& ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+    ensure::is_eq(static_cast<uint8_t>(ntx.data_size), ProgramCpldResponseLength);
+    // check both current_length and pending_length
+    auto     ptVoid         = static_cast<void*>(&ntx.data[0]);
+    auto     cpld_feature   = static_cast<nv::mctp::CpldFeatureRowResponse*>(ptVoid);
+    uint16_t current_length = cpld_feature->current_length;
+    uint16_t pending_length = cpld_feature->pending_length;
+    ensure::is_eq(current_length, ProgramCpldCurrentLength);
+    ensure::is_eq(pending_length, 0);
+
+    // V2 request for ProgramCpldFeatureRow
+    fixture.sendRecv_v2_nsm(reqV2, res, 11, false);
+    auto& response_v2 = fixture.from(fixture.result);
+    auto& ntx_v2      = NsmPktResp::from(response_v2);
+    ensure::is_eq(ntx_v2.completion_code, Ccode::Success);
+    ensure::is_eq(static_cast<uint8_t>(ntx_v2.data_size), ProgramCpldResponseLength);
+    // check both current_length and pending_length
+    ptVoid         = static_cast<void*>(&ntx_v2.data[0]);
+    cpld_feature   = static_cast<nv::mctp::CpldFeatureRowResponse*>(ptVoid);
+    current_length = cpld_feature->current_length;
+    pending_length = cpld_feature->pending_length;
+    ensure::is_eq(current_length, ProgramCpldCurrentLength);
+    ensure::is_eq(pending_length, 0);
+
+    // V1 for OtpCpldFeatureRow
+    reqV1[3] = OtpCpldIndex;
+    fixture.sendRecv_nsm(reqV1, res, 7, false);
+    response = fixture.from(fixture.result);
+    ntx      = NsmPktResp::from(response);
+    ensure::is_eq(ntx.completion_code, Ccode::Success);
+    ensure::is_eq(static_cast<uint8_t>(ntx.data_size), OtpCpldResponseLength);
+    // check both current_length and pending_length
+    ptVoid         = static_cast<void*>(&ntx.data[0]);
+    cpld_feature   = static_cast<nv::mctp::CpldFeatureRowResponse*>(ptVoid);
+    current_length = cpld_feature->current_length;
+    pending_length = cpld_feature->pending_length;
+    ensure::is_eq(current_length, OtpCpldCurrentLength);
+    ensure::is_eq(pending_length, 0);
+
+    // V2 for OtpCpldFeatureRow
+    reqV2[7] = OtpCpldIndex;
+    fixture.sendRecv_v2_nsm(reqV2, res, 11, false);
+    response_v2 = fixture.from(fixture.result);
+    ntx_v2      = NsmPktResp::from(response_v2);
+    ensure::is_eq(ntx_v2.completion_code, Ccode::Success);
+    ensure::is_eq(static_cast<uint8_t>(ntx_v2.data_size), OtpCpldResponseLength);
+    // check both current_length and pending_length
+    ptVoid         = static_cast<void*>(&ntx_v2.data[0]);
+    cpld_feature   = static_cast<nv::mctp::CpldFeatureRowResponse*>(ptVoid);
+    current_length = cpld_feature->current_length;
+    pending_length = cpld_feature->pending_length;
+    ensure::is_eq(current_length, OtpCpldCurrentLength);
+    ensure::is_eq(pending_length, 0);
+};
+
 // ---------- Type 3 generic test TelemetryRecord ----------
 TEST_F(nsmtest, TelemetryRecord)
 {

@@ -101,6 +101,8 @@ Task::Task(Config config) noexcept
         }
     }
 
+    _ap_status_timer_id = config.ap_status_timer_id;
+
     nv::perf_mon::Driver::set_oob_bus_valid(_oob_bus);
     nv::perf_mon::Driver::set_oob_bus_type(_oob_bus, nv::perf_mon::OobBusType::Spi);
 }
@@ -206,8 +208,18 @@ Task::Status Task::tx(const mctp::Packet& packet)
     return Task::Status::Ok;
 }
 
+void Task::defer_ap_status_probe()
+{
+    // EROT SPI bus has traffic: push out the I2C 0x63 recovery-mode liveness probe so it
+    // won't misread the EROT (busy on SPI) as "in recovery" and tear down the endpoint.
+    if (_ap_status_timer_id != ipc::TimerId::End) {
+        (void)ipc::Timer::reset_by_id(_ap_status_timer_id);
+    }
+}
+
 void Task::handle_tx(Buffer& buffer)
 {
+    defer_ap_status_probe();
     auto status = _spb.spi_mctp_send(buffer);
     if (status != SpbStatus::Ok) {
         error_log(status, _client);
@@ -226,6 +238,8 @@ void Task::handle_rx()
         nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
     }
     else {
+        // EROT SPI bus carried data: defer the I2C 0x63 recovery-mode liveness probe.
+        defer_ap_status_probe();
         forward(buffer);
     }
 }

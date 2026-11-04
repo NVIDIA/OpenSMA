@@ -193,6 +193,104 @@ static void spdm_log_helper(nv::logger::EventStructItem event, const Args... eve
              log_data.at(7));
 }
 
+constexpr uint32_t SignatureEfuseWordCount = 12;
+constexpr size_t   SignaturePaddingSize    = 1;
+constexpr size_t   HalfSignatureSize       = SignatureEfuseWordCount * sizeof(uint32_t)
+                                   + SignaturePaddingSize;
+using HalfSignature = std::array<uint8_t, HalfSignatureSize>;
+
+enum class SignatureHalf : uint8_t
+{
+    R,
+    S,
+};
+
+constexpr uint32_t FirstSignatureWordIndex = 0;
+constexpr uint32_t LastSignatureWordIndex  = SignatureEfuseWordCount - 1;
+constexpr uint32_t RReadStartEfuseAddress  = 43;
+constexpr uint32_t RReadEndEfuseAddress    = 32;
+constexpr uint32_t SUpperReadStartAddress  = 67;
+constexpr uint32_t SUpperReadEndAddress    = 63;
+constexpr uint32_t SLowerReadStartAddress  = 50;
+constexpr uint32_t SLowerReadEndAddress    = 44;
+constexpr uint32_t SLowerEfuseAddressBias  = 55;
+constexpr uint32_t SUpperWordCount         = 5;
+constexpr uint32_t SUpperLastWordIndex     = SUpperWordCount - 1;
+constexpr uint32_t SLowerFirstWordIndex    = SUpperWordCount;
+
+constexpr uint32_t signature_efuse_address(SignatureHalf signature_half, uint32_t word_index)
+{
+    return signature_half == SignatureHalf::R
+             ? RReadStartEfuseAddress - word_index
+             : (word_index < SUpperWordCount ? SUpperReadStartAddress : SLowerEfuseAddressBias)
+                   - word_index;
+}
+
+static_assert(signature_efuse_address(SignatureHalf::R, FirstSignatureWordIndex)
+              == RReadStartEfuseAddress);
+static_assert(signature_efuse_address(SignatureHalf::R, LastSignatureWordIndex)
+              == RReadEndEfuseAddress);
+static_assert(signature_efuse_address(SignatureHalf::S, FirstSignatureWordIndex)
+              == SUpperReadStartAddress);
+static_assert(signature_efuse_address(SignatureHalf::S, SUpperLastWordIndex)
+              == SUpperReadEndAddress);
+static_assert(signature_efuse_address(SignatureHalf::S, SLowerFirstWordIndex)
+              == SLowerReadStartAddress);
+static_assert(signature_efuse_address(SignatureHalf::S, LastSignatureWordIndex)
+              == SLowerReadEndAddress);
+
+static void read_and_normalize_half_signature(SignatureHalf  signature_half,
+                                              HalfSignature& signature_value,
+                                              uint8_t&       signature_length,
+                                              bool&          generate_chain_success)
+{
+    auto value_iter = signature_value.rbegin();
+    for (uint32_t word_index = 0; word_index < SignatureEfuseWordCount; ++word_index) {
+        const uint32_t efuse_address = signature_efuse_address(signature_half, word_index);
+        uint32_t       otp_data      = 0;
+        if (nv::flash::Status::Ok != nv::flash::Flash::read_efuse(efuse_address, otp_data)) {
+            spdm_log_helper(
+                nv::logger::Event::SpdmDevIkGenerateFail,
+                static_cast<uint8_t>(DevIkGenerateErrorCode::SignatureReadEfuseFail),
+                static_cast<uint8_t>(efuse_address));
+            generate_chain_success = false;
+        }
+        const auto
+            otp_data_view = *std::bit_cast<std::array<uint8_t, sizeof(decltype(otp_data))>*>(
+                &otp_data);
+        for (const uint8_t otp_data_byte : std::ranges::reverse_view(otp_data_view)) {
+            // coverity[cert_ctr50_cpp_violation]
+            *value_iter++ = otp_data_byte;
+        }
+    }
+
+    uint32_t leading_zero_length = 0;
+    for (auto it = signature_value.begin(); it != signature_value.end() && *it == 0; ++it) {
+        // coverity[cert_int30_c_violation]
+        ++leading_zero_length;
+    }
+
+    uint32_t           copy_offset              = 0;
+    constexpr uint8_t  SignMask                 = 0x80;
+    constexpr uint32_t MaxLengthOfHalfSignature = HalfSignature{}.size();
+    if (leading_zero_length == MaxLengthOfHalfSignature) {
+        signature_length = 0;
+    }
+    else if ((signature_value.at(leading_zero_length) & SignMask) != 0) {
+        signature_length = MaxLengthOfHalfSignature - leading_zero_length + 1;
+        copy_offset      = 1;
+    }
+    else {
+        signature_length = MaxLengthOfHalfSignature - leading_zero_length;
+    }
+
+    HalfSignature normalized_value{};
+    std::copy(signature_value.begin() + leading_zero_length,
+              signature_value.end(),
+              normalized_value.begin() + copy_offset);
+    signature_value = normalized_value;
+}
+
 }  // namespace
 uint16_t get_l1_cert_len()
 {
@@ -853,28 +951,6 @@ NV_PRIVILEGED_FUNCTION bool read_devik_request_impl(nv::spdm::ik::DevIkRequest& 
             LowerHalfByte);
     }
 
-#ifdef EDGELOCK2GO_CERT
-    auto& serial_number_array = *std::bit_cast<std::array<uint32_t, 4>*>(
-        &dev_ik_req.serial_number);
-
-    // read serial number from efuse
-    constexpr nv::flash::Address serial_number_start_address = 68;
-    for (uint32_t i = 0; i < 4; i++) {
-        auto ret = nv::flash::Flash::read_efuse(serial_number_start_address + i,
-                                                serial_number_array.at(i));
-        if (ret != nv::flash::Status::Ok) {
-            read_devik_success = false;
-        }
-    }
-
-    // Change the endian
-    for (auto& _serial_number : serial_number_array) {
-        std::array<uint8_t, 4>&
-            serial_number_bytes_view = *std::bit_cast<std::array<uint8_t, 4>*>(&_serial_number);
-        std::reverse(serial_number_bytes_view.begin(), serial_number_bytes_view.end());
-    }
-#endif
-
     // find the L3 subject_key_identifier on the flash
     std::span<const uint8_t> l3_cert_span(l3_cert_array);
     dev_ik_req.authority_key_identifier = nv::spdm::certlib::find_subject_key_identifier(
@@ -969,6 +1045,39 @@ bool generate_l4_cert()
     if (!read_devik_request(dev_ik_req, dda_ordinal_number, l3_cert_array)) {
         generate_chain_success = false;
     }
+
+    nv::flash::Data provisioned_dda_ordinal{};
+    if (nv::flash::Flash::get_data(nv::flash::Key::NpdsDdaOrdinalNumber,
+                                   provisioned_dda_ordinal)
+        != nv::flash::Status::Ok) {
+        spdm_log_helper(nv::logger::Event::SpdmDevIkGenerateFail,
+                        static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberReadNpdsFail));
+        return false;
+    }
+    const auto certificate_profile = nv::spdm::ik::certificate_profile_from_dda(
+        provisioned_dda_ordinal);
+
+    if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+        auto& serial_number_array = *std::bit_cast<std::array<uint32_t, 4>*>(
+            &dev_ik_req.serial_number);
+
+        constexpr nv::flash::Address SerialNumberStartAddress = 68;
+        for (uint32_t i = 0; i < serial_number_array.size(); i++) {
+            if (nv::flash::Flash::read_efuse(SerialNumberStartAddress + i,
+                                             serial_number_array.at(i))
+                != nv::flash::Status::Ok) {
+                spdm_log_helper(
+                    nv::logger::Event::SpdmDevIkGenerateFail,
+                    static_cast<uint8_t>(DevIkGenerateErrorCode::SerialNumberReadEfuseFail));
+                generate_chain_success = false;
+            }
+        }
+
+        for (auto& serial_number : serial_number_array) {
+            auto& serial_number_bytes = *std::bit_cast<std::array<uint8_t, 4>*>(&serial_number);
+            std::reverse(serial_number_bytes.begin(), serial_number_bytes.end());
+        }
+    }
     // dev_ik_req.subject_key_identifier
     // calculate the hash value of pub key
     constexpr uint32_t
@@ -987,121 +1096,14 @@ bool generate_l4_cert()
     //        r     INTEGER,
     //        s     INTEGER  }
     // prepare the signature of the sequence
-    {
-        // r part of signature read from otp
-        constexpr std::array<uint32_t, 12> SignatureEfuseAddrR = {
-            32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43};
-
-        auto r_value_iter = dev_ik_req.signature.r_value.rbegin();
-        for (const uint32_t EfuseAddr : std::ranges::reverse_view(SignatureEfuseAddrR)) {
-            uint32_t opt_data = 0;
-            // read efuse fail
-            if (nv::flash::Status::Ok != nv::flash::Flash::read_efuse(EfuseAddr, opt_data)) {
-                spdm_log_helper(
-                    nv::logger::Event::SpdmDevIkGenerateFail,
-                    static_cast<uint8_t>(DevIkGenerateErrorCode::SignatureReadEfuseFail),
-                    static_cast<uint8_t>(EfuseAddr));
-                generate_chain_success = false;
-            }
-            auto opt_data_view = *std::bit_cast<
-                std::array<uint8_t, sizeof(decltype(opt_data))>*>(&opt_data);
-            for (const uint8_t OptDataChar : std::ranges::reverse_view(opt_data_view)) {
-                // coverity[cert_ctr50_cpp_violation]
-                *r_value_iter++ = OptDataChar;
-            }
-        }
-        // check the length value
-        uint32_t leading_zero_length = 0;
-        for (auto it = dev_ik_req.signature.r_value.begin();
-             it != dev_ik_req.signature.r_value.end() && *it == 0;
-             it++) {
-            // coverity[cert_int30_c_violation]
-            leading_zero_length++;
-        }
-        uint32_t           copy_offset              = 0;
-        constexpr uint8_t  SignMask                 = 0x80;
-        constexpr uint32_t MaxLengthOfHalfSignature = 49;
-
-        // check need the padding for uint or not
-        if (leading_zero_length == MaxLengthOfHalfSignature) {  // edge case
-            dev_ik_req.signature.r_length_token = 0;
-            copy_offset                         = 0;
-        }
-        else if ((dev_ik_req.signature.r_value.at(leading_zero_length) & SignMask) != 0) {
-            dev_ik_req.signature.r_length_token = MaxLengthOfHalfSignature - leading_zero_length
-                                                + 1;
-            copy_offset = 1;
-        }
-        else {
-            dev_ik_req.signature.r_length_token = MaxLengthOfHalfSignature
-                                                - leading_zero_length;
-            copy_offset = 0;
-        }
-
-        // move the r_value to the start of array
-        decltype(dev_ik_req.signature.r_value) temp{0};
-        std::copy(dev_ik_req.signature.r_value.begin() + leading_zero_length,
-                  dev_ik_req.signature.r_value.end(),
-                  temp.begin() + copy_offset);
-        dev_ik_req.signature.r_value = temp;
-    }
-    {
-        // s part of signature read from otp
-        constexpr std::array<uint32_t, 12> SignatureEfuseAddrS = {
-            44, 45, 46, 47, 48, 49, 50, 63, 64, 65, 66, 67};
-
-        auto s_value_iter = dev_ik_req.signature.s_value.rbegin();
-        for (const uint32_t EfuseAddr : std::ranges::reverse_view(SignatureEfuseAddrS)) {
-            uint32_t opt_data = 0;
-            // read efuse fail
-            if (nv::flash::Status::Ok != nv::flash::Flash::read_efuse(EfuseAddr, opt_data)) {
-                spdm_log_helper(
-                    nv::logger::Event::SpdmDevIkGenerateFail,
-                    static_cast<uint8_t>(DevIkGenerateErrorCode::SignatureReadEfuseFail),
-                    static_cast<uint8_t>(EfuseAddr));
-                generate_chain_success = false;
-            }
-            auto opt_data_view = *std::bit_cast<
-                std::array<uint8_t, sizeof(decltype(opt_data))>*>(&opt_data);
-            for (const uint8_t OptDataChar : std::ranges::reverse_view(opt_data_view)) {
-                // coverity[cert_ctr50_cpp_violation]
-                *s_value_iter++ = OptDataChar;
-            }
-        }
-        // check the length value
-        uint32_t leading_zero_length = 0;
-        for (auto it = dev_ik_req.signature.s_value.begin();
-             it != dev_ik_req.signature.s_value.end() && *it == 0;
-             it++) {
-            // coverity[cert_int30_c_violation]
-            leading_zero_length++;
-        }
-        uint32_t           copy_offset              = 0;
-        constexpr uint8_t  SignMask                 = 0x80;
-        constexpr uint32_t MaxLengthOfHalfSignature = 49;
-        // check need the padding for uint or not
-        if (leading_zero_length == MaxLengthOfHalfSignature) {  // edge case
-            dev_ik_req.signature.s_length_token = 0;
-            copy_offset                         = 0;
-        }
-        else if ((dev_ik_req.signature.s_value.at(leading_zero_length) & SignMask) != 0) {
-            dev_ik_req.signature.s_length_token = MaxLengthOfHalfSignature - leading_zero_length
-                                                + 1;
-            copy_offset = 1;
-        }
-        else {
-            dev_ik_req.signature.s_length_token = MaxLengthOfHalfSignature
-                                                - leading_zero_length;
-            copy_offset = 0;
-        }
-
-        // move the s_value to the start of array
-        decltype(dev_ik_req.signature.s_value) temp{0};
-        std::copy(dev_ik_req.signature.s_value.begin() + leading_zero_length,
-                  dev_ik_req.signature.s_value.end(),
-                  temp.begin() + copy_offset);
-        dev_ik_req.signature.s_value = temp;
-    }
+    read_and_normalize_half_signature(SignatureHalf::R,
+                                      dev_ik_req.signature.r_value,
+                                      dev_ik_req.signature.r_length_token,
+                                      generate_chain_success);
+    read_and_normalize_half_signature(SignatureHalf::S,
+                                      dev_ik_req.signature.s_value,
+                                      dev_ik_req.signature.s_length_token,
+                                      generate_chain_success);
     // calculate sequence length on signature
     // coverity[cert_int31_c_violation]
     dev_ik_req.signature.sequence_small.length = dev_ik_req.signature.r_length_token
@@ -1118,7 +1120,7 @@ bool generate_l4_cert()
                 + sizeof(dev_ik_req.signature.bit_string.padding_length);
 
     // start to reconstruct the ik cert
-    auto dev_ik_helper = nv::spdm::ik::DevIkHelper(dev_ik_req);
+    auto dev_ik_helper = nv::spdm::ik::DevIkHelper(dev_ik_req, certificate_profile);
     auto l4_cert_array = nv::spdm::certlib::CertArray();
 
     if (!construct_l4_cert(dev_ik_helper, l4_cert_array)) {
@@ -1519,6 +1521,20 @@ bool verify_l2_l3_cert()
         != true) {
         spdm_log_helper(nv::logger::Event::SpdmL3CertGenerateFail,
                         static_cast<uint8_t>(L3CertGenerateErrorCode::VerifySignatureFail));
+        return false;
+    }
+
+    const uint32_t dda_ordinal_number = nv::spdm::certlib::parse_dda_ordinal_number(
+        std::span<const uint8_t>(l3_cert).first(l3_cert_len));
+    if (dda_ordinal_number == std::numeric_limits<uint32_t>::max()) {
+        spdm_log_helper(nv::logger::Event::SpdmL3CertGenerateFail,
+                        static_cast<uint8_t>(L3CertGenerateErrorCode::DdaNumberParseFail));
+        return false;
+    }
+    if (nv::flash::Flash::set_data(nv::flash::Key::NpdsDdaOrdinalNumber, dda_ordinal_number)
+        != nv::flash::Status::Ok) {
+        spdm_log_helper(nv::logger::Event::SpdmL3CertGenerateFail,
+                        static_cast<uint8_t>(L3CertGenerateErrorCode::DdaNumberSetNpdsFail));
         return false;
     }
     return true;

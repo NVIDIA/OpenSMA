@@ -332,6 +332,13 @@ void E1sHotSwap::update_pins([[maybe_unused]] bool perstL)
  */
 void E1sHotSwap::set_leds(bool amberLed, bool blueLed)
 {
+    // A BMC amber override owns the tristate LED pin; skip the AHS base-LED
+    // write so HSSM state transitions do not stomp the active blink pattern.
+    // On release, AHS re-runs updateHotSwap() so set_leds() resumes.
+    if (amber_active()) {
+        return;
+    }
+
     // Convert 2-pin LED control to tristate pin control
     // (For some reason amber is active high, blue is active low)
     if (blueLed && !amberLed) {
@@ -453,6 +460,73 @@ void E1sHotSwap::startTimer()
         nv::error("Error setting drive timer event bits\n");
         nv::logger::error(logger::Event::AhsTimerSetFail, {static_cast<uint8_t>(_driveNum)});
     }
+}
+
+/**
+ * @brief Drives the tristate LED pin for the current amber pattern step
+ */
+void E1sHotSwap::render_amber_step()
+{
+    const auto pattern = amber_pattern(amber_state);
+    if (pattern.empty()) {
+        return;
+    }
+    if (amber_step >= pattern.size()) {
+        amber_step = 0;
+    }
+    const auto& step = pattern[amber_step];
+    // Amber on = pin High, amber off = pin HiZ (see set_leds tristate mapping).
+    set_pin(pinout.led_tristate_ctrl_port, pinout.led_tristate_ctrl_pin, step.on ? High : HiZ);
+    amber_ms_remaining = step.ms;
+}
+
+/**
+ * @brief Sets the BMC-requested amber LED override state for this drive
+ */
+void E1sHotSwap::set_amber_state(uint8_t new_amber_state)
+{
+    // Treat out-of-range states as "release to AHS" for safety.
+    if (new_amber_state > nv::ahs::AmberStateMax) {
+        new_amber_state = 0U;
+    }
+    if (new_amber_state == amber_state) {
+        return;
+    }
+    amber_state = new_amber_state;
+
+    if (amber_state == 0U) {
+        // Override released: amber no longer owns the LED pin. AHS re-runs
+        // updateHotSwap() so normal HSSM set_leds() restores indication.
+        return;
+    }
+
+    // Override (re)started: begin the new pattern from its first step.
+    amber_step = 0;
+    render_amber_step();
+}
+
+/**
+ * @brief Advances the amber blink pattern by @p elapsed_ms milliseconds
+ */
+void E1sHotSwap::tick_amber(uint32_t elapsed_ms)
+{
+    if (amber_state == 0U) {
+        return;
+    }
+    const auto pattern = amber_pattern(amber_state);
+    if (pattern.empty()) {
+        return;
+    }
+
+    if (elapsed_ms < amber_ms_remaining) {
+        amber_ms_remaining -= elapsed_ms;
+        return;
+    }
+
+    // Step expired: advance to the next step (wrapping) and re-render. Pattern
+    // steps are much longer than a single tick, so at most one step elapses.
+    amber_step = static_cast<uint8_t>((amber_step + 1U) % pattern.size());
+    render_amber_step();
 }
 
 }  // namespace nv::ahs

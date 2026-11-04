@@ -17,6 +17,7 @@
  */
 #pragma once
 
+#include <array>
 #include <chrono>
 
 #include "nv/gpio/common.h"
@@ -33,6 +34,24 @@ namespace nv::nhp {
 // that pin sequencing to external hardware (CPLD / backplane) and
 // firmware only manages LED indication.
 constexpr bool EnableFwHssmPinControl = false;
+
+// When true, the BMC can drive each SSD drive's amber LED over LSTP via 3
+// virtual GPIO bits per drive (see config.h vSSDx_AMBER_* pins). The AHS task
+// decodes the 0..4 state and renders the corresponding blink pattern, taking
+// over the tristate LED pin (states 1-4) and releasing it back to AHS on
+// state 0. Set to false to compile the drives back to AHS-only LED control.
+constexpr bool EnableAmberLedOverride = true;
+
+// Builds the per-drive amber virtual-pin triple, honouring EnableAmberLedOverride.
+// When disabled the pins are left invalid so the AHS engine skips the drive.
+constexpr std::array<nv::gpio::GpioPin, 3>
+amberPins(nv::gpio::GpioPin b0, nv::gpio::GpioPin b1, nv::gpio::GpioPin b2)
+{
+    return EnableAmberLedOverride ? std::array<nv::gpio::GpioPin, 3>{b0, b1, b2}
+                                  : std::array<nv::gpio::GpioPin, 3>{nv::gpio::InvalidGpioPin,
+                                                                     nv::gpio::InvalidGpioPin,
+                                                                     nv::gpio::InvalidGpioPin};
+}
 
 // Schematic Note: (this would seem to apply to A02, B00, C00, C01 and C02)
 //
@@ -72,7 +91,10 @@ constexpr nv::nhp::E1sOutputPins Drive0OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD0_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD0_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD0_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD0_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD0_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD0_AMBER_B0_PIN, ipc::vSSD0_AMBER_B1_PIN, ipc::vSSD0_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive0InputPins{
@@ -97,7 +119,10 @@ constexpr nv::nhp::E1sOutputPins Drive1OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD1_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD1_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD1_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD1_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD1_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD1_AMBER_B0_PIN, ipc::vSSD1_AMBER_B1_PIN, ipc::vSSD1_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive1InputPins{
@@ -122,7 +147,10 @@ constexpr nv::nhp::E1sOutputPins Drive2OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD2_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD2_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD2_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD2_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD2_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD2_AMBER_B0_PIN, ipc::vSSD2_AMBER_B1_PIN, ipc::vSSD2_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive2InputPins{
@@ -147,7 +175,10 @@ constexpr nv::nhp::E1sOutputPins Drive3OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD3_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD3_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD3_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD3_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD3_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD3_AMBER_B0_PIN, ipc::vSSD3_AMBER_B1_PIN, ipc::vSSD3_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive3InputPins{
@@ -172,7 +203,10 @@ constexpr nv::nhp::E1sOutputPins Drive4OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD4_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD4_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD4_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD4_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD4_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD4_AMBER_B0_PIN, ipc::vSSD4_AMBER_B1_PIN, ipc::vSSD4_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive4InputPins{
@@ -197,7 +231,10 @@ constexpr nv::nhp::E1sOutputPins Drive5OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD5_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD5_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD5_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD5_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD5_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD5_AMBER_B0_PIN, ipc::vSSD5_AMBER_B1_PIN, ipc::vSSD5_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive5InputPins{
@@ -222,7 +259,10 @@ constexpr nv::nhp::E1sOutputPins Drive6OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD6_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD6_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD6_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD6_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD6_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD6_AMBER_B0_PIN, ipc::vSSD6_AMBER_B1_PIN, ipc::vSSD6_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive6InputPins{
@@ -247,7 +287,10 @@ constexpr nv::nhp::E1sOutputPins Drive7OutputPins{
     .pwren_l_port           = ipc::MCU_V_SSD7_DIS_PORT,
     .pwren_l_pin            = ipc::MCU_V_SSD7_DIS_PIN,
     .led_tristate_ctrl_port = ipc::SSD7_LED_PORT,
-    .led_tristate_ctrl_pin  = ipc::SSD7_LED_PIN
+    .led_tristate_ctrl_pin  = ipc::SSD7_LED_PIN,
+    .amber_state_port       = ipc::vSSD_AMBER_PORT,
+    .amber_state_pins       = amberPins(
+        ipc::vSSD7_AMBER_B0_PIN, ipc::vSSD7_AMBER_B1_PIN, ipc::vSSD7_AMBER_B2_PIN)
     //
 };
 constexpr nv::nhp::E1sInputPins Drive7InputPins{
@@ -325,9 +368,7 @@ constexpr static nv::ahs::TaskConfig ahs_task_config = {
     .task_name      = "AHS",
     .ahs_configs    = {ahsConfig0, ahsConfig1},
     .hotSwapEventId = nv::ipc::EventId::Nhp, // NOLINT: not seeing ipc config header macro
-    .delay_time     = std::chrono::microseconds(7LL)  // 1.708us per ADC conversion (4 samples)
-                                                      // two conversions per trigger event
-                                                      // 10us delay between trigger events
+    .delay_time     = std::chrono::microseconds(7LL), // PGOOD soft-trigger cadence
 };
 
 }  // namespace nv::nhp

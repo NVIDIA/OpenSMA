@@ -17,9 +17,12 @@
  */
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
+#include <optional>
 
 #include "nv/spdm/spdm_cert_chain.h"
 #include "nv/spdm/spdm_crypto_helper.h"
+#include <array>
 #include <cstring>
 #include "nv/crypto/key_clear_guard.h"
 #include "sys/common/utils.h"
@@ -37,7 +40,41 @@
 using namespace nv;
 namespace nv::spdm::crypto {
 namespace {
-constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+constexpr bool HasVrotAp                  = !nv::vrot::ApList.empty();
+constexpr auto EcdhCryptoPrimitiveTimeout = std::chrono::milliseconds{5U * 1000U};
+
+constexpr bool      HasLpu = nv::vrot::has_ap_type(nv::vrot::ApType::Lpu, nv::vrot::ApList);
+constexpr size_t    Sha384BlockBytes = 128U;
+constexpr std::byte InnerPadByte{0x36U};
+constexpr std::byte OuterPadByte{0x5CU};
+constexpr uint8_t   FirstExpandBlock                  = 1U;
+constexpr auto      RuntimeConsistencyResponseTimeout = std::chrono::seconds{5};
+constexpr nv::ipc::Event::Bits
+    RuntimeConsistencyResponseBits = nv::spdm::Task::EventBits::RuntimeConsistencySuccessBit
+                                   | nv::spdm::Task::EventBits::RuntimeConsistencyFailureBit;
+
+struct EcdhP384KeyPairContext
+{
+    void clear()
+    {
+        nv::crypto::clear_key(key_pair.private_key);
+        nv::crypto::clear_key(key_pair.public_key.x);
+        nv::crypto::clear_key(key_pair.public_key.y);
+        valid = false;
+    }
+
+    nv::crypto::EcdhP384KeyPair key_pair{};
+    bool                        valid{};
+};
+
+EcdhP384KeyPairContext* ecdh_p384_key_pair_context()
+{
+    if constexpr (nv::ipc::EnableEcdhP384Engine) {
+        static EcdhP384KeyPairContext context{};  // NOLINT(*-non-const-global-variables)
+        return &context;
+    }
+    return nullptr;
+}
 
 // Centralized AP auth request id allocator state. Callers never provide this
 // value; the helper fills it before queueing an AP auth request.
@@ -55,6 +92,115 @@ uint8_t allocate_ap_auth_request_id()
     return s_ap_auth_request_counter;
 }
 
+nv::flash::Key authenticate_data_key(nv::fw_parser::ap::ParsingApFwType auth_slot)
+{
+    using nv::fw_parser::ap::ParsingApFwType;
+    switch (auth_slot) {
+        case ParsingApFwType::ActiveSlot: return nv::flash::Key::NpdsActiveApFwAuthenticateData;
+        case ParsingApFwType::UpdateSlot: return nv::flash::Key::NpdsUpdateApFwAuthenticateData;
+        case ParsingApFwType::InactiveSlot:
+            return nv::flash::Key::NpdsInactiveApFwAuthenticateData;
+        default: return nv::flash::Key::NpdsInvalid;
+    }
+}
+
+std::optional<uint8_t> slot_from_auth_type(const nv::vrot::ApInfo&            ap,
+                                           nv::fw_parser::ap::ParsingApFwType auth_slot)
+{
+    using nv::fw_parser::ap::ParsingApFwType;
+
+    auto slot = nv::vrot::InvalidSlot;
+    switch (auth_slot) {
+        case ParsingApFwType::ActiveSlot  : slot = nv::vrot::active_slot(ap); break;
+        case ParsingApFwType::InactiveSlot: slot = nv::vrot::inactive_slot(ap); break;
+        case ParsingApFwType::UpdateSlot  : slot = nv::vrot::update_slot(ap); break;
+        default                           : break;
+    }
+    if (slot >= ap.slot_count) {
+        return std::nullopt;
+    }
+    return slot;
+}
+
+std::optional<nv::fw_parser::ap::ParsingApFwType>
+auth_type_from_slot(const nv::vrot::ApInfo& ap, uint8_t slot)
+{
+    using nv::fw_parser::ap::ParsingApFwType;
+    if (slot >= ap.slot_count) {
+        return std::nullopt;
+    }
+    if (slot == nv::vrot::active_slot(ap)) {
+        return ParsingApFwType::ActiveSlot;
+    }
+    if (slot == nv::vrot::inactive_slot(ap)) {
+        return ParsingApFwType::InactiveSlot;
+    }
+    return std::nullopt;
+}
+
+bool sha384_segments(std::span<const std::span<const uint8_t>> inputs, Sha384Digest& digest)
+{
+    Sha384Context context{};
+    if (!context.init()) {
+        return false;
+    }
+    for (const auto input : inputs) {
+        if (!input.empty() && !context.update(input.data(), input.size())) {
+            return false;
+        }
+    }
+    return context.finish(digest.data());
+}
+
+bool hmac_sha384_segments(std::span<const uint8_t>                  key,
+                          std::span<const std::span<const uint8_t>> messages,
+                          Sha384Digest&                             hmac)
+{
+    std::array<uint8_t, Sha384BlockBytes> key_block{};
+    const nv::crypto::KeyClearGuard       key_block_guard{std::span<uint8_t>(key_block)};
+    if (key.size() > key_block.size()) {
+        Sha384Digest                    key_digest{};
+        const nv::crypto::KeyClearGuard key_digest_guard{std::span<uint8_t>(key_digest)};
+        const std::array<std::span<const uint8_t>, 1> key_inputs{key};
+        if (!sha384_segments(key_inputs, key_digest)) {
+            return false;
+        }
+        std::copy(key_digest.begin(), key_digest.end(), key_block.begin());
+    }
+    else {
+        std::copy(key.begin(), key.end(), key_block.begin());
+    }
+
+    std::array<uint8_t, Sha384BlockBytes> inner_pad{};
+    std::array<uint8_t, Sha384BlockBytes> outer_pad{};
+    const nv::crypto::KeyClearGuard       inner_pad_guard{std::span<uint8_t>(inner_pad)};
+    const nv::crypto::KeyClearGuard       outer_pad_guard{std::span<uint8_t>(outer_pad)};
+    for (size_t index = 0U; index < key_block.size(); ++index) {
+        const std::byte key_byte{key_block.at(index)};
+        inner_pad.at(index) = std::to_integer<uint8_t>(key_byte ^ InnerPadByte);
+        outer_pad.at(index) = std::to_integer<uint8_t>(key_byte ^ OuterPadByte);
+    }
+
+    Sha384Context context{};
+    if (!context.init() || !context.update(inner_pad.data(), inner_pad.size())) {
+        return false;
+    }
+    for (const auto message : messages) {
+        if (!message.empty() && !context.update(message.data(), message.size())) {
+            return false;
+        }
+    }
+
+    Sha384Digest                    inner_digest{};
+    const nv::crypto::KeyClearGuard inner_digest_guard{std::span<uint8_t>(inner_digest)};
+    if (!context.finish(inner_digest.data()) || !context.init()
+        || !context.update(outer_pad.data(), outer_pad.size())
+        || !context.update(inner_digest.data(), inner_digest.size())) {
+        return false;
+    }
+    return context.finish(hmac.data());
+}
+
 void release_auth_worker(nv::ipc::Event& event, nv::ipc::CoreId core_id)
 {
     if (event.set(nv::spdm::Task::EventBits::AuthenticateTaskIdle, core_id)
@@ -63,6 +209,40 @@ void release_auth_worker(nv::ipc::Event& event, nv::ipc::CoreId core_id)
     }
 }
 }  // namespace
+
+bool hmac_sha384(std::span<const uint8_t> key,
+                 std::span<const uint8_t> message,
+                 Sha384Digest&            hmac)
+{
+    if (ipc::Supervisor::inst().current_task_id() != ipc::TaskId::Spdm) {
+        return false;
+    }
+    const std::array<std::span<const uint8_t>, 1> messages{message};
+    return hmac_sha384_segments(key, messages, hmac);
+}
+
+bool hkdf_sha384(std::span<const uint8_t> ikm,
+                 std::span<const uint8_t> salt,
+                 std::span<const uint8_t> info,
+                 Sha384Digest&            output)
+{
+    Sha384Digest                    zero_salt{};
+    const nv::crypto::KeyClearGuard zero_salt_guard{std::span<uint8_t>(zero_salt)};
+    const auto effective_salt = salt.empty() ? std::span<const uint8_t>(zero_salt) : salt;
+
+    Sha384Digest                    prk{};
+    const nv::crypto::KeyClearGuard prk_guard{std::span<uint8_t>(prk)};
+    if (!hmac_sha384(effective_salt, ikm, prk)) {
+        return false;
+    }
+
+    const std::array<uint8_t, 1>                  counter{FirstExpandBlock};
+    const std::array<std::span<const uint8_t>, 2> expand_inputs{
+        info,
+        std::span<const uint8_t>(counter),
+    };
+    return hmac_sha384_segments(prk, expand_inputs, output);
+}
 
 void send_response_back(const CryptoReqResParameters& result)
 {
@@ -112,6 +292,11 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
         return CryptoStatus::FailUnknown;
     }
 
+    const auto slot = slot_from_auth_type(ap, auth_slot);
+    if (!slot) {
+        return CryptoStatus::FailUnknown;
+    }
+
     auto auth_result = CryptoStatus::Success;
     auto ap_metadata = nv::fw_parser::ap::ApFwMetadata{};
     do {  // NOLINT(cppcoreguidelines-avoid-do-while)
@@ -119,8 +304,7 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
             &ap_metadata);
         const std::span<uint8_t> ap_metadata_buffer(meta_data_array_view.data(),
                                                     meta_data_array_view.size());
-        if (nv::vrot::read_metadata(
-                ap, nv::vrot::slot_from_parsing(auth_slot), 0, ap_metadata_buffer)
+        if (nv::vrot::read_metadata(ap, *slot, 0, ap_metadata_buffer)
             != nv::vrot::ApOpErrCode::Success) {
             auth_result = CryptoStatus::FailApMetadataRead;
             break;
@@ -211,7 +395,10 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
 
         // store the ap metadata when metadata auth is done
         nv::secure_boot::SecureBoot::persist_ap_fw_authenticate_data_in_progress(
-            static_cast<uint8_t>(ap.id), auth_slot, ap_metadata.tbs_data, request_task_id);
+            static_cast<uint8_t>(ap.id),
+            authenticate_data_key(auth_slot),
+            ap_metadata.tbs_data,
+            request_task_id);
 
         const auto image_count = static_cast<size_t>(ap_metadata.tbs_data.ap_fw_images_count);
         if (image_count > ap_metadata.tbs_data.hash_table.size()) {
@@ -243,10 +430,8 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
             while (need_to_read_size != 0) {
                 const size_t read_size = std::min(need_to_read_size, HashStreamChunk);
                 auto read_buffer_view  = std::span<uint8_t>(read_buffer).subspan(0, read_size);
-                if (nv::vrot::read_fw_data(ap,
-                                           nv::vrot::slot_from_parsing(auth_slot),
-                                           static_cast<uint32_t>(fw_data_offset),
-                                           read_buffer_view)
+                if (nv::vrot::read_fw_data(
+                        ap, *slot, static_cast<uint32_t>(fw_data_offset), read_buffer_view)
                     != nv::vrot::ApOpErrCode::Success) {
                     auth_result = CryptoStatus::FailApImageRead;
                     break;
@@ -266,6 +451,7 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
                 auth_result = CryptoStatus::FailHashCalc;
                 break;
             }
+
             // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
             if (ap_metadata.tbs_data.hash_table[i].hash != ap_image_hash) {
                 // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
@@ -301,7 +487,8 @@ CryptoStatus _authenticate_firmware_result(const nv::vrot::ApInfo&              
     if constexpr (HasVrotAp) {
         return nv::secure_boot::SecureBoot::secure_boot_auth_callback(
             static_cast<uint8_t>(ap.id),
-            auth_slot,
+            *slot,
+            authenticate_data_key(auth_slot),
             auth_result,
             ap_metadata.tbs_data,
             request_task_id,
@@ -376,7 +563,8 @@ CryptoStatus authenticate_ap_firmware_with_request_id(
     }
 
     if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
-        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::InactiveSlot) {
         return CryptoStatus::FailUnknown;
     }
     if (auth_request_id == 0U) {
@@ -405,7 +593,8 @@ send_authenticate_firmware_request(const nv::vrot::ApInfo&            ap,
     }
 
     if (InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::UpdateSlot
-        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot) {
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::ActiveSlot
+        && InputParseingApFwType != nv::fw_parser::ap::ParsingApFwType::InactiveSlot) {
         return CryptoStatus::FailUnknown;
     }
     const auto current_task_id  = ipc::Supervisor::inst().current_task_id();
@@ -423,6 +612,46 @@ send_authenticate_firmware_request(const nv::vrot::ApInfo&            ap,
         .auth_request_id       = 0,
         .request_task_id       = callback_task_id};
     return _send_request_to_spdm(request_parameters, &auth_request_id);
+}
+
+CryptoStatus send_authenticate_firmware_request(const nv::vrot::ApInfo& ap,
+                                                uint8_t                 slot,
+                                                uint8_t&                auth_request_id,
+                                                nv::ipc::TaskId         request_task_id)
+{
+    const auto auth_slot = auth_type_from_slot(ap, slot);
+    if (!auth_slot) {
+        auth_request_id = 0U;
+        return CryptoStatus::FailUnknown;
+    }
+    return send_authenticate_firmware_request(ap, *auth_slot, auth_request_id, request_task_id);
+}
+
+nv::vrot::ApOpErrCode request_runtime_consistency()
+{
+    if constexpr (!HasLpu) {
+        return nv::vrot::ApOpErrCode::NotSupported;
+    }
+    else {
+        auto& event = ipc::Event::make(ipc::EventId::SpdmTask);
+        if (event.clear(RuntimeConsistencyResponseBits) != ipc::Event::Status::Ok) {
+            return nv::vrot::ApOpErrCode::Fail;
+        }
+        if (event.set(nv::spdm::Task::EventBits::RuntimeConsistencyBit, nv::ipc::CoreId::Core0)
+            != nv::ipc::Event::Status::Ok) {
+            return nv::vrot::ApOpErrCode::Fail;
+        }
+
+        const auto response = event.wait(
+            RuntimeConsistencyResponseBits, true, false, RuntimeConsistencyResponseTimeout);
+        if (!response) {
+            return nv::vrot::ApOpErrCode::Timeout;
+        }
+        return (response.value() & nv::spdm::Task::EventBits::RuntimeConsistencySuccessBit)
+                    != 0U
+                 ? nv::vrot::ApOpErrCode::Success
+                 : nv::vrot::ApOpErrCode::Fail;
+    }
 }
 
 CryptoStatus authenticate_ap_firmware(const nv::vrot::ApInfo&            ap,
@@ -487,7 +716,7 @@ authenticate_mcu_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingF
 
 CryptoStatus trng_generate(std::span<uint8_t> output)
 {
-    if (output.size() != UdsKeyBytes) {
+    if (output.empty() || output.size() > TrngPrimitiveMaxOutputBytes) {
         return CryptoStatus::FailUnknown;
     }
 
@@ -495,7 +724,9 @@ CryptoStatus trng_generate(std::span<uint8_t> output)
         return sys::crypto::trng_generate(output);
     }
 
-    CryptoPrimitiveRequestParameters  req = TrngGenerateRequestParameter{};
+    CryptoPrimitiveRequestParameters req = TrngGenerateRequestParameter{
+        .output_size = static_cast<uint32_t>(output.size()),
+    };
     CryptoPrimitiveResponseParameters res{
         .status = CryptoStatus::FailUnknown,
         .output = {},
@@ -507,7 +738,7 @@ CryptoStatus trng_generate(std::span<uint8_t> output)
     if (res.status != CryptoStatus::Success) {
         return res.status;
     }
-    std::memcpy(output.data(), res.output.data(), UdsKeyBytes);
+    std::memcpy(output.data(), res.output.data(), output.size());
     return CryptoStatus::Success;
 }
 
@@ -632,6 +863,187 @@ CryptoStatus aes_256_gcm_encrypt(const nv::crypto::Aes256Key&                   
     return res.status;
 }
 
+CryptoStatus ecdh_p384_generate_key_pair(nv::crypto::EcdhP384PublicKey& public_key)
+{
+    if constexpr (!nv::ipc::EnableEcdhP384Engine) {
+        public_key = {};
+        return CryptoStatus::FailEcdhKeyGeneration;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        auto* context = ecdh_p384_key_pair_context();
+        if (context == nullptr) {
+            public_key = {};
+            return CryptoStatus::FailEcdhKeyGeneration;
+        }
+        context->clear();
+
+        const CryptoStatus status = sys::crypto::ecdh_p384_generate_key_pair(context->key_pair);
+        if (status != CryptoStatus::Success) {
+            context->clear();
+            public_key = {};
+            return status;
+        }
+        context->valid = true;
+        public_key     = context->key_pair.public_key;
+        return CryptoStatus::Success;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() != ipc::TaskId::Mctp) {
+        return CryptoStatus::FailEcdhKeyGeneration;
+    }
+
+    nv::crypto::EcdhP384PublicKey task_public_key{};
+
+    CryptoPrimitiveRequestParameters req = EcdhP384GenerateKeyPairRequestParameter{
+        .public_key = &task_public_key,
+    };
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    if (submit_primitive_request(req, res, EcdhCryptoPrimitiveTimeout)
+        != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailEcdhKeyGeneration;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+    public_key = task_public_key;
+    return CryptoStatus::Success;
+}
+
+CryptoStatus ecdh_p384_clear_key_pair()
+{
+    if constexpr (!nv::ipc::EnableEcdhP384Engine) {
+        return CryptoStatus::FailEcdhKeyGeneration;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        auto* context = ecdh_p384_key_pair_context();
+        if (context == nullptr) {
+            return CryptoStatus::FailEcdhKeyGeneration;
+        }
+        context->clear();
+        return CryptoStatus::Success;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() != ipc::TaskId::Mctp) {
+        return CryptoStatus::FailEcdhKeyAgreement;
+    }
+
+    CryptoPrimitiveRequestParameters  req = EcdhP384ClearKeyPairRequestParameter{};
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    if (submit_primitive_request(req, res) != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailEcdhKeyAgreement;
+    }
+    return res.status;
+}
+
+CryptoStatus ecdh_p384_hkdf_sha384_aes_256_gcm_decrypt(
+    const nv::crypto::EcdhP384PublicKey&                 peer_public_key,
+    std::span<const uint8_t>                             salt,
+    std::span<const uint8_t>                             info,
+    std::span<const uint8_t>                             aad,
+    std::span<const uint8_t, nv::crypto::AesGcmIvBytes>  iv,
+    std::span<const uint8_t>                             ciphertext,
+    std::span<const uint8_t, nv::crypto::AesGcmTagBytes> tag,
+    std::span<uint8_t>                                   plaintext_out)
+{
+    if constexpr (!nv::ipc::EnableEcdhP384Engine) {
+        return CryptoStatus::FailEcdhKeyAgreement;
+    }
+
+    if (ipc::Supervisor::inst().current_task_id() == ipc::TaskId::Spdm) {
+        auto* context = ecdh_p384_key_pair_context();
+        if (context == nullptr || !context->valid) {
+            return CryptoStatus::FailEcdhKeyAgreement;
+        }
+
+        nv::crypto::EcdhP384SharedSecret shared_secret{};
+        nv::crypto::Aes256Key            key_encryption_key{};
+        const nv::crypto::KeyClearGuard  shared_secret_guard{std::span<uint8_t>(shared_secret)};
+        const nv::crypto::KeyClearGuard  key_encryption_key_guard{
+            std::span<uint8_t>(key_encryption_key)};
+
+        CryptoStatus status = sys::crypto::ecdh_p384_compute_shared_secret(
+            context->key_pair.private_key, peer_public_key, shared_secret);
+        if (status == CryptoStatus::Success) {
+            status = sys::crypto::hkdf_sha384(shared_secret, salt, info, key_encryption_key);
+        }
+        if (status == CryptoStatus::Success) {
+            status = sys::crypto::aes_256_gcm_decrypt(
+                key_encryption_key, iv, aad, ciphertext, tag, plaintext_out);
+        }
+        context->clear();
+        return status;
+    }
+
+    if (ciphertext.empty() || ciphertext.size() != plaintext_out.size()) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+    if (ipc::Supervisor::inst().current_task_id() != ipc::TaskId::Mctp) {
+        return CryptoStatus::FailEcdhKeyAgreement;
+    }
+
+    if (salt.size() > EcdhP384PrimitiveMaxSaltBytes
+        || info.size() > EcdhP384PrimitiveMaxInfoBytes
+        || aad.size() > EcdhP384PrimitiveMaxAadBytes
+        || ciphertext.size() > EcdhP384PrimitiveMaxCiphertextBytes) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+
+    const nv::crypto::EcdhP384PublicKey                      task_peer_key = peer_public_key;
+    std::array<uint8_t, EcdhP384PrimitiveMaxSaltBytes>       task_salt{};
+    std::array<uint8_t, EcdhP384PrimitiveMaxInfoBytes>       task_info{};
+    std::array<uint8_t, EcdhP384PrimitiveMaxAadBytes>        task_aad{};
+    nv::crypto::AesGcmIv                                     task_iv{};
+    std::array<uint8_t, EcdhP384PrimitiveMaxCiphertextBytes> task_ciphertext{};
+    nv::crypto::AesGcmTag                                    task_tag{};
+    std::array<uint8_t, EcdhP384PrimitiveMaxCiphertextBytes> task_plaintext{};
+    std::copy(salt.begin(), salt.end(), task_salt.begin());
+    std::copy(info.begin(), info.end(), task_info.begin());
+    std::copy(aad.begin(), aad.end(), task_aad.begin());
+    std::copy(iv.begin(), iv.end(), task_iv.begin());
+    std::copy(ciphertext.begin(), ciphertext.end(), task_ciphertext.begin());
+    std::copy(tag.begin(), tag.end(), task_tag.begin());
+    const nv::crypto::KeyClearGuard plaintext_guard{task_plaintext};
+
+    CryptoPrimitiveRequestParameters req = EcdhP384HkdfSha384Aes256GcmDecryptRequestParameter{
+        .peer_public_key    = &task_peer_key,
+        .salt               = task_salt.data(),
+        .salt_size          = static_cast<uint32_t>(salt.size()),
+        .info               = task_info.data(),
+        .info_size          = static_cast<uint32_t>(info.size()),
+        .aad                = task_aad.data(),
+        .aad_size           = static_cast<uint32_t>(aad.size()),
+        .iv                 = task_iv.data(),
+        .ciphertext         = task_ciphertext.data(),
+        .ciphertext_size    = static_cast<uint32_t>(ciphertext.size()),
+        .tag                = task_tag.data(),
+        .plaintext_out      = task_plaintext.data(),
+        .plaintext_out_size = static_cast<uint32_t>(plaintext_out.size()),
+    };
+
+    CryptoPrimitiveResponseParameters res{
+        .status = CryptoStatus::FailUnknown,
+        .output = {},
+    };
+    if (submit_primitive_request(req, res, EcdhCryptoPrimitiveTimeout)
+        != nv::spdm::Status::Ok) {
+        return CryptoStatus::FailEcdhKeyAgreement;
+    }
+    if (res.status != CryptoStatus::Success) {
+        return res.status;
+    }
+
+    std::copy_n(task_plaintext.begin(), plaintext_out.size(), plaintext_out.begin());
+    return CryptoStatus::Success;
+}
+
 // only support sha-384
 CryptoStatus spdm_hash_data(uint8_t* ret, const uint8_t* data, uint32_t data_len)
 {
@@ -684,9 +1096,45 @@ CryptoStatus
 spdm_ecdsa_sign(uint8_t* signature, size_t sig_size, const uint8_t* hash, size_t hash_size)
 {
     std::array<uint8_t, CryptoEngineBufferSize> buffer_for_mbedtls{};
-    // check the input singnature buffer size is enough
     if (sig_size < Ecdsa384SignatureSize) {
         return nv::spdm::crypto::CryptoStatus::FailSignatureBufferLength;
+    }
+
+    if constexpr (nv::ipc::EnableEcdhP384Engine) {
+        if (signature == nullptr) {
+            return nv::spdm::crypto::CryptoStatus::FailSignatureBufferLength;
+        }
+        if (hash == nullptr || hash_size != Sha384HashSize) {
+            return nv::spdm::crypto::CryptoStatus::FailHashCalc;
+        }
+
+        const auto current_task_id = ipc::Supervisor::inst().current_task_id();
+        if (current_task_id != ipc::TaskId::Spdm) {
+            if (current_task_id != ipc::TaskId::Mctp) {
+                return CryptoStatus::FailEcdsaSign;
+            }
+
+            Sha384Digest                               task_hash{};
+            std::array<uint8_t, Ecdsa384SignatureSize> task_signature{};
+            std::copy_n(hash, task_hash.size(), task_hash.begin());
+            CryptoPrimitiveRequestParameters req = Ecdsa384Sha384SignRequestParameter{
+                .hash      = &task_hash,
+                .signature = &task_signature,
+            };
+            CryptoPrimitiveResponseParameters res{
+                .status = CryptoStatus::FailUnknown,
+                .output = {},
+            };
+            if (submit_primitive_request(req, res, EcdhCryptoPrimitiveTimeout)
+                != nv::spdm::Status::Ok) {
+                return CryptoStatus::FailEcdsaSign;
+            }
+            if (res.status != CryptoStatus::Success) {
+                return res.status;
+            }
+            std::copy(task_signature.begin(), task_signature.end(), signature);
+            return CryptoStatus::Success;
+        }
     }
 
     // use the local buffer as stack to calloc
@@ -750,6 +1198,7 @@ spdm_ecdsa_sign(uint8_t* signature, size_t sig_size, const uint8_t* hash, size_t
 
     return nv::spdm::crypto::CryptoStatus::Success;
 }
+
 // this only verify the pass
 CryptoStatus spdm_ecdsa_verify(const std::array<uint8_t, Ecdsa384PublicKeySize>& pub_key,
                                std::span<const uint8_t>&                         r_signature,

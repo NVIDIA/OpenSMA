@@ -257,7 +257,7 @@ constexpr static uint8_t IO_EXPANDER_7_ADDRESS = 24U;
  * configuration values including format version, vendor ID, channel configuration,
  * and IO expander settings.
  */
-class EEPROM : public emulation::At24c01
+class EEPROM final : public emulation::At24c01
 {
 public:
     /**

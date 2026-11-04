@@ -16,12 +16,18 @@
  * limitations under the License.
  */
 #include "nv/i2c/tmp468.h"
+
+#include <array>
+
 #include "nv/nv.h"
+#include "sys/i2c/utils.h"
 
 using namespace nv::i2c;
 
 Tmp468::Tmp468(Port port, uint8_t address, nv::telemetry::TelemId item)
 : TempSensor(port, address, item)
+, _bus_port(port)
+, _bus_address(address)
 {}
 
 float Tmp468::raw_to_celsius(uint16_t raw)
@@ -36,10 +42,15 @@ float Tmp468::raw_to_celsius(uint16_t raw)
 
 I2cStatus Tmp468::get_local_temp(float& celsius)
 {
-    uint16_t   raw    = 0;
-    const auto status = read_reg_16bits(Register::LocalTemp, raw);
+    // Via sys::i2c (takes the per-port mutex); no manual bus lock needed.
+    const uint8_t          reg = Register::LocalTemp;
+    std::array<uint8_t, 1> wr{reg};
+    std::array<uint8_t, 2> rd{};
+    const auto             status = sys::i2c::i2c_write_read(_bus_port, _bus_address, wr, rd);
     if (status == I2cStatus::Ok) {
-        celsius = raw_to_celsius(raw);
+        // coverity[cert_int31_c_violation]  MSB first
+        const auto raw = static_cast<uint16_t>(rd[0] << 8 | rd[1]);
+        celsius        = raw_to_celsius(raw);
     }
     return status;
 }
@@ -51,11 +62,16 @@ I2cStatus Tmp468::get_remote_temp(uint8_t channel, float& celsius)
     }
     // Remote results are contiguous: 0x01 (remote 1) .. 0x08 (remote 8).
     // coverity[cert_int31_c_violation]
-    const auto reg    = static_cast<uint8_t>(Register::RemoteTempBase + channel);
-    uint16_t   raw    = 0;
-    const auto status = read_reg_16bits(reg, raw);
+    const auto reg = static_cast<uint8_t>(Register::RemoteTempBase + channel);
+
+    // Via sys::i2c (takes the per-port mutex); no manual bus lock needed.
+    std::array<uint8_t, 1> wr{reg};
+    std::array<uint8_t, 2> rd{};
+    const auto             status = sys::i2c::i2c_write_read(_bus_port, _bus_address, wr, rd);
     if (status == I2cStatus::Ok) {
-        celsius = raw_to_celsius(raw);
+        // coverity[cert_int31_c_violation]  MSB first
+        const auto raw = static_cast<uint16_t>(rd[0] << 8 | rd[1]);
+        celsius        = raw_to_celsius(raw);
     }
     return status;
 }

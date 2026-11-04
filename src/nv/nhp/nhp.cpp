@@ -79,7 +79,7 @@ NHP::NHP(const NhpConfig& config)
                                         | static_cast<uint16_t>(static_cast<uint16_t>(pgood)
                                                                 << NhpPwrGdBit);
 
-        e1s_gpio_expanders.at(i) = emulation::Pca9555(InitialPinConfig, 0x0000, InputPinMask);
+        e1s_gpio_expanders.at(i).configure(InitialPinConfig, 0x0000, InputPinMask);
 
         e1s_hssms.at(i) = NhpE1sHotSwap(e1s_pin_out.at(i), InitialPinConfig);
     }

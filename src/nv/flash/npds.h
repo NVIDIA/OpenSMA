@@ -33,11 +33,30 @@ public:
 
     AuthenticateData& get_ap_fw_authenticate_data_index(Key key);
 
-    static constexpr size_t AuthDataSlots = !nv::vrot::ApList.empty() ? 2U : 0;
+    static constexpr size_t AuthDataSlots = nv::vrot::ApList.empty()
+                                              ? 0U
+                                              : static_cast<size_t>(
+                                                    nv::vrot::ApList[0].slot_count + 1U);
+
+    static constexpr bool has_ap_auth_data_record(Key key)
+    {
+        const auto ap0 = nv::vrot::find_ap(nv::vrot::ApId::AP0, nv::vrot::ApList);
+        const auto ap1 = nv::vrot::find_ap(nv::vrot::ApId::AP1, nv::vrot::ApList);
+        switch (key) {
+            case Key::NpdsActiveApFwAuthenticateData:
+            case Key::NpdsUpdateApFwAuthenticateData   : return ap0.has_value();
+            case Key::NpdsInactiveApFwAuthenticateData : return ap0 && ap0->slot_count > 1U;
+            case Key::NpdsActiveAp1FwAuthenticateData  :
+            case Key::NpdsUpdateAp1FwAuthenticateData  : return ap1.has_value();
+            case Key::NpdsInactiveAp1FwAuthenticateData: return ap1 && ap1->slot_count > 1U;
+            default                                    : return false;
+        }
+    }
 
 private:
     NpdsDataArray                               _npds_buffer{};
     std::array<AuthenticateData, AuthDataSlots> _ap_fw_authenticate_data{};
+    std::array<AuthenticateData, AuthDataSlots> _ap1_fw_authenticate_data{};
 };
 
 }  // namespace nv::flash

@@ -265,10 +265,10 @@ void pldm_write(NvU16                                          comp_id,
             // per chunk, splitting across the boundary if a chunk straddles.
             constexpr auto MetadataSize = static_cast<NvU32>(
                 sizeof(nv::fw_parser::ap::ApFwMetadata));
-            auto              cur_data    = valid_data;
-            auto              cur_offset  = offset;
-            auto              status      = nv::vrot::ApOpErrCode::Success;
-            constexpr uint8_t update_slot = nv::vrot::ApSlotUseUpdate;
+            auto          cur_data    = valid_data;
+            auto          cur_offset  = offset;
+            auto          status      = nv::vrot::ApOpErrCode::Success;
+            const uint8_t update_slot = nv::vrot::update_slot(*ap_info);
             if (cur_offset < MetadataSize) {
                 const auto bytes_to_boundary = MetadataSize - cur_offset;
                 const auto split             = std::min(static_cast<NvU32>(cur_data.size()),

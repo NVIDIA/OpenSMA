@@ -17,11 +17,20 @@
  */
 #pragma once
 #include <cstdint>
+#include <variant>
 
 #include "sys/gpio/constant.h"
+
+namespace nv::ipc {
+enum class EventId;
+enum class TaskId;
+}  // namespace nv::ipc
+
 namespace nv::gpio {
 using GpioPin  = uint32_t;
 using GpioPort = uint32_t;
+
+using VirtualGpioNotificationTarget = std::variant<nv::ipc::EventId, nv::ipc::TaskId>;
 
 constexpr static GpioPin  InvalidGpioPin  = UINT32_MAX;
 constexpr static GpioPort InvalidGpioPort = UINT32_MAX;

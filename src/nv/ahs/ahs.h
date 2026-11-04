@@ -149,6 +149,19 @@ public:
      */
     void peripheral_recovery();
 
+    /**
+     * @brief Services BMC-driven amber LED overrides for all drives in this instance
+     *
+     * For each drive that has amber state pins configured, reads the 3 virtual
+     * GPIO bits written by the BMC over LSTP, decodes the 0..4 state, applies it
+     * to the drive's hot swap controller, and advances the blink pattern. Drives
+     * without amber pins configured (e.g. non-P3957 boards) are skipped, so this
+     * is inert for AHS users that do not enable the feature.
+     *
+     * @param elapsed_ms Time elapsed since the previous call (typically AmberTickMs)
+     */
+    void service_amber(uint32_t elapsed_ms);
+
 private:
     // Helper Functions
     // ---------------------------------------------

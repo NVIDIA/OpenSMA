@@ -36,13 +36,18 @@ enum class CryptoStatus : uint8_t
     FailApPublicKeyMismatch,
     FailApRollbackProtection,
     FailApImageSigningKeyRevoke,
-    FailUnknown,       // this FailUnknown should be the last terminal-failure value.
+    FailUnknown,
     ApAuthInProgress,  // full authentication is in progress
     FailApNotFound,
     FailPufFail,
     FailAesGcmInvalidInput,
     FailAesGcmSetKey,
     FailAesGcmEncrypt,
+    FailAesGcmDecrypt,
+    FailEcdhKeyGeneration,
+    FailEcdhInvalidPublicKey,
+    FailEcdhKeyAgreement,
+    FailHkdf,
     End,
 };
 

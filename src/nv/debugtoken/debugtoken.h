@@ -150,6 +150,7 @@ constexpr uint8_t DebugTokenSubtypeNone   = 0x00;  // No specific subtype
 constexpr uint8_t DebugTokenSubtypeMcuFw  = 0x01;  // MCU firmware debug
 constexpr uint8_t DebugTokenSubtypeCpldFw = 0x02;  // CPLD firmware debug
 constexpr uint8_t DebugTokenSubtypeLpuFw  = 0x04;  // LPU firmware debug
+constexpr uint8_t DebugTokenSubtypeFpgaFw = 0x08;  // FPGA firmware debug
 
 // Subtypes for MCU debug capability (0x02) token type
 constexpr uint8_t DebugTokenSubtypeErrorInjection  = 0x01;  // Ras Test
@@ -161,7 +162,8 @@ constexpr uint8_t DebugTokenSubtypeCpldUnlockEn = 0x01;  // CPLD unlock enable
 // Valid subtypes bitmask for each token type
 constexpr uint32_t DebugTokenSubtypeValidMaskDebugFw = DebugTokenSubtypeMcuFw
                                                      | DebugTokenSubtypeCpldFw
-                                                     | DebugTokenSubtypeLpuFw;
+                                                     | DebugTokenSubtypeLpuFw
+                                                     | DebugTokenSubtypeFpgaFw;
 constexpr uint32_t DebugTokenSubtypeValidMaskMcuDebug = DebugTokenSubtypePwrFailI2cDebug
                                                       | DebugTokenSubtypeErrorInjection;
 constexpr uint32_t DebugTokenSubtypeValidMaskCpldDebug = DebugTokenSubtypeCpldUnlockEn;

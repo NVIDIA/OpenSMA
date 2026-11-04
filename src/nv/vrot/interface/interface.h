@@ -138,4 +138,46 @@ uint8_t get_write_fail_retry(uint16_t component_id);
 
 }  // namespace ap
 
+// Callers still name these. p3957 has no AP that implements them.
+template<std::size_t N>
+constexpr bool has_key_exchange(const std::array<ApInfo, N>&)
+{
+    return false;
+}
+
+inline ApOpErrCode get_key_exchange_info(std::span<const uint8_t> /*tenant_nonce*/,
+                                         std::span<uint8_t> /*response*/,
+                                         size_t& response_length)
+{
+    response_length = 0;
+    return ApOpErrCode::NotSupported;
+}
+
+inline ApOpErrCode install_exchanged_key(std::span<const uint8_t> /*wrapped_key*/,
+                                         std::span<uint8_t> /*response*/,
+                                         size_t& response_length)
+{
+    response_length = 0;
+    return ApOpErrCode::NotSupported;
+}
+
+inline ApOpErrCode check_runtime_consistency(const ApInfo& /*ap*/)
+{
+    return ApOpErrCode::NotSupported;
+}
+
+namespace measurement {
+
+inline ApOpErrCode get_chip_id(const ApInfo& /*ap*/, ApMeasurementChipId& /*chip_id*/)
+{
+    return ApOpErrCode::NotSupported;
+}
+
+inline ApOpErrCode get_fuse_mask(const ApInfo& /*ap*/, uint32_t& /*fuse_mask*/)
+{
+    return ApOpErrCode::NotSupported;
+}
+
+}  // namespace measurement
+
 }  // namespace nv::vrot

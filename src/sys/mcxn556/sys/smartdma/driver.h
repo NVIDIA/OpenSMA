@@ -22,7 +22,9 @@
 #include <fsl_i3c.h>
 #include <fsl_i3c_edma.h>
 #include <fsl_smartdma.h>
-#ifdef CPU_MCXN556SCDF
+// SDK 25.09.00 ships the SmartDMA I3C API in smartdma_i3c.h; SDK 25.09.02
+// folds it into fsl_smartdma_mcxn.h, so include it only when the SDK provides it.
+#if defined(CPU_MCXN556SCDF) && __has_include(<smartdma_i3c.h>)
 #include <smartdma_i3c.h>
 #endif
 namespace sys::smartdma {

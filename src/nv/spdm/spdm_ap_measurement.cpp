@@ -16,12 +16,16 @@
  * limitations under the License.
  */
 #include "nv/spdm/spdm_ap_measurement.h"
+
+#include <bit>
+#include <limits>
+#include <optional>
+
+#include "nv/flash/flash.h"
 #include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/spdm/spdm_crypto_helper.h"
-#include "nv/flash/flash.h"
-#include "nv/vrot/interface/types.h"
+#include "nv/vrot/interface/interface.h"
 #include NV_IPC_CONFIG_H  // for nv::vrot::ApList
-#include <bit>
 
 namespace {
 constexpr std::array<uint8_t, 4> NonApType = {'N', 'O', 'N', 0x00};
@@ -39,8 +43,27 @@ constexpr std::array<uint8_t, 4> ap_type_string(nv::vrot::ApType type)
 }  // namespace
 
 namespace nv::spdm::ap_measurement {
-static_assert(nv::vrot::ApList.size() <= 1,
-              "SPDM AP measurements currently support at most one AP in ApList");
+
+namespace {
+
+std::optional<nv::fw_parser::ap::ApFwMetadata::TbsData>
+read_authenticated_active_metadata(nv::vrot::ApId ap_id)
+{
+    const auto                        key = ap_id == nv::vrot::ApId::AP0
+                                              ? nv::flash::Key::NpdsActiveApFwAuthenticateData
+                                          : ap_id == nv::vrot::ApId::AP1
+                                              ? nv::flash::Key::NpdsActiveAp1FwAuthenticateData
+                                              : nv::flash::Key::NpdsInvalid;
+    nv::secure_boot::AuthenticateData authenticate_data{};
+    if (nv::flash::Flash::get_ap_fw_authenticate_data(authenticate_data, key)
+            != nv::flash::Status::Ok
+        || authenticate_data.ap_auth_result != nv::spdm::crypto::CryptoStatus::Success) {
+        return std::nullopt;
+    }
+    return authenticate_data.ap_metadata_tbs_data;
+}
+
+}  // namespace
 
 void get_ap_type(std::array<uint8_t, 4>& ap_type)
 {
@@ -52,39 +75,35 @@ void get_ap_type(std::array<uint8_t, 4>& ap_type)
     }
 }
 
-void get_ap_firmware_hash(std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash)
+void get_ap_firmware_hash(nv::vrot::ApId                                         ap_id,
+                          std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash)
 {
     hash.fill(0);
-    auto fw_images_count = nv::fw_parser::ap::get_ap_fw_images_count(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
+    const auto metadata = read_authenticated_active_metadata(ap_id);
+    if (!metadata || metadata->ap_fw_images_count == 0U
+        || metadata->ap_fw_images_count > metadata->hash_table.size()) {
+        return;
+    }
+
+    if (metadata->ap_fw_images_count == 1U) {
+        hash = metadata->hash_table.front().hash;
+        return;
+    }
 
     nv::spdm::crypto::Sha384Context hash_ctx{};
-    if (!hash_ctx.init() || !fw_images_count) {
+    if (!hash_ctx.init()) {
         return;
     }
 
-    // if there is only one image, just read the hash from the flash
-    if (*fw_images_count == 1) {
-        auto hash_table_entry = nv::fw_parser::ap::get_ap_hash_table_entry(
-            nv::fw_parser::ap::ParsingApFwType::UpdateSlot, 0);
-        if (!hash_table_entry) {
+    for (uint8_t index = 0; index < metadata->ap_fw_images_count; ++index) {
+        const auto& entry = metadata->hash_table.at(index);
+        if (!hash_ctx.update(entry.hash.data(), entry.hash.size())) {
             return;
         }
-        hash = hash_table_entry->hash;
-        return;
     }
 
-    // if there are multiple images, read the hash from the flash
-    for (int i = 0; i < *fw_images_count; i++) {
-        auto hash_table_entry = nv::fw_parser::ap::get_ap_hash_table_entry(
-            nv::fw_parser::ap::ParsingApFwType::UpdateSlot, i);
-        if (!hash_table_entry
-            || !hash_ctx.update(hash_table_entry->hash.data(), hash_table_entry->hash.size())) {
-            return;
-        }
-    }
     if (!hash_ctx.finish(hash.data())) {
-        return;
+        hash.fill(0);
     }
 }
 
@@ -110,55 +129,82 @@ void get_ap_key_revocation_fuses(uint32_t& key_revocation_fuse_value)
     }
 }
 
-void get_ap_firmware_security_version(uint64_t& security_version)
+void get_ap_firmware_security_version(nv::vrot::ApId ap_id, uint64_t& security_version)
 {
-    // set the default value to the max value
-    security_version = std::numeric_limits<
-        std::remove_reference_t<decltype(security_version)>>::max();
-    auto ap_fw_sec = nv::fw_parser::ap::get_ap_sec_version(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-    if (!ap_fw_sec) {
-        return;
+    security_version    = std::numeric_limits<uint64_t>::max();
+    const auto metadata = read_authenticated_active_metadata(ap_id);
+    if (metadata) {
+        security_version = metadata->sec_version;
     }
-    security_version = *ap_fw_sec;
 }
 
-void get_ap_metadata_hash(std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash)
+void get_ap_metadata_hash(nv::vrot::ApId                                         ap_id,
+                          std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash)
 {
     hash.fill(0);
-    auto ap_metadata_data = nv::fw_parser::ap::get_ap_metadata_data(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-    if (!ap_metadata_data) {
+    const auto metadata = read_authenticated_active_metadata(ap_id);
+    if (!metadata) {
         return;
     }
+
     nv::spdm::crypto::Sha384Context hash_ctx{};
     if (!hash_ctx.init()
-        || !hash_ctx.update(std::bit_cast<uint8_t*>(&(*ap_metadata_data)),
-                            sizeof(*ap_metadata_data))) {
-        return;
-    }
-    if (!hash_ctx.finish(hash.data())) {
-        return;
+        || !hash_ctx.update(std::bit_cast<const uint8_t*>(&(*metadata)), sizeof(*metadata))
+        || !hash_ctx.finish(hash.data())) {
+        hash.fill(0);
     }
 }
 
-void get_ap_firmware_version(nv::fw_parser::ap::ApFwVersion& firmware_version)
+void get_ap_firmware_version(nv::vrot::ApId                  ap_id,
+                             nv::fw_parser::ap::ApFwVersion& firmware_version)
 {
-    firmware_version = nv::fw_parser::ap::ApFwVersion{};
-
-    auto ap_fw_version = nv::fw_parser::ap::get_ap_fw_version(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-    if (!ap_fw_version) {
-        return;
+    firmware_version    = {};
+    const auto metadata = read_authenticated_active_metadata(ap_id);
+    if (metadata) {
+        firmware_version = metadata->fw_version;
     }
-    firmware_version = *ap_fw_version;
 }
 
-void get_ap_authenticated_status(uint8_t& authenticated_status)
+void get_ap_boot_status(nv::vrot::ApId ap_id, uint8_t& boot_status)
 {
+    boot_status = static_cast<uint8_t>(nv::fw_parser::ap::ApFwStatus::Not_Supported);
+    if (!nv::vrot::find_ap(ap_id, nv::vrot::ApList)) {
+        return;
+    }
+
+    const auto key = ap_id == nv::vrot::ApId::AP0 ? nv::flash::Key::NpdsAp0FwStatus
+                   : ap_id == nv::vrot::ApId::AP1 ? nv::flash::Key::NpdsAp1FwStatus
+                                                  : nv::flash::Key::NpdsInvalid;
+    if (key == nv::flash::Key::NpdsInvalid) {
+        return;
+    }
+
     nv::flash::Data data{};
-    (void)nv::flash::Flash::get_data(nv::flash::Key::NpdsAp0FwStatus, data);
-    constexpr uint32_t ApFwStatusMask = 0xFF;
-    authenticated_status = static_cast<uint8_t>(static_cast<uint32_t>(data) & ApFwStatusMask);
+    if (nv::flash::Flash::get_data(key, data) == nv::flash::Status::Ok) {
+        constexpr uint32_t ApFwStatusMask = 0xff;
+        boot_status = static_cast<uint8_t>(static_cast<uint32_t>(data) & ApFwStatusMask);
+    }
 }
+
+void get_ap_chip_id(nv::vrot::ApId ap_id, nv::vrot::ApMeasurementChipId& chip_id)
+{
+    chip_id.fill(std::numeric_limits<uint8_t>::max());
+    if (const auto ap = nv::vrot::find_ap(ap_id, nv::vrot::ApList);
+        ap
+        && nv::vrot::measurement::get_chip_id(*ap, chip_id) != nv::vrot::ApOpErrCode::Success) {
+        chip_id.fill(std::numeric_limits<uint8_t>::max());
+    }
+}
+
+void get_ap_fuse_mask(nv::vrot::ApId ap_id, uint32_t& fuse_mask)
+{
+    fuse_mask = std::numeric_limits<uint32_t>::max();
+    if (const auto ap = nv::vrot::find_ap(ap_id, nv::vrot::ApList);
+        ap
+        && nv::vrot::measurement::get_fuse_mask(*ap, fuse_mask)
+               != nv::vrot::ApOpErrCode::Success) {
+        fuse_mask = std::numeric_limits<uint32_t>::max();
+    }
+}
+
 }  // namespace nv::spdm::ap_measurement

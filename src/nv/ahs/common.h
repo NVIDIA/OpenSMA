@@ -17,7 +17,9 @@
  */
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <span>
 #include "nv/gpio/common.h"
 #include "sys/adc/adc.h"
 
@@ -55,13 +57,28 @@ struct E1sOutputPins
     /** @brief LED tristate control pin - output
      *
      * Controls both amber and blue LEDs through tristate logic:
-     * - High = both LEDs off
+     * - High = amber LED on
      * - Low = blue LED on
-     * - High-Z = amber LED on
+     * - High-Z = both LEDs off
      */
     nv::gpio::GpioPort led_tristate_ctrl_port = nv::gpio::InvalidGpioPort;
     /** @brief LED tristate control pin number */
     nv::gpio::GpioPin led_tristate_ctrl_pin = nv::gpio::InvalidGpioPin;
+
+    /** @brief Virtual GPIO port holding the BMC-driven amber LED state bits
+     *
+     * These are virtual (vrPort) pins written by the BMC over LSTP. When the
+     * amber state (decoded from @ref amber_state_pins) is non-zero, firmware
+     * takes over the tristate LED pin and renders the amber blink pattern,
+     * overriding the AHS blue/amber indication. State 0 clears the override;
+     * AHS re-runs the hot-swap update so normal set_leds() resumes. The feature
+     * is disabled for a drive when @ref amber_state_pins[0] is
+     * nv::gpio::InvalidGpioPin (the default), so non-P3957 boards are inert.
+     */
+    nv::gpio::GpioPort amber_state_port = nv::gpio::InvalidGpioPort;
+    /** @brief Virtual pins encoding the 3-bit amber state (bit0 = LSB .. bit2) */
+    std::array<nv::gpio::GpioPin, 3> amber_state_pins = {
+        nv::gpio::InvalidGpioPin, nv::gpio::InvalidGpioPin, nv::gpio::InvalidGpioPin};
 };
 
 /**
@@ -179,5 +196,64 @@ constexpr static uint8_t AhsAmberLedBitmask = 1U << AhsAmberLedBit;
  */
 constexpr static uint8_t AhsPwrGdBit     = 7U;
 constexpr static uint8_t AhsPwrGdBitmask = 1U << AhsPwrGdBit;
+
+/**
+ * @brief BMC-driven amber LED override
+ *
+ * The BMC selects an amber LED behaviour per drive via 3 virtual GPIO bits
+ * (see nv::nhp::E1sOutputPins). The 3-bit value maps to the states below.
+ * When the state is non-zero, firmware owns the drive's tristate LED pin and
+ * renders the corresponding blink pattern (amber on = pin High, off = HiZ),
+ * overriding the AHS blue/amber indication. State 0 clears the override; AHS
+ * re-runs the hot-swap update so normal set_leds() resumes.
+ */
+
+/** @brief Base cadence (ms) at which the amber blink engine is serviced.
+ *
+ * All pattern step durations must be multiples of this value. */
+constexpr uint32_t AmberTickMs = 25U;
+
+/** @brief Highest valid BMC amber state (0 = release to AHS). */
+constexpr uint8_t AmberStateMax = 4U;
+
+/** @brief A single step in an amber blink pattern. */
+struct AmberStep
+{
+    bool     on; /**< true = amber on (pin High); false = off (pin HiZ) */
+    uint16_t ms; /**< step duration in milliseconds (multiple of AmberTickMs) */
+};
+
+// State 1 (Failure): solid amber. Single step re-asserted each period.
+inline constexpr std::array<AmberStep, 1> AmberPatternFailure{{{true, 1000}}};
+// State 2 (Rebuild): 1 Hz blink.
+inline constexpr std::array<AmberStep, 2> AmberPatternRebuild{
+    {{true, 500}, {false, 500}}
+};
+// State 3 (Predictive Failure): 2 blinks @ 4 Hz then a ~2 Hz pause, looped.
+inline constexpr std::array<AmberStep, 4> AmberPatternPredictive{
+    {{true, 125}, {false, 125}, {true, 125}, {false, 500}}
+};
+// State 4 (Hot Spare): 2 blinks @ 4 Hz then a long ~0.3 Hz pause, looped.
+inline constexpr std::array<AmberStep, 4> AmberPatternHotSpare{
+    {{true, 125}, {false, 125}, {true, 125}, {false, 3000}}
+};
+
+/**
+ * @brief Returns the blink step table for a given BMC amber state.
+ *
+ * @param state BMC amber state (1..4). Any other value returns an empty span,
+ *              which the engine treats as "no pattern" (release to AHS).
+ * @return span of pattern steps, or an empty span when @p state is out of range.
+ */
+inline std::span<const AmberStep> amber_pattern(uint8_t state)
+{
+    switch (state) {
+        case 1 : return AmberPatternFailure;
+        case 2 : return AmberPatternRebuild;
+        case 3 : return AmberPatternPredictive;
+        case 4 : return AmberPatternHotSpare;
+        default: return {};
+    }
+}
 
 }  // namespace nv::ahs

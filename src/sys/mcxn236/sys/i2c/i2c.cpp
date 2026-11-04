@@ -267,6 +267,23 @@ bool Driver::get_status(uint8_t address)
     return Status == kStatus_Success;
 }
 
+bool Driver::ping(uint8_t address)
+{
+    // Zero-length write: send START + address + STOP and report the address-phase ACK/NAK.
+    // No payload is transmitted, so this never feeds MCTP (or any) data to the target.
+    lpi2c_master_transfer_t transfer = {
+        .flags          = kLPI2C_TransferDefaultFlag,
+        .slaveAddress   = address,
+        .direction      = kLPI2C_Write,
+        .subaddress     = 0,
+        .subaddressSize = 0,
+        .data           = nullptr,
+        .dataSize       = 0,
+    };
+    const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
+    return Status == kStatus_Success;
+}
+
 uint8_t Driver::address()
 {
     return static_cast<uint8_t>(_base->SAMR) >> 1U;

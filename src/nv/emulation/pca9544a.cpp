@@ -27,13 +27,13 @@ Pca9544a::Pca9544a() : control_register(BootState)
     nv::info("Finished PCA9544A Initialization\n");
 }
 
-void Pca9544a::i2c_read(uint8_t& return_data)
+void Pca9544a::i2c_read(uint8_t& return_data, [[maybe_unused]] bool new_transaction)
 {
     return_data = control_register;
 }
 
-void Pca9544a::i2c_write(std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
-                         uint8_t                                            data_length)
+void Pca9544a::i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
+                         uint8_t                                                  data_length)
 {
     // only care about last byte for writing
     // cn only write to non interrupt bits

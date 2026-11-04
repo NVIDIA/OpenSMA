@@ -101,6 +101,8 @@ extern "C" {
 #define ADC0_CMD_VMON_SSD6 7U
 /* Command 8 - CMD_VMON_SSD7 */
 #define ADC0_CMD_VMON_SSD7 8U
+/* Command 15 - CMD_INTERNAL_TEMP */
+#define ADC0_CMD_INTERNAL_TEMP 15U
 /* Trigger 0 - TRIG_VMON_SSD_0TO1 */
 #define ADC0_TRIG_VMON_SSD_0TO1 0U
 /* Trigger 1 - TRIG_VMON_SSD_2TO3 */
@@ -256,7 +258,7 @@ extern "C" {
  **********************************************************************************************************************/
 extern const lpi2c_slave_config_t LP_FLEXCOMM6_slaveConfig;
 extern const lpadc_config_t ADC0_config;
-extern lpadc_conv_command_config_t ADC0_commandsConfig[6];
+extern lpadc_conv_command_config_t ADC0_commandsConfig[7];
 extern lpadc_conv_trigger_config_t ADC0_triggersConfig[3];
 extern const lpi2c_master_config_t LP_FLEXCOMM1_masterConfig;
 extern const lpi2c_slave_config_t LP_FLEXCOMM1_slaveConfig;

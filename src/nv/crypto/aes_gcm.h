@@ -44,4 +44,13 @@ nv::spdm::crypto::CryptoStatus aes_256_gcm_encrypt(const Aes256Key&             
                                                    std::span<uint8_t>       ciphertext,
                                                    std::span<uint8_t, AesGcmTagBytes> tag);
 
+// AES-256-GCM authenticated one-shot decrypt. Plaintext may be modified on failure;
+// the caller is responsible for securely clearing it. Exact in-place operation is supported.
+nv::spdm::crypto::CryptoStatus aes_256_gcm_decrypt(const Aes256Key&                        key,
+                                                   std::span<const uint8_t, AesGcmIvBytes> iv,
+                                                   std::span<const uint8_t>                aad,
+                                                   std::span<const uint8_t> ciphertext,
+                                                   std::span<const uint8_t, AesGcmTagBytes> tag,
+                                                   std::span<uint8_t> plaintext);
+
 }  // namespace nv::crypto

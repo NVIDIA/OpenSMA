@@ -98,4 +98,46 @@ CryptoStatus aes_256_gcm_encrypt(const Aes256Key&                        key,
     return CryptoStatus::Success;
 }
 
+CryptoStatus aes_256_gcm_decrypt(const Aes256Key&                         key,
+                                 std::span<const uint8_t, AesGcmIvBytes>  iv,
+                                 std::span<const uint8_t>                 aad,
+                                 std::span<const uint8_t>                 ciphertext,
+                                 std::span<const uint8_t, AesGcmTagBytes> tag,
+                                 std::span<uint8_t>                       plaintext)
+{
+    if (plaintext.size() != ciphertext.size()) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+    if (ranges_overlap(ciphertext, plaintext) && ciphertext.data() != plaintext.data()) {
+        return CryptoStatus::FailAesGcmInvalidInput;
+    }
+
+    std::array<uint8_t, MbedtlsBufferBytes> buffer_for_mbedtls{};
+    const KeyClearGuard buffer_guard{std::span<uint8_t>(buffer_for_mbedtls)};
+    mbedtls_memory_buffer_alloc_init(buffer_for_mbedtls.data(), buffer_for_mbedtls.size());
+
+    mbedtls_gcm_context ctx;
+    mbedtls_gcm_init(&ctx);
+    int ret = mbedtls_gcm_setkey(&ctx, MBEDTLS_CIPHER_ID_AES, key.data(), Aes256KeyBits);
+    if (ret == 0) {
+        ret = mbedtls_gcm_auth_decrypt(&ctx,
+                                       ciphertext.size(),
+                                       iv.data(),
+                                       iv.size(),
+                                       aad.data(),
+                                       aad.size(),
+                                       tag.data(),
+                                       tag.size(),
+                                       ciphertext.data(),
+                                       plaintext.data());
+    }
+    mbedtls_gcm_free(&ctx);
+    mbedtls_memory_buffer_alloc_free();
+
+    if (ret != 0) {
+        return CryptoStatus::FailAesGcmDecrypt;
+    }
+    return CryptoStatus::Success;
+}
+
 }  // namespace nv::crypto

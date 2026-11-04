@@ -37,6 +37,7 @@ using namespace nv;
 namespace nv::spdm {
 namespace {
 constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
+constexpr bool HasLpu    = nv::vrot::has_ap_type(nv::vrot::ApType::Lpu, nv::vrot::ApList);
 
 void handle_mcu_auth_request(
     const nv::spdm::crypto::AuthenticateMcuFirmwareRequestParameter& request,
@@ -80,6 +81,18 @@ bool handle_ap_auth_request(
         };
         return true;
     }
+}
+
+nv::vrot::ApOpErrCode handle_runtime_consistency_request()
+{
+    if constexpr (HasLpu) {
+        for (const auto& ap : nv::vrot::ApList) {
+            if (ap.type == nv::vrot::ApType::Lpu) {
+                return nv::vrot::check_runtime_consistency(ap);
+            }
+        }
+    }
+    return nv::vrot::ApOpErrCode::NotSupported;
 }
 
 bool handle_auth_request(const nv::spdm::crypto::CryptoReqResParameters& request_parameters,
@@ -429,6 +442,17 @@ Task::Task()
         if (event_bits & nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit) {
             (void)event.clear(nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit);
             nv::spdm::crypto::process_primitive_request_queue();
+        }
+        if (event_bits & nv::spdm::Task::EventBits::RuntimeConsistencyBit) {
+            (void)event.clear(nv::spdm::Task::EventBits::RuntimeConsistencyBit);
+            const auto result = handle_runtime_consistency_request();
+            nv::logger::info(nv::logger::Event::RuntimeConsistencyResult,
+                             nv::logger::data_from_u32(static_cast<uint32_t>(result)));
+            const auto
+                response_bit = result == nv::vrot::ApOpErrCode::Success
+                                 ? nv::spdm::Task::EventBits::RuntimeConsistencySuccessBit
+                                 : nv::spdm::Task::EventBits::RuntimeConsistencyFailureBit;
+            (void)event.set(response_bit, nv::ipc::CoreId::Core0);
         }
         // need to auth fw
         if (event_bits & nv::spdm::Task::EventBits::AuthenticateRequestBit) {

@@ -149,6 +149,33 @@ TEST(AesGcm, in_place_encrypt)
     ensure::is_true(bytes_eq(tag, kAes256ZeroBlockTag));
 };
 
+TEST(AesGcm, decrypt_with_aad)
+{
+    std::array<uint8_t, 32> plaintext{};
+
+    ensure::is_eq(crypto::aes_256_gcm_decrypt(kRoundTripKey,
+                                              kRoundTripIv,
+                                              kRoundTripAad,
+                                              kRoundTripCipher,
+                                              kRoundTripTag,
+                                              plaintext),
+                  CryptoStatus::Success);
+    ensure::is_true(bytes_eq(plaintext, kRoundTripPlain));
+};
+
+TEST(AesGcm, decrypt_rejects_bad_tag)
+{
+    AesGcmTag               bad_tag = kRoundTripTag;
+    std::array<uint8_t, 32> plaintext{};
+    bad_tag[0] ^= 1U;
+    plaintext.fill(0xA5U);
+
+    ensure::is_eq(
+        crypto::aes_256_gcm_decrypt(
+            kRoundTripKey, kRoundTripIv, kRoundTripAad, kRoundTripCipher, bad_tag, plaintext),
+        CryptoStatus::FailAesGcmDecrypt);
+};
+
 TEST(AesGcm, rejects_mismatched_output_sizes)
 {
     std::array<uint8_t, 15> short_cipher{};

@@ -16,44 +16,406 @@
  * limitations under the License.
  */
 #include "nv/spdm/ik_generate_helper.h"
+
+#include <cstddef>
+
 namespace nv::spdm::ik {
 
-template<typename TemplateType>
-void DevIkHelper::fill_template(TemplateType& templ, nv::spdm::ik::DevIkRequest& req)
+namespace {
+
+constexpr DevIkTemplateStaticFieldLayout make_static_field_layout(size_t offset, size_t size)
 {
-    templ.serial_number            = req.serial_number;
-    templ.dda_ordinal_number       = req.dda_ordinal_number;
-    templ.fmc_ordinal_number       = req.fmc_ordinal_number;
-    templ.public_key               = req.public_key;
-    templ.subject_serial_number    = req.subject_serial_number;
-    templ.authority_key_identifier = req.authority_key_identifier;
-    templ.subject_key_identifier   = req.subject_key_identifier;
-
-    _template_size = sizeof(TemplateType);
-
-    const uint32_t WholeCertLength = _template_size + _signature.bit_string.length
-                                   + sizeof(_signature.bit_string.length)
-                                   + sizeof(_signature.bit_string.token)
-                                   - sizeof(templ.total_certificate);
-    templ.total_certificate.length_msb = (WholeCertLength >> 8u);
-    templ.total_certificate.length_lsb = WholeCertLength % 256;
-
-    auto& bytes = *std::bit_cast<std::array<uint8_t, sizeof(TemplateType)>*>(&templ);
-    std::copy(bytes.begin(), bytes.end(), _template_bytes.begin());
+    return {static_cast<uint16_t>(offset), static_cast<uint16_t>(size)};
 }
 
-DevIkHelper::DevIkHelper(nv::spdm::ik::DevIkRequest& req) : _signature(req.signature)
+constexpr DevIkTemplateStaticFieldLayout make_comparison_region(size_t template_offset,
+                                                                size_t value_offset,
+                                                                size_t value_size,
+                                                                bool   compare_value)
+{
+    return make_static_field_layout(
+        template_offset, value_offset - template_offset + (compare_value ? value_size : 0));
+}
+
+template<typename TemplateType>
+constexpr DevIkTemplateLayoutInfo make_template_layout()
+{
+    using SerialFields    = decltype(TemplateType{}.serial_fields);
+    using IdentityFields  = decltype(TemplateType{}.identity_fields);
+    using ExtensionFields = decltype(TemplateType{}.extension_fields);
+    using SignatureFields = decltype(TemplateType{}.signature_fields);
+
+    constexpr size_t SerialFieldsOffset    = offsetof(TemplateType, serial_fields);
+    constexpr size_t IdentityFieldsOffset  = offsetof(TemplateType, identity_fields);
+    constexpr size_t ExtensionFieldsOffset = offsetof(TemplateType, extension_fields);
+    constexpr size_t SignatureFieldsOffset = offsetof(TemplateType, signature_fields);
+    static_assert(sizeof(TemplateType) <= UINT16_MAX);
+    constexpr auto AuthorityInformationAccess = [] {
+        if constexpr (TemplateType::CertificateProfile
+                      == DevIkCertificateProfile::EdgeLock2Go) {
+            return make_static_field_layout(
+                ExtensionFieldsOffset
+                    + offsetof(ExtensionFields, template_to_authority_information_access),
+                sizeof(ExtensionFields{}.template_to_authority_information_access));
+        }
+        return DevIkTemplateStaticFieldLayout{};
+    }();
+
+    return {
+        static_cast<uint16_t>(sizeof(TemplateType)),
+        static_cast<uint16_t>(SerialFieldsOffset + offsetof(SerialFields, serial_number)),
+        static_cast<uint16_t>(IdentityFieldsOffset
+                              + offsetof(IdentityFields, dda_ordinal_number)),
+        std::array{
+                   make_comparison_region(
+                SerialFieldsOffset + offsetof(SerialFields, template_to_serial_number),
+                   SerialFieldsOffset + offsetof(SerialFields, serial_number),
+                   sizeof(SerialFields{}.serial_number),
+                   TemplateType::CertificateProfile != DevIkCertificateProfile::EdgeLock2Go),
+                   make_comparison_region(
+                IdentityFieldsOffset + offsetof(IdentityFields, template_to_dda_ordinal_number),
+                   IdentityFieldsOffset + offsetof(IdentityFields, dda_ordinal_number),
+                   sizeof(IdentityFields{}.dda_ordinal_number),
+                   true),
+                   make_comparison_region(
+                IdentityFieldsOffset + offsetof(IdentityFields, template_to_fmc_ordinal_number),
+                   IdentityFieldsOffset + offsetof(IdentityFields, fmc_ordinal_number),
+                   sizeof(IdentityFields{}.fmc_ordinal_number),
+                   true),
+                   make_comparison_region(
+                IdentityFieldsOffset
+                    + offsetof(IdentityFields, template_to_subject_serial_number),
+                   IdentityFieldsOffset + offsetof(IdentityFields, subject_serial_number),
+                   sizeof(IdentityFields{}.subject_serial_number),
+                   true),
+                   make_comparison_region(IdentityFieldsOffset
+                                       + offsetof(IdentityFields, template_to_public_key),
+                   IdentityFieldsOffset + offsetof(IdentityFields, public_key),
+                   sizeof(IdentityFields{}.public_key),
+                   true),
+                   make_comparison_region(
+                ExtensionFieldsOffset
+                    + offsetof(ExtensionFields, template_to_subject_key_identifier),
+                   ExtensionFieldsOffset + offsetof(ExtensionFields, subject_key_identifier),
+                   sizeof(ExtensionFields{}.subject_key_identifier),
+                   true),
+                   make_comparison_region(
+                ExtensionFieldsOffset
+                    + offsetof(ExtensionFields, template_to_authority_key_identifier),
+                   ExtensionFieldsOffset + offsetof(ExtensionFields, authority_key_identifier),
+                   sizeof(ExtensionFields{}.authority_key_identifier),
+                   false),
+                   AuthorityInformationAccess, make_static_field_layout(SignatureFieldsOffset
+                                         + offsetof(SignatureFields, template_to_signature),
+                   sizeof(SignatureFields{}.template_to_signature)),
+                   }
+    };
+}
+
+constexpr auto LegacyV4Layout      = make_template_layout<DevIkTemplate>();
+constexpr auto EdgeLock2GoV4Layout = make_template_layout<EdgeLock2GoDevIkTemplate>();
+constexpr auto LegacyV3Layout      = make_template_layout<DevIkTemplateV3>();
+constexpr auto EdgeLock2GoV3Layout = make_template_layout<EdgeLock2GoDevIkTemplateV3>();
+
+bool regions_are_same(std::span<const uint8_t> template_1,
+                      std::span<const uint8_t> template_2,
+                      size_t                   offset,
+                      size_t                   size)
+{
+    if (offset > template_1.size() || size > template_1.size() - offset
+        || offset > template_2.size() || size > template_2.size() - offset) {
+        return false;
+    }
+
+    const auto region_1 = template_1.subspan(offset, size);
+    const auto region_2 = template_2.subspan(offset, size);
+    return std::equal(region_1.begin(), region_1.end(), region_2.begin());
+}
+
+void append_template_part(std::span<uint8_t> destination,
+                          uint32_t&          offset,
+                          const void*        part,
+                          size_t             part_size)
+{
+    const auto* bytes = static_cast<const uint8_t*>(part);
+    std::copy_n(bytes, part_size, destination.subspan(offset).begin());
+    offset += part_size;
+}
+
+constexpr auto BaseSerialNumberPrefix   = LegacySerialFieldsV4{}.template_to_serial_number;
+constexpr auto LegacyExtensionTemplate  = LegacyExtensionFields{};
+constexpr auto IdentityDdaOrdinalPrefix = DevIkIdentityFieldsV4{}
+                                              .template_to_dda_ordinal_number;
+constexpr auto IdentityFmcOrdinalPrefixV4 = DevIkIdentityFieldsV4{}
+                                                .template_to_fmc_ordinal_number;
+constexpr auto IdentitySubjectSerialPrefix = DevIkIdentityFieldsV4{}
+                                                 .template_to_subject_serial_number;
+constexpr auto IdentityPublicKeyPrefix    = DevIkIdentityFieldsV4{}.template_to_public_key;
+constexpr auto IdentityFmcOrdinalPrefixV3 = DevIkIdentityFieldsV3{}
+                                                .template_to_fmc_ordinal_number;
+
+constexpr size_t                  FmcDnLengthIndex      = 65;
+constexpr size_t                  FmcRdnLengthIndex     = 67;
+constexpr size_t                  FmcCnLengthIndex      = 69;
+constexpr size_t                  FmcCnValueLengthIndex = 76;
+constexpr size_t                  FmcCnValueIndex       = 77;
+constexpr uint8_t                 FmcV3DnLength         = 0x79;
+constexpr uint8_t                 FmcV3RdnLength        = 0x2E;
+constexpr uint8_t                 FmcV3CnLength         = 0x2C;
+constexpr uint8_t                 FmcV3CnValueLength    = 0x25;
+constexpr std::array<uint8_t, 15> FmcV3CnPrefix{
+    'M', 'C', 'U', ' ', 'S', 'M', 'A', ' ', 'M', 'C', 'X', 'N', '5', '5', '6'};
+
+constexpr size_t IdentityFmcTemplateOffset  = offsetof(DevIkIdentityFieldsV4,
+                                                      template_to_fmc_ordinal_number);
+constexpr size_t IdentityV3SharedTailOffset = IdentityFmcTemplateOffset
+                                            + sizeof(DevIkIdentityFieldsV3{}
+                                                         .template_to_fmc_ordinal_number)
+                                            - 1;
+constexpr size_t IdentityV3SizeDelta = sizeof(DevIkIdentityFieldsV3)
+                                     - sizeof(DevIkIdentityFieldsV4);
+
+static_assert(IdentityV3SizeDelta == 4);
+static_assert(offsetof(DevIkIdentityFieldsV3, dda_ordinal_number)
+              == offsetof(DevIkIdentityFieldsV4, dda_ordinal_number));
+static_assert(offsetof(DevIkIdentityFieldsV3, fmc_ordinal_number)
+              == offsetof(DevIkIdentityFieldsV4, fmc_ordinal_number) + IdentityV3SizeDelta);
+static_assert(offsetof(DevIkIdentityFieldsV3, subject_serial_number)
+              == offsetof(DevIkIdentityFieldsV4, subject_serial_number) + IdentityV3SizeDelta);
+static_assert(offsetof(DevIkIdentityFieldsV3, public_key)
+              == offsetof(DevIkIdentityFieldsV4, public_key) + IdentityV3SizeDelta);
+static_assert(DevIkIdentityFieldsV3{}.template_to_dda_ordinal_number
+              == IdentityDdaOrdinalPrefix);
+static_assert(DevIkIdentityFieldsV3{}.template_to_subject_serial_number
+              == IdentitySubjectSerialPrefix);
+static_assert(DevIkIdentityFieldsV3{}.template_to_public_key == IdentityPublicKeyPrefix);
+
+constexpr bool v3_fmc_prefix_is_derived_from_v4()
+{
+    for (size_t index = 0; index < IdentityFmcOrdinalPrefixV3.size(); ++index) {
+        uint8_t expected{};
+        if (index == FmcDnLengthIndex) {
+            expected = FmcV3DnLength;
+        }
+        else if (index == FmcRdnLengthIndex) {
+            expected = FmcV3RdnLength;
+        }
+        else if (index == FmcCnLengthIndex) {
+            expected = FmcV3CnLength;
+        }
+        else if (index == FmcCnValueLengthIndex) {
+            expected = FmcV3CnValueLength;
+        }
+        else if (index >= FmcCnValueIndex && index < FmcCnValueIndex + FmcV3CnPrefix.size()) {
+            expected = FmcV3CnPrefix.at(index - FmcCnValueIndex);
+        }
+        else if (index == IdentityFmcOrdinalPrefixV3.size() - 1) {
+            expected = IdentityFmcOrdinalPrefixV4.back();
+        }
+        else {
+            expected = IdentityFmcOrdinalPrefixV4.at(index);
+        }
+
+        if (IdentityFmcOrdinalPrefixV3.at(index) != expected) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(v3_fmc_prefix_is_derived_from_v4());
+
+void make_identity_fields(std::span<uint8_t>  destination,
+                          const DevIkRequest& req,
+                          bool                is_fmc_v3)
+{
+    const size_t version_offset = is_fmc_v3 ? IdentityV3SizeDelta : 0;
+    std::copy(
+        IdentityDdaOrdinalPrefix.begin(), IdentityDdaOrdinalPrefix.end(), destination.begin());
+    std::copy(req.dda_ordinal_number.begin(),
+              req.dda_ordinal_number.end(),
+              destination.begin() + offsetof(DevIkIdentityFieldsV4, dda_ordinal_number));
+
+    std::copy(IdentityFmcOrdinalPrefixV4.begin(),
+              IdentityFmcOrdinalPrefixV4.end(),
+              destination.begin() + IdentityFmcTemplateOffset);
+    if (is_fmc_v3) {
+        destination[IdentityV3SharedTailOffset] = IdentityFmcOrdinalPrefixV4.back();
+
+        destination[IdentityFmcTemplateOffset + FmcDnLengthIndex]      = FmcV3DnLength;
+        destination[IdentityFmcTemplateOffset + FmcRdnLengthIndex]     = FmcV3RdnLength;
+        destination[IdentityFmcTemplateOffset + FmcCnLengthIndex]      = FmcV3CnLength;
+        destination[IdentityFmcTemplateOffset + FmcCnValueLengthIndex] = FmcV3CnValueLength;
+        std::copy(FmcV3CnPrefix.begin(),
+                  FmcV3CnPrefix.end(),
+                  destination.begin() + IdentityFmcTemplateOffset + FmcCnValueIndex);
+    }
+
+    std::copy(req.fmc_ordinal_number.begin(),
+              req.fmc_ordinal_number.end(),
+              destination
+                  .subspan(offsetof(DevIkIdentityFieldsV4, fmc_ordinal_number) + version_offset)
+                  .begin());
+    std::copy(IdentitySubjectSerialPrefix.begin(),
+              IdentitySubjectSerialPrefix.end(),
+              destination
+                  .subspan(offsetof(DevIkIdentityFieldsV4, template_to_subject_serial_number)
+                           + version_offset)
+                  .begin());
+    std::copy(
+        req.subject_serial_number.begin(),
+        req.subject_serial_number.end(),
+        destination
+            .subspan(offsetof(DevIkIdentityFieldsV4, subject_serial_number) + version_offset)
+            .begin());
+    std::copy(
+        IdentityPublicKeyPrefix.begin(),
+        IdentityPublicKeyPrefix.end(),
+        destination
+            .subspan(offsetof(DevIkIdentityFieldsV4, template_to_public_key) + version_offset)
+            .begin());
+    std::copy(req.public_key.begin(),
+              req.public_key.end(),
+              destination.subspan(offsetof(DevIkIdentityFieldsV4, public_key) + version_offset)
+                  .begin());
+}
+
+}  // namespace
+
+const DevIkTemplateLayoutInfo& get_dev_ik_template_layout(DevIkCertificateProfile profile,
+                                                          bool                    is_fmc_v3)
+{
+    if (profile == DevIkCertificateProfile::EdgeLock2Go) {
+        return is_fmc_v3 ? EdgeLock2GoV3Layout : EdgeLock2GoV4Layout;
+    }
+    return is_fmc_v3 ? LegacyV3Layout : LegacyV4Layout;
+}
+
+DevIkHelper::DevIkHelper(nv::spdm::ik::DevIkRequest& req,
+                         DevIkCertificateProfile     certificate_profile)
+: _template_size(sizeof(nv::spdm::certlib::Sequence))
+, _signature(req.signature)
 {
     const bool IsFmcV3 = req.fmc_ordinal_number < FmcV4OrdinalThreshold;
 
+    auto serial_number_prefix = BaseSerialNumberPrefix;
     if (IsFmcV3) {
-        DevIkTemplateV3 templ{};
-        fill_template(templ, req);
+        constexpr uint8_t V3CertificateLengthDelta  = 4;
+        serial_number_prefix.at(3)                 += V3CertificateLengthDelta;
+    }
+    const bool IsEdgeLock2Go = certificate_profile == DevIkCertificateProfile::EdgeLock2Go;
+    if (IsEdgeLock2Go) {
+        constexpr size_t SerialNumberLengthOffset = 10;
+        --serial_number_prefix.at(3);
+        --serial_number_prefix.at(SerialNumberLengthOffset);
+    }
+    append_template_part(_template_bytes,
+                         _template_size,
+                         serial_number_prefix.data(),
+                         serial_number_prefix.size() - static_cast<size_t>(IsEdgeLock2Go));
+    append_template_part(
+        _template_bytes, _template_size, req.serial_number.data(), req.serial_number.size());
+
+    const size_t identity_size = IsFmcV3 ? sizeof(DevIkIdentityFieldsV3)
+                                         : sizeof(DevIkIdentityFieldsV4);
+    make_identity_fields(
+        std::span<uint8_t>(_template_bytes).subspan(_template_size, identity_size),
+        req,
+        IsFmcV3);
+    _template_size += identity_size;
+
+    if (IsEdgeLock2Go) {
+        constexpr size_t
+            HeaderAndBasicConstraintsSize = sizeof(EdgeLock2GoExtensionFields{}
+                                                       .template_to_authority_key_identifier)
+                                          - sizeof(LegacyExtensionFields{}
+                                                       .template_to_authority_key_identifier);
+        constexpr size_t KeyUsageAndAuthorityInfoAccessSize = sizeof(
+            EdgeLock2GoExtensionFields{}.template_to_authority_information_access);
+        constexpr size_t  EdgeLock2GoKeyUsageBitsOffset    = 15;
+        constexpr uint8_t LegacyKeyUsageBits               = 0x04;
+        constexpr uint8_t EdgeLock2GoKeyUsageBits          = 0x84;
+        constexpr size_t  SubjectKeyIdentifierPrefixOffset = HeaderAndBasicConstraintsSize
+                                                          + KeyUsageAndAuthorityInfoAccessSize;
+        static_assert(
+            SubjectKeyIdentifierPrefixOffset
+                + sizeof(EdgeLock2GoExtensionFields{}.template_to_subject_key_identifier)
+            == sizeof(LegacyExtensionFields{}.template_to_subject_key_identifier));
+
+        append_template_part(_template_bytes,
+                             _template_size,
+                             LegacyExtensionTemplate.template_to_subject_key_identifier.data(),
+                             HeaderAndBasicConstraintsSize);
+        append_template_part(
+            _template_bytes,
+            _template_size,
+            LegacyExtensionTemplate.template_to_authority_key_identifier.data(),
+            LegacyExtensionTemplate.template_to_authority_key_identifier.size());
+        append_template_part(_template_bytes,
+                             _template_size,
+                             req.authority_key_identifier.data(),
+                             req.authority_key_identifier.size());
+        append_template_part(
+            _template_bytes,
+            _template_size,
+            LegacyExtensionTemplate.template_to_subject_key_identifier.data()
+                + SubjectKeyIdentifierPrefixOffset,
+            sizeof(EdgeLock2GoExtensionFields{}.template_to_subject_key_identifier));
+        append_template_part(_template_bytes,
+                             _template_size,
+                             req.subject_key_identifier.data(),
+                             req.subject_key_identifier.size());
+        append_template_part(_template_bytes,
+                             _template_size,
+                             LegacyExtensionTemplate.template_to_subject_key_identifier.data()
+                                 + HeaderAndBasicConstraintsSize,
+                             KeyUsageAndAuthorityInfoAccessSize);
+        static_assert(LegacyExtensionTemplate.template_to_subject_key_identifier.at(
+                          HeaderAndBasicConstraintsSize + EdgeLock2GoKeyUsageBitsOffset)
+                      == LegacyKeyUsageBits);
+        static_assert(EdgeLock2GoExtensionFields{}.template_to_authority_information_access.at(
+                          EdgeLock2GoKeyUsageBitsOffset)
+                      == EdgeLock2GoKeyUsageBits);
+        _template_bytes.at(_template_size - KeyUsageAndAuthorityInfoAccessSize
+                           + EdgeLock2GoKeyUsageBitsOffset) = EdgeLock2GoKeyUsageBits;
     }
     else {
-        DevIkTemplate templ{};
-        fill_template(templ, req);
+        append_template_part(_template_bytes,
+                             _template_size,
+                             LegacyExtensionTemplate.template_to_subject_key_identifier.data(),
+                             LegacyExtensionTemplate.template_to_subject_key_identifier.size());
+        append_template_part(_template_bytes,
+                             _template_size,
+                             req.subject_key_identifier.data(),
+                             req.subject_key_identifier.size());
+        append_template_part(
+            _template_bytes,
+            _template_size,
+            LegacyExtensionTemplate.template_to_authority_key_identifier.data(),
+            LegacyExtensionTemplate.template_to_authority_key_identifier.size());
+        append_template_part(_template_bytes,
+                             _template_size,
+                             req.authority_key_identifier.data(),
+                             req.authority_key_identifier.size());
     }
+
+    DevIkSignatureFields signature_fields{};
+    append_template_part(
+        _template_bytes, _template_size, &signature_fields, sizeof(signature_fields));
+
+    nv::spdm::certlib::Sequence total_certificate{};
+    const uint32_t              WholeCertLength = _template_size + _signature.bit_string.length
+                                   + sizeof(_signature.bit_string.length)
+                                   + sizeof(_signature.bit_string.token)
+                                   - sizeof(total_certificate);
+    total_certificate.length_msb = (WholeCertLength >> 8u);
+    total_certificate.length_lsb = WholeCertLength % 256;
+    const auto
+        total_certificate_bytes = std::bit_cast<std::array<uint8_t, sizeof(total_certificate)>>(
+            total_certificate);
+    std::copy(total_certificate_bytes.begin(),
+              total_certificate_bytes.end(),
+              _template_bytes.begin());
 };
 
 void DevIkHelper::construct_cert(std::span<uint8_t>& input_buffer)
@@ -112,71 +474,29 @@ void DevIkHelper::construct_cert(std::span<uint8_t>& input_buffer)
     it = std::copy(
         _signature.s_value.begin(), _signature.s_value.begin() + _signature.s_length_token, it);
 }
-template<typename TemplateType>
-TemplateComparisonError check_two_template_is_same(const TemplateType& template_1,
-                                                   const TemplateType& template_2)
+TemplateComparisonError check_two_template_is_same(std::span<const uint8_t>       template_1,
+                                                   std::span<const uint8_t>       template_2,
+                                                   const DevIkTemplateLayoutInfo& layout)
 {
-    // Check each field individually and return specific error code
-#ifdef EDGELOCK2GO_CERT
-    if (template_1.template_to_serial_number != template_2.template_to_serial_number) {
-        return TemplateComparisonError::SerialNumberMismatch;
-    }
-#else
-    if (template_1.template_to_serial_number != template_2.template_to_serial_number
-        || template_1.serial_number != template_2.serial_number) {
-        return TemplateComparisonError::SerialNumberMismatch;
-    }
-#endif
-
-    if (template_1.template_to_dda_ordinal_number != template_2.template_to_dda_ordinal_number
-        || template_1.dda_ordinal_number != template_2.dda_ordinal_number) {
-        return TemplateComparisonError::DdaOrdinalNumberMismatch;
-    }
-
-    if (template_1.template_to_fmc_ordinal_number != template_2.template_to_fmc_ordinal_number
-        || template_1.fmc_ordinal_number != template_2.fmc_ordinal_number) {
-        return TemplateComparisonError::FmcOrdinalNumberMismatch;
-    }
-
-    if (template_1.template_to_subject_serial_number
-            != template_2.template_to_subject_serial_number
-        || template_1.subject_serial_number != template_2.subject_serial_number) {
-        return TemplateComparisonError::SubjectSerialNumberMismatch;
-    }
-
-    if (template_1.template_to_public_key != template_2.template_to_public_key
-        || template_1.public_key != template_2.public_key) {
-        return TemplateComparisonError::PublicKeyMismatch;
-    }
-
-    if (template_1.template_to_subject_key_identifier
-            != template_2.template_to_subject_key_identifier
-        || template_1.subject_key_identifier != template_2.subject_key_identifier) {
-        return TemplateComparisonError::SubjectKeyIdentifierMismatch;
-    }
-
-    if (template_1.template_to_authority_key_identifier
-        != template_2.template_to_authority_key_identifier) {
-        // Note: authority_key_identifier itself is not checked as per original comment
-        return TemplateComparisonError::AuthorityKeyIdentifierMismatch;
-    }
-
-#ifdef EDGELOCK2GO_CERT
-    if (template_1.template_to_authority_information_access
-        != template_2.template_to_authority_information_access) {
-        return TemplateComparisonError::AuthorityInfoAccessMismatch;
-    }
-#endif
-
-    if (template_1.template_to_signature != template_2.template_to_signature) {
-        return TemplateComparisonError::SignatureMismatch;
+    size_t index{};
+    for (const auto& region : layout.comparison_regions) {
+        if (region.size != 0
+            && !regions_are_same(template_1, template_2, region.offset, region.size)) {
+            constexpr auto LastSequentialError = static_cast<size_t>(
+                DevIkTemplateComparisonRegion::AuthorityKeyIdentifier);
+            if (index <= LastSequentialError) {
+                return static_cast<TemplateComparisonError>(index + 1);
+            }
+            if (index
+                == static_cast<size_t>(
+                    DevIkTemplateComparisonRegion::AuthorityInformationAccess)) {
+                return TemplateComparisonError::AuthorityInfoAccessMismatch;
+            }
+            return TemplateComparisonError::SignatureMismatch;
+        }
+        ++index;
     }
 
     return TemplateComparisonError::Success;
 }
-
-template TemplateComparisonError
-check_two_template_is_same<DevIkTemplate>(const DevIkTemplate&, const DevIkTemplate&);
-template TemplateComparisonError
-check_two_template_is_same<DevIkTemplateV3>(const DevIkTemplateV3&, const DevIkTemplateV3&);
 }  // namespace nv::spdm::ik

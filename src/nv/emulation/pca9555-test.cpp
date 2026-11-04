@@ -26,14 +26,8 @@ using namespace ut;
 class Pca9555Test : public ut::Fixture
 {
 public:
-    void setup() override
-    {
-        // Initialize with all pins as inputs (0xFFFF)
-        pca = emulation::Pca9555(0xFFFF);
-    }
-
-public:
-    emulation::Pca9555 pca;
+    // Initialize with all pins as inputs (0xFFFF)
+    emulation::Pca9555 pca{0xFFFF};
 };
 
 // Test constructor initialization

@@ -53,12 +53,19 @@ enum class Key : uint32_t
     NpdsAp1FwStatus,                 ///< AP1 FW status
     NpdsFmcNumericVersion,           ///< FMC numeric version (e.g. 3 for V3, 4 for V4)
     NpdsAp0ProvisionStatus,          ///< AP0 provision status
+    NpdsDdaOrdinalNumber,            ///< DDA ordinal parsed from the programmed L3 certificate
     NpdsEnd,
     NpdsInvalid,
     // here is for active ap fw authenticate data
     NpdsActiveApFwAuthenticateData,
     // here is for update ap fw authenticate data
     NpdsUpdateApFwAuthenticateData,
+    // here is for inactive ap fw authenticate data used by SecureBoot recovery
+    NpdsInactiveApFwAuthenticateData,
+    // AP1 ap fw authenticate data
+    NpdsActiveAp1FwAuthenticateData,
+    NpdsUpdateAp1FwAuthenticateData,
+    NpdsInactiveAp1FwAuthenticateData,
     PdsStart = 0x1000,
     // TBD: Replace it with real data field
     PdsBootableSlot0 = PdsStart,

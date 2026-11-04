@@ -51,6 +51,9 @@ enum class Id : uint8_t
     Spdm,
     Iox,
     Lstp,
+    VrI2c0,
+    VrI2c1,
+    I2cForward,
     Unuse,
 };
 }  // namespace nv::ipchandler

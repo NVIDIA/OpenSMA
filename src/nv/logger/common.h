@@ -251,7 +251,8 @@ struct Event
     static constexpr EventStructItem SpdmTemplateComparisonFailed = {0x090B, Level::Error};
     static constexpr EventStructItem SpdmCryptoApRollbackProtectionActive = {0x090C,
                                                                              Level::Error};
-    static constexpr EventStructItem SpdmCmpaEnfCnsa = {0x090D, Level::Info};
+    static constexpr EventStructItem SpdmCmpaEnfCnsa          = {0x090D, Level::Info};
+    static constexpr EventStructItem RuntimeConsistencyResult = {0x090E, Level::Info};
 
     // Flash
     static constexpr EventStructItem FlashReqError = {0x0a00, Level::Unknown};
@@ -374,6 +375,7 @@ struct Event
     static constexpr EventStructItem I2CSlaveDoubleNack      = {0x1303, Level::Error};
     static constexpr EventStructItem I2CSlaveInvalidState    = {0x1304, Level::Error};
     static constexpr EventStructItem I2CSlaveRecovery        = {0x1305, Level::Info};
+    static constexpr EventStructItem I2cForwardWriteFail     = {0x1306, Level::Error};
 
     // SSIF
     static constexpr EventStructItem SsifTxDataOverriden        = {0x1400, Level::Info};
@@ -395,6 +397,28 @@ struct Event
     static constexpr EventStructItem SecureBootQueueSendFail   = {0x1504, Level::Error};
     static constexpr EventStructItem SecureBootQueueRecvFail   = {0x1505, Level::Error};
     static constexpr EventStructItem SecureBootFatal           = {0x1506, Level::Error};
+    static constexpr EventStructItem SecureBootSlotRestoreFail = {0x1507, Level::Error};
+
+    // VROT/AP Boot
+    // FPGA Ctl
+    static constexpr EventStructItem FpgaCtlInfo  = {0x1600, Level::Info};
+    static constexpr EventStructItem FpgaCtlError = {0x1601, Level::Error};
+
+    // JTAG
+    static constexpr EventStructItem JtagIdcode        = {0x1900, Level::Info};
+    static constexpr EventStructItem JtagDsmVerifyFail = {0x1901, Level::Error};
+
+    // Ext Flash
+    static constexpr EventStructItem ExtFlashSFPDInfo = {0x1700, Level::Info};
+    static constexpr EventStructItem ExtFlashError    = {0x1701, Level::Error};
+
+    // Ap Target Management
+    static constexpr EventStructItem ApInfo  = {0x1800, Level::Info};
+    static constexpr EventStructItem ApError = {0x1801, Level::Error};
+
+    // RTC
+    static constexpr EventStructItem RtcPorDetected       = {0x1700, Level::Error};
+    static constexpr EventStructItem RtcClockLossDetected = {0x1701, Level::Error};
 
     Event()                        = delete;
     Event(const Event&)            = delete;

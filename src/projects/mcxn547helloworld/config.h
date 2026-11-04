@@ -46,6 +46,7 @@
 #include "nv/telemetry/utils.h"
 #include "sys/common/common.h"
 #include "nv/iox/common.h"
+#include "nv/i2c/vr_i2c_bus_slot.h"
 #include "nv/pldm/common.h"
 #include "nv/vrot/interface/types.h"
 #include "nv/volt_mon/common.h"
@@ -272,6 +273,8 @@ enum class QueueId
     I2c7,
     I2c8,
     I2c9,
+    VrI2c0,
+    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -340,7 +343,6 @@ enum class EventId
     TaskBootStatus,
     TaskAliveStatus,
     Spi0EdmaDriverEvent,
-    Lstp,
     Ssif,
     UartBridgeEvent,
     End
@@ -367,7 +369,6 @@ constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
     EventInfo{     EventId::TaskBootStatus,                       CoreId::Core0},
     EventInfo{    EventId::TaskAliveStatus,                        CoreId::Both},
     EventInfo{EventId::Spi0EdmaDriverEvent,    get_core_from_task(TaskId::Spi0)},
-    EventInfo{               EventId::Lstp,    get_core_from_task(TaskId::Lstp)},
     EventInfo{               EventId::Ssif,    get_core_from_task(TaskId::Ssif)},
     EventInfo{    EventId::UartBridgeEvent, get_core_from_task(TaskId::Ubridge)}
 };
@@ -485,6 +486,8 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {               QueueId::I2c7,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c8,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c9,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {             QueueId::VrI2c0,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {             QueueId::VrI2c1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c0,            8,                                                524,    get_core_from_task(TaskId::I3c0)},
     {               QueueId::I3c1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi0,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
@@ -548,6 +551,7 @@ enum class TimerId
     EndpointStatusChangeStart,
     EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     I2CTargetTimeoutCheck,
+    McuHeartbeat,
     End
 };
 
@@ -583,7 +587,7 @@ constexpr auto make_timer_infos()
     }
 
     infos[idx++] = TimerInfo{TimerId::I2CTargetTimeoutCheck, get_core_from_task(TaskId::I2c0)};
-
+    infos[idx++] = TimerInfo{TimerId::McuHeartbeat, CoreId::Core0};
     return infos;
 }
 }  // namespace
@@ -730,7 +734,13 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 2> TaskMonitorList{
 constexpr bool EnableRuntimeWdt       = false;
 constexpr bool EnableCP2112NativeGpio = false;
 constexpr bool EnablePufEngine        = false;
+constexpr bool EnableEcdhP384Engine   = false;
 constexpr bool EnableAesGCM           = false;
+
+// MCU heartbeat config
+constexpr bool           EnableMcuHeartbeat = false;
+constexpr gpio::GpioPort McuHeartbeatPort   = nv::gpio::InvalidGpioPort;
+constexpr gpio::GpioPin  McuHeartbeatPin    = nv::gpio::InvalidGpioPin;
 
 // Debugtoken config
 constexpr bool DebugTokenEnabled = true;
@@ -883,6 +893,13 @@ constexpr uint32_t                                      IoxFilterSeconds   = 0;
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
+/******** ******** Virtual I2C Config Starts ******** ********/
+constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
+constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
+/******** ******** Virtual I2C Config Ends ******** ********/
+
 // SMA_READY pin configuration
 constexpr bool               EnableMcuReadyPin = false;
 constexpr nv::gpio::GpioPort McuReadyPinPort   = 0;
@@ -927,10 +944,10 @@ namespace nv::gpio {
 
 struct VirtualGpioEvent
 {
-    GpioPort         port = vrPort;
-    GpioPin          pin{};
-    nv::ipc::EventId event{};
-    uint32_t         bits{};
+    GpioPort                      port = vrPort;
+    GpioPin                       pin{};
+    VirtualGpioNotificationTarget notification_target{};
+    uint32_t                      bits{};
 };
 
 constexpr inline std::array<VirtualGpioEvent, 0> VirtualGpioEventSetup{};

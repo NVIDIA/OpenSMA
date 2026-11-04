@@ -21,7 +21,6 @@
 
 #include "nv/spi/port.h"
 #include "nv/spi/spb.h"
-#include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
 #include "nv/gpio/common.h"
@@ -85,7 +84,7 @@ public:
 
     void handle_tx(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer);
     void bind(nv::spi::Flexcomm flexcomm,
-              nv::ipc::EventId  event_id,
+              nv::ipc::TaskId   task_id,
               uint8_t           cs0_port_id,
               uint8_t           cs0_pin_id,
               uint8_t           cs1_port_id,

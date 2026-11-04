@@ -32,48 +32,23 @@ struct FlashPartition
 };
 
 namespace ExtFlashPartitionIndex {
-constexpr uint8_t Primary = 0;
+constexpr uint8_t Primary  = 0;
+constexpr uint8_t Metadata = 1;
 }  // namespace ExtFlashPartitionIndex
 
+// expected_capacity is a board sanity-check against the SFDP density readout;
+// all other geometry is discovered via SFDP at init().
 struct FlashSpec
 {
-    uint32_t page_size;      // bytes per page (program granularity)
-    uint32_t sector_size;    // bytes per sector (smallest erase unit)
-    uint32_t block_size;     // bytes per block (larger erase unit)
-    uint32_t max_address;    // highest valid byte address; 0 => disabled
-    uint32_t jedec_id;       // 24-bit mfg/type/capacity; verified at every op
+    uint32_t expected_capacity;
     uint32_t op_timeout_ms;  // worst-case timeout for any blocking op
 };
 
 namespace ExtFlashSpecs {
 
 constexpr FlashSpec Disabled = {
-    .page_size     = 256,
-    .sector_size   = 4096,
-    .block_size    = 65536,
-    .max_address   = 0,
-    .jedec_id      = 0,
-    .op_timeout_ms = 0,
-};
-
-// Macronix MX25S6433F (64Mb / 8MB secure SPI NOR)
-constexpr FlashSpec Mx25S6433f = {
-    .page_size     = 256,
-    .sector_size   = 4096,
-    .block_size    = 65536,
-    .max_address   = 0x7FFFFF,
-    .jedec_id      = 0xC22B27,
-    .op_timeout_ms = 150000,  // chip-erase worst case
-};
-
-// Macronix MX66U1G45G (1Gb / 128MB octal SPI NOR)
-constexpr FlashSpec Mx66U1G45G = {
-    .page_size     = 256,
-    .sector_size   = 4096,
-    .block_size    = 65536,
-    .max_address   = 0x07FFFFFF,
-    .jedec_id      = 0xC2253B,
-    .op_timeout_ms = 300000,  // chip-erase worst case
+    .expected_capacity = 0,
+    .op_timeout_ms     = 0,
 };
 
 }  // namespace ExtFlashSpecs

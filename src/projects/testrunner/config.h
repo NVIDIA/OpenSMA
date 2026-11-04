@@ -34,10 +34,12 @@
 
 #include "nv/lstp/lstp_common.h"
 #include "nv/gpio/common.h"
+#include "sys/rtc/rtc.h"
 #include "nv/i2c/port.h"
 #include "nv/i2c/sensor.h"
 #include "nv/i2c/smb_direct.h"
 #include "nv/iox/common.h"
+#include "nv/i2c/vr_i2c_bus_slot.h"
 #include "nv/i2c/slave_function.h"
 #include "nv/ipchandler/enums.h"
 #include "nv/mctp/enums.h"
@@ -55,19 +57,6 @@
 #include "sys/common/common.h"
 #include "nv/fancontrol/common.h"
 #include "sys/pwm/pwm_ctimer.h"
-
-// CPLD configuration (for test/mock purposes)
-#define ENABLE_CPLD_PLDM 1
-#ifdef ENABLE_CPLD_PLDM
-constexpr nv::i2c::Port CPLD_I2C_PORT_PRGM        = nv::i2c::Port::Zero;
-constexpr uint8_t       CPLD_I2C_ADDR_PRGM        = 0x40;
-constexpr nv::i2c::Port CPLD_I2C_PORT_USR         = nv::i2c::Port::Zero;
-constexpr uint8_t       CPLD_I2C_ADDR_USR         = 0x0B;
-constexpr uint8_t       CPLD_I2C_ADDR_DBG         = 0x0F;
-constexpr uint8_t       CPLD_I2C_ADDR_DBG_INSTALL = 0x11;
-
-constexpr bool CPLD_ProgramN_Pin_Enabled = false;
-#endif  // ENABLE_CPLD_PLDM
 
 namespace nv::telemetry {
 
@@ -133,6 +122,7 @@ enum class TaskId
     Mctp,
     I2c0,
     Lstp,
+    FpgaCtl,
     Pldm,
     Iox,
 #ifdef NV_UNITTEST
@@ -145,7 +135,8 @@ enum class TaskId
     GpuPwrController,
     Core0,
     Core1,
-    Privileged = Core1 + 1,
+    Thermal,
+    Privileged = Thermal + 1,
     Usb        = Privileged + 0,
     Ubridge    = Privileged + 1,
     Flash      = Privileged + 2,
@@ -186,6 +177,8 @@ enum class QueueId
     I2c7,
     I2c8,
     I2c9,
+    VrI2c0,
+    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -214,6 +207,7 @@ enum class QueueId
     Iox,
     UbridgeTx,
     UbridgeRx,
+    FpgaCtl,
     Ssif,
     End
 };
@@ -311,6 +305,8 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {                QueueId::I2c7,                        1,                                                  1},
     {                QueueId::I2c8,                        1,                                                  1},
     {                QueueId::I2c9,                        1,                                                  1},
+    {              QueueId::VrI2c0,                        1,                                                  1},
+    {              QueueId::VrI2c1,                        1,                                                  1},
     {                QueueId::I3c0,                       80,                                                 76},
     {                QueueId::I3c1,                       80,                                                 76},
     {                QueueId::Spi0,                        1,                                                  1},
@@ -341,6 +337,7 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {                 QueueId::Iox,                        8,                                                 80},
     {           QueueId::UbridgeTx,                        4,                                   UbridgeQueueSize},
     {           QueueId::UbridgeRx,                        4,                                   UbridgeQueueSize},
+    {             QueueId::FpgaCtl,                        8,                                                  1},
     {                QueueId::Ssif,                        1,                                                  1}
 };
 /// All Events must be part of this enum.
@@ -368,11 +365,13 @@ enum class EventId
     TaskBootStatus,
     TaskAliveStatus,
     GpuPwrCtrlEvent,
-    Spi0EdmaDriverEvent,
-    Lstp,
+    FpgaCtl,
     UartBridgeEvent,
     Ssif,
     GpioMonEvent,
+    // Compile-only: shared nv/thermal/task.cpp is built here via SRCS_ALL and
+    // references this; testrunner never runs the thermal task. See e4188/config.h.
+    ThermalEvent,
     End
 };
 
@@ -403,6 +402,8 @@ enum class TimerId
     EndpointStatusChangeStart,
     EndpointStatusChangeEnd = EndpointStatusChangeStart + DownStreamNum - 1,
     I2CTargetTimeoutCheck,
+    // Compile-only: see ThermalEvent above (shared thermal task, not run here).
+    ThermalTick,
     End
 };
 
@@ -423,6 +424,9 @@ enum Port : gpio::GpioPort
     // Port 1
     MCU_PWR_BRAKE_L_PORT = 1,
 
+    // Port 3
+    JTAG_CPLD_PORT = 3,
+
     // Port 4
     THERM_OVERT_N_PORT = 4,
 
@@ -436,6 +440,12 @@ enum Pin : gpio::GpioPin
     GlobalWpPin = nv::gpio::InvalidGpioPin,
     // Port 1
     MCU_PWR_BRAKE_L_PIN = 16,
+
+    // Port 3
+    JTAG_CPLD_TCK_PIN = 7,
+    JTAG_CPLD_TMS_PIN = 6,
+    JTAG_CPLD_TDI_PIN = 8,
+    JTAG_CPLD_TDO_PIN = 9,
 
     // Port 4 pins
     THERM_OVERT_N_PIN = 15,
@@ -520,6 +530,7 @@ constexpr bool EnableRuntimeWdt = false;
 
 constexpr bool EnableCP2112NativeGpio  = false;
 constexpr bool EnablePufEngine         = false;
+constexpr bool EnableEcdhP384Engine    = false;
 constexpr bool EnableAesGCM            = false;
 constexpr bool EnableI2CErrorInjection = false;
 
@@ -674,6 +685,13 @@ constexpr uint32_t                                      PWR_BRAKE_THERM_ACTIVE_V
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
+/******** ******** Virtual I2C Config Starts ******** ********/
+constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
+constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
+/******** ******** Virtual I2C Config Ends ******** ********/
+
 /******** ******** Voltage Monitor Config Starts ******** ********/
 // clang-format off
 namespace voltage_monitor_config {
@@ -760,6 +778,65 @@ constexpr uint32_t EepromUpdateTimerUs = 0;
 
 }  // namespace nv::ipc
 
+namespace nv::fpga_ctl {
+
+struct OutputPins
+{
+    nv::gpio::GpioPort flash_mux_sel_port;
+    nv::gpio::GpioPin  flash_mux_sel_pin;
+    nv::gpio::GpioPort sdm_flash_rst_n_port;
+    nv::gpio::GpioPin  sdm_flash_rst_n_pin;
+    nv::gpio::GpioPort vr_i2c_sel_1_port;
+    nv::gpio::GpioPin  vr_i2c_sel_1_pin;
+    nv::gpio::GpioPort n_config_port;
+    nv::gpio::GpioPin  n_config_pin;
+    nv::gpio::GpioPort rst_n_port;
+    nv::gpio::GpioPin  rst_n_pin;
+};
+
+struct InputPins
+{
+    nv::gpio::GpioPort conf_done_port;
+    nv::gpio::GpioPin  conf_done_pin;
+    nv::gpio::GpioPort n_status_port;
+    nv::gpio::GpioPin  n_status_pin;
+    nv::gpio::GpioPort pgood_port;
+    nv::gpio::GpioPin  pgood_pin;
+    nv::gpio::GpioPort n_config_vr_port = nv::gpio::InvalidGpioPort;
+    nv::gpio::GpioPin  n_config_vr_pin  = nv::gpio::InvalidGpioPin;
+};
+
+constexpr OutputPins FpgaCtlOutputPins{};
+constexpr InputPins  FpgaCtlInputPins{};
+
+}  // namespace nv::fpga_ctl
+
+// CPLD configuration (for test/mock purposes)
+#define ENABLE_CPLD_PLDM 1
+#ifdef ENABLE_CPLD_PLDM
+constexpr nv::i2c::Port CPLD_I2C_PORT_PRGM        = nv::i2c::Port::Zero;
+constexpr uint8_t       CPLD_I2C_ADDR_PRGM        = 0x40;
+constexpr nv::i2c::Port CPLD_I2C_PORT_USR         = nv::i2c::Port::Zero;
+constexpr uint8_t       CPLD_I2C_ADDR_USR         = 0x0B;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG         = 0x0F;
+constexpr uint8_t       CPLD_I2C_ADDR_DBG_INSTALL = 0x11;
+
+constexpr bool CPLD_ProgramN_Pin_Enabled = false;
+
+// JTAG needs real pins to avoid static_asserts failing for testrunner
+namespace nv::jtag {
+constexpr nv::gpio::GpioPort CPLD_JTAG_PORT      = nv::ipc::JTAG_CPLD_PORT;
+constexpr nv::gpio::GpioPin  CPLD_JTAG_TCK_PIN   = nv::ipc::JTAG_CPLD_TCK_PIN;
+constexpr nv::gpio::GpioPin  CPLD_JTAG_TMS_PIN   = nv::ipc::JTAG_CPLD_TMS_PIN;
+constexpr nv::gpio::GpioPin  CPLD_JTAG_TDI_PIN   = nv::ipc::JTAG_CPLD_TDI_PIN;
+constexpr nv::gpio::GpioPin  CPLD_JTAG_TDO_PIN   = nv::ipc::JTAG_CPLD_TDO_PIN;
+constexpr nv::gpio::GpioPort CPLD_CONF_DONE_PORT = nv::gpio::InvalidGpioPort;
+constexpr nv::gpio::GpioPin  CPLD_CONF_DONE_PIN  = nv::gpio::InvalidGpioPin;
+constexpr nv::gpio::GpioPort CPLD_NCONFIG_PORT   = nv::gpio::InvalidGpioPort;
+constexpr nv::gpio::GpioPin  CPLD_NCONFIG_PIN    = nv::gpio::InvalidGpioPin;
+}  // namespace nv::jtag
+#endif  // ENABLE_CPLD_PLDM
+
 namespace nv::i2c {
 constexpr size_t   I2cBufferSize                   = 64;
 constexpr bool     EnableI2cPeripheralRecovery     = false;
@@ -813,10 +890,10 @@ namespace nv::gpio {
 
 struct VirtualGpioEvent
 {
-    GpioPort         port = vrPort;
-    GpioPin          pin{};
-    nv::ipc::EventId event{};
-    uint32_t         bits{};
+    GpioPort                      port = vrPort;
+    GpioPin                       pin{};
+    VirtualGpioNotificationTarget notification_target{};
+    uint32_t                      bits{};
 };
 
 constexpr inline std::array<VirtualGpioEvent, 0> VirtualGpioEventSetup{};
@@ -877,6 +954,7 @@ constexpr void
 config_nsm_type5_cmd([[maybe_unused]] std::array<uint8_t, nsm_msg::NvMctpSupportedNum>& bitmask)
 {
     nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetSmaBaseboardSettings));
+    nsm_msg::set_bit(bitmask, static_cast<uint8_t>(NsmDevCfgCmdCode::GetDeviceModeSettingsV2));
 }
 
 /** function to add/remove NSM T6 Command Codes
@@ -1101,5 +1179,12 @@ constexpr sys::pwm_ctimer::Instance PwmCtimerInstance = sys::pwm_ctimer::Instanc
 constexpr sys::pwm_ctimer::Channel  PwmCtimerPeriodCh = sys::pwm_ctimer::Channel::None;
 constexpr std::array<sys::pwm_ctimer::Channel, FanNum> PwmCtimerMatchCh{};
 }  // namespace nv::fancontrol
+
+/******** ******** RTC Config Starts ******** ********/
+namespace sys::rtc {
+constexpr CrystalTuningProfile
+    RtcCrystalTuningProfile = CrystalTuningProfile::NoBatteryInternal16kFro;
+}  // namespace sys::rtc
+/******** ******** RTC Config Ends ******** ********/
 
 #endif

@@ -40,7 +40,6 @@ public:
     }
 
     Status start();
-    void   stop();
     void   next(Driver& driver);
     Status status_progress(Response& response);
     Status state_to_status();

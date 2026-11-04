@@ -88,121 +88,136 @@ static_assert(hsc_config_is_valid(),
 }  // namespace
 
 // ========== Multi-Device Identification Logic ==========
+// Projects declare their power-sensor population in powersensor.h via HscDeviceCount /
+// HsccDeviceCount. A zero count discards the matching scan block at compile time, so
+// projects without that hardware carry no scan code, emit no "not found" boot log for
+// devices the board never had, and (because the dispatch helpers below are guarded the
+// same way) never reference the HSC/HSCC drivers at all — --gc-sections then drops the
+// driver objects from the image.
 void DeviceManager::identify_power_sensors()
 {
     // Reset device counters
     hsc_count_  = 0;
     hscc_count_ = 0;
 
-    // ========== Scan HSC devices: for each device slot (col), find which variant (row) has it
-    // ========== Outer loop: device index (col). read_hsc_gpio_strap(): 0xff = scan all
-    // columns; else scan only that column. When HscVariantCount > 1 (e.g. East/West), always
-    // scan all columns; single-variant may use GPIO column. coverity[dead_error_begin]
-    const uint8_t hsc_fixed_col = read_hsc_gpio_strap();
+    if constexpr (HscDeviceCount > 0) {
+        // ========== Scan HSC devices: for each device slot (col), find which variant (row)
+        // ========== has it. Outer loop: device index (col). read_hsc_gpio_strap(): 0xff =
+        // scan all columns; else scan only that column. When HscVariantCount > 1 (e.g.
+        // East/West), always scan all columns; single-variant may use GPIO column.
+        const uint8_t hsc_fixed_col = read_hsc_gpio_strap();
 
-    for (uint8_t hsc_col = 0; hsc_col < HscDeviceCount; hsc_col++) {
-        if (hsc_fixed_col != SCAN_ALL_DEVICES && hsc_fixed_col != hsc_col) {
-            continue;
+        for (uint8_t hsc_col = 0; hsc_col < HscDeviceCount; hsc_col++) {
+            if (hsc_fixed_col != SCAN_ALL_DEVICES && hsc_fixed_col != hsc_col) {
+                continue;
+            }
+            for (uint8_t hsc_row = 0; hsc_row < HscVariantCount; hsc_row++) {
+                const auto& sensor = HscSensorList.at(hsc_col).at(hsc_row);
+
+                uint32_t mfr_id    = 0;
+                uint64_t mfr_model = 0;
+                auto     status    = read_mfr_info(
+                    POWER_SENSOR_PORT, sensor.address, mfr_id, mfr_model);
+
+                if (status != I2cStatus::Ok) {
+                    continue;  // This variant doesn't have this device, try next variant
+                }
+
+                const bool verified = (mfr_id == sensor.mfr_id)
+                                   && (mfr_model == sensor.mfr_model);
+
+                if (verified) {
+                    add_hsc_device(sensor.address,
+                                   sensor.device_type,
+                                   sensor.power_input_coeff,
+                                   hsc_row,
+                                   sensor.temp_sensor_id,
+                                   sensor.power_sensor_id,
+                                   sensor.vout_sensor_id,
+                                   sensor.vin_sensor_id,
+                                   sensor.alert_sensor_id,
+                                   sensor.rsense_milliohm,
+                                   sensor.cl_pin);
+                    nv::info("Found HSC device: variant=%d, addr=0x%02X, type=%d\n",
+                             hsc_row,
+                             sensor.address,
+                             static_cast<int>(sensor.device_type));
+                    break;  // This device slot is filled by this variant, move to next slot
+                }
+            }
         }
-        for (uint8_t hsc_row = 0; hsc_row < HscVariantCount; hsc_row++) {
-            const auto& sensor = HscSensorList.at(hsc_col).at(hsc_row);
+        for (uint8_t i = 0; i < hsc_count_; i++) {
+            if (hsc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
+                nv::logger::info(nv::logger::Event::I2cHscInitFailed,
+                                 nv::logger::data_from_u32(i));
+            }
+        }
+
+        // Log summary
+        if (hsc_count_ == 0) {
+            nv::logger::info_wait(nv::logger::Event::I2cPowerSensorNotFound, {0x01});  // HSC
+                                                                                       // not
+                                                                                       // found
+        }
+        else {
+            nv::info("Total HSC devices found: %d\n", hsc_count_);
+        }
+    }
+
+    if constexpr (HsccDeviceCount > 0) {
+        // ========== Scan ALL HSCC devices ==========
+        for (uint8_t hscc_idx = 0; hscc_idx < HsccSensorList.size(); hscc_idx++) {
+            const auto& sensor = HsccSensorList.at(hscc_idx);
 
             uint32_t mfr_id    = 0;
             uint64_t mfr_model = 0;
             auto status = read_mfr_info(POWER_SENSOR_PORT, sensor.address, mfr_id, mfr_model);
 
             if (status != I2cStatus::Ok) {
-                continue;  // This variant doesn't have this device, try next variant
+                continue;  // Device not responding, try next
             }
 
             const bool verified = (mfr_id == sensor.mfr_id) && (mfr_model == sensor.mfr_model);
 
             if (verified) {
-                add_hsc_device(sensor.address,
-                               sensor.device_type,
-                               sensor.power_input_coeff,
-                               hsc_row,
-                               sensor.temp_sensor_id,
-                               sensor.power_sensor_id,
-                               sensor.vout_sensor_id,
-                               sensor.vin_sensor_id,
-                               sensor.alert_sensor_id,
-                               sensor.rsense_milliohm,
-                               sensor.cl_pin);
-                nv::info("Found HSC device: variant=%d, addr=0x%02X, type=%d\n",
-                         hsc_row,
+                // HSCC chips (RAA22800X, MP29540) use internal DCR/RDS(on) current
+                // sensing with factory-trimmed coefficients, so no external Rsense
+                // calibration is needed before adding them.
+                add_hscc_device(sensor.address,
+                                sensor.device_type,
+                                sensor.power_input_coeff,
+                                hscc_idx,
+                                sensor.temp_sensor_id,
+                                sensor.power_sensor_id,
+                                sensor.vout_sensor_id,
+                                sensor.vin_sensor_id,
+                                sensor.alert_sensor_id);
+                nv::info("Found HSCC device: index=%d, addr=0x%02X, type=%d\n",
+                         hscc_idx,
                          sensor.address,
                          static_cast<int>(sensor.device_type));
-                break;  // This device slot is filled by this variant, move to next slot
+                // Don't break - continue scanning for more devices
             }
         }
-    }
-    for (uint8_t i = 0; i < hsc_count_; i++) {
-        if (hsc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
-            nv::logger::info(nv::logger::Event::I2cHscInitFailed, nv::logger::data_from_u32(i));
-        }
-    }
 
-    // ========== Scan ALL HSCC devices ==========
-    // coverity[dead_error_begin]
-    for (uint8_t hscc_idx = 0; hscc_idx < HsccSensorList.size(); hscc_idx++) {
-        const auto& sensor = HsccSensorList.at(hscc_idx);
-
-        uint32_t mfr_id    = 0;
-        uint64_t mfr_model = 0;
-        auto     status = read_mfr_info(POWER_SENSOR_PORT, sensor.address, mfr_id, mfr_model);
-
-        if (status != I2cStatus::Ok) {
-            continue;  // Device not responding, try next
+        // Initialize each detected HSCC device. For the MP29540 this unmasks OT warning/fault
+        // to ALT_P# in SMBALERT_MASK1; for the RAA22800X the mask already defaults to
+        // unmasked. Mirrors the HSC init loop above.
+        for (uint8_t i = 0; i < hscc_count_; i++) {
+            if (hscc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
+                nv::info("HSCC init failed: index=%d\n", i);
+            }
         }
 
-        const bool verified = (mfr_id == sensor.mfr_id) && (mfr_model == sensor.mfr_model);
-
-        if (verified) {
-            // HSCC chips (RAA22800X, MP29540) use internal DCR/RDS(on) current
-            // sensing with factory-trimmed coefficients, so no external Rsense
-            // calibration is needed before adding them.
-            add_hscc_device(sensor.address,
-                            sensor.device_type,
-                            sensor.power_input_coeff,
-                            hscc_idx,
-                            sensor.temp_sensor_id,
-                            sensor.power_sensor_id,
-                            sensor.vout_sensor_id,
-                            sensor.vin_sensor_id,
-                            sensor.alert_sensor_id);
-            nv::info("Found HSCC device: index=%d, addr=0x%02X, type=%d\n",
-                     hscc_idx,
-                     sensor.address,
-                     static_cast<int>(sensor.device_type));
-            // Don't break - continue scanning for more devices
+        // Log summary
+        if (hscc_count_ == 0) {
+            nv::logger::info_wait(nv::logger::Event::I2cPowerSensorNotFound, {0x02});  // HSCC
+                                                                                       // not
+                                                                                       // found
         }
-    }
-
-    // Initialize each detected HSCC device. For the MP29540 this unmasks OT warning/fault to
-    // ALT_P# in SMBALERT_MASK1; for the RAA22800X the mask already defaults to unmasked.
-    // Mirrors the HSC init loop above.
-    for (uint8_t i = 0; i < hscc_count_; i++) {
-        if (hscc_dispatch(i, [](auto& s) { return s.init(); }) != I2cStatus::Ok) {
-            nv::info("HSCC init failed: index=%d\n", i);
+        else {
+            nv::info("Total HSCC devices found: %d\n", hscc_count_);
         }
-    }
-
-    // Log summary
-    if (hsc_count_ == 0) {
-        nv::logger::info_wait(nv::logger::Event::I2cPowerSensorNotFound, {0x01});  // HSC not
-                                                                                   // found
-    }
-    else {
-        nv::info("Total HSC devices found: %d\n", hsc_count_);
-    }
-
-    if (hscc_count_ == 0) {
-        nv::logger::info_wait(nv::logger::Event::I2cPowerSensorNotFound, {0x02});  // HSCC not
-                                                                                   // found
-    }
-    else {
-        nv::info("Total HSCC devices found: %d\n", hscc_count_);
     }
 }
 
@@ -498,45 +513,55 @@ DeviceManager::find_hscc_index_by_alert_sensor(nv::mctp::PowerSensorFaults alert
 template<typename Func>
 I2cStatus DeviceManager::hsc_dispatch(uint8_t device_index, Func func) const
 {
-    if (device_index >= hsc_count_) {
-        return I2cStatus::Error;  // Invalid device index
+    // No HSC on this project: discard the driver dispatch at compile time so the HSC
+    // drivers (LM5066I / MP5926 / XPD712-021) are never referenced and --gc-sections
+    // drops them from the image. hsc_count_ stays 0, so every runtime path already
+    // treats the device as absent. The else branch is required: only the discarded
+    // arm of `if constexpr` skips instantiation.
+    if constexpr (HscDeviceCount == 0) {
+        return I2cStatus::Error;
     }
+    else {
+        if (device_index >= hsc_count_) {
+            return I2cStatus::Error;  // Invalid device index
+        }
 
-    const auto& device = hsc_devices_.at(device_index);
+        const auto& device = hsc_devices_.at(device_index);
 
-    switch (device.type) {
-        case DeviceType::LM5066I: {
-            Lm5066i sensor(POWER_SENSOR_PORT, device.address);
-            if (has_power_input_coeff(device.power_input_coeff)) {
-                sensor.set_power_input_coeff(device.power_input_coeff.m,
-                                             device.power_input_coeff.b,
-                                             device.power_input_coeff.exp_mult,
-                                             device.power_input_coeff.mask);
+        switch (device.type) {
+            case DeviceType::LM5066I: {
+                Lm5066i sensor(POWER_SENSOR_PORT, device.address);
+                if (has_power_input_coeff(device.power_input_coeff)) {
+                    sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                                 device.power_input_coeff.b,
+                                                 device.power_input_coeff.exp_mult,
+                                                 device.power_input_coeff.mask);
+                }
+                return func(sensor);
             }
-            return func(sensor);
-        }
-        case DeviceType::MP5926: {
-            Mp5926 sensor(POWER_SENSOR_PORT, device.address);
-            sensor.set_rsense_config(device.rsense_milliohm, device.cl_pin);
-            if (has_power_input_coeff(device.power_input_coeff)) {
-                sensor.set_power_input_coeff(device.power_input_coeff.m,
-                                             device.power_input_coeff.b,
-                                             device.power_input_coeff.exp_mult,
-                                             device.power_input_coeff.mask);
+            case DeviceType::MP5926: {
+                Mp5926 sensor(POWER_SENSOR_PORT, device.address);
+                sensor.set_rsense_config(device.rsense_milliohm, device.cl_pin);
+                if (has_power_input_coeff(device.power_input_coeff)) {
+                    sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                                 device.power_input_coeff.b,
+                                                 device.power_input_coeff.exp_mult,
+                                                 device.power_input_coeff.mask);
+                }
+                return func(sensor);
             }
-            return func(sensor);
-        }
-        case DeviceType::XPD712021: {
-            Xpd712021 sensor(POWER_SENSOR_PORT, device.address);
-            if (has_power_input_coeff(device.power_input_coeff)) {
-                sensor.set_power_input_coeff(device.power_input_coeff.m,
-                                             device.power_input_coeff.b,
-                                             device.power_input_coeff.exp_mult,
-                                             device.power_input_coeff.mask);
+            case DeviceType::XPD712021: {
+                Xpd712021 sensor(POWER_SENSOR_PORT, device.address);
+                if (has_power_input_coeff(device.power_input_coeff)) {
+                    sensor.set_power_input_coeff(device.power_input_coeff.m,
+                                                 device.power_input_coeff.b,
+                                                 device.power_input_coeff.exp_mult,
+                                                 device.power_input_coeff.mask);
+                }
+                return func(sensor);
             }
-            return func(sensor);
+            default: return I2cStatus::Error;
         }
-        default: return I2cStatus::Error;
     }
 }
 
@@ -590,22 +615,29 @@ I2cStatus DeviceManager::hsc_clear_faults(uint8_t device_index)
 template<typename Func>
 I2cStatus DeviceManager::hscc_dispatch(uint8_t device_index, Func func) const
 {
-    if (device_index >= hscc_count_) {
-        return I2cStatus::Error;  // Invalid device index
+    // No HSCC on this project: same compile-time discard as hsc_dispatch, dropping the
+    // HSCC drivers (RAA22800X / MP29540) from the image.
+    if constexpr (HsccDeviceCount == 0) {
+        return I2cStatus::Error;
     }
-
-    const auto& device = hscc_devices_.at(device_index);
-
-    switch (device.type) {
-        case DeviceType::RAA22800X: {
-            Raa22800X sensor(POWER_SENSOR_PORT, device.address);
-            return func(sensor);
+    else {
+        if (device_index >= hscc_count_) {
+            return I2cStatus::Error;  // Invalid device index
         }
-        case DeviceType::MP29540: {
-            Mp29540 sensor(POWER_SENSOR_PORT, device.address);
-            return func(sensor);
+
+        const auto& device = hscc_devices_.at(device_index);
+
+        switch (device.type) {
+            case DeviceType::RAA22800X: {
+                Raa22800X sensor(POWER_SENSOR_PORT, device.address);
+                return func(sensor);
+            }
+            case DeviceType::MP29540: {
+                Mp29540 sensor(POWER_SENSOR_PORT, device.address);
+                return func(sensor);
+            }
+            default: return I2cStatus::Error;
         }
-        default: return I2cStatus::Error;
     }
 }
 

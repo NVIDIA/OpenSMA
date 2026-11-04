@@ -16,26 +16,36 @@
  * limitations under the License.
  */
 #pragma once
-#include "nv/spdm/spdm_crypto_helper.h"
+
 #include <array>
-#include <stdint.h>
+#include <cstdint>
+
 #include "nv/fw_parser/fw_parser_ap.h"
+#include "nv/spdm/spdm_crypto_helper.h"
+#include "nv/vrot/interface/types.h"
 
 namespace nv::spdm::ap_measurement {
 
-void get_ap_firmware_hash(std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash);
+void get_ap_firmware_hash(nv::vrot::ApId                                         ap_id,
+                          std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash);
 
 void get_ap_rollback_fuses(uint32_t& rollback_fuse_value);
 
 void get_ap_key_revocation_fuses(uint32_t& key_revocation_fuse_value);
 
-void get_ap_metadata_hash(std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash);
+void get_ap_metadata_hash(nv::vrot::ApId                                         ap_id,
+                          std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>& hash);
 
-void get_ap_firmware_version(nv::fw_parser::ap::ApFwVersion& firmware_version);
+void get_ap_firmware_version(nv::vrot::ApId                  ap_id,
+                             nv::fw_parser::ap::ApFwVersion& firmware_version);
 
-void get_ap_authenticated_status(uint8_t& authenticated_status);
+void get_ap_boot_status(nv::vrot::ApId ap_id, uint8_t& boot_status);
 
-void get_ap_firmware_security_version(uint64_t& security_version);
+void get_ap_firmware_security_version(nv::vrot::ApId ap_id, uint64_t& security_version);
+
+void get_ap_chip_id(nv::vrot::ApId ap_id, nv::vrot::ApMeasurementChipId& chip_id);
+
+void get_ap_fuse_mask(nv::vrot::ApId ap_id, uint32_t& fuse_mask);
 
 void get_ap_type(std::array<uint8_t, 4>& ap_type);
 }  // namespace nv::spdm::ap_measurement

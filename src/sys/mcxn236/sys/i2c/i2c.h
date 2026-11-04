@@ -37,14 +37,17 @@ using I2cBuffer             = std::array<uint8_t, BufferSize>;
 class Driver
 {
 public:
-    void        bind(nv::i2c::Port port, void* task);
-    void        init();
-    void        start(bool enable_target);
-    void        peripheral_recovery(bool enable_target);
-    void        check_target_timeout(bool enable_target);
-    bool        write(std::span<uint8_t> data);
-    uint8_t     address();
-    bool        get_status(uint8_t address);
+    void    bind(nv::i2c::Port port, void* task);
+    void    init();
+    void    start(bool enable_target);
+    void    peripheral_recovery(bool enable_target);
+    void    check_target_timeout(bool enable_target);
+    bool    write(std::span<uint8_t> data);
+    uint8_t address();
+    bool    get_status(uint8_t address);
+    /// i2cdetect-style liveness probe: address-phase ACK only, no payload. Use for targets
+    /// that are not MCTP-over-SMBus endpoints (e.g. EROT whose MCTP path is on SPI).
+    bool        ping(uint8_t address);
     static void set_address(nv::i2c::Port port, uint8_t address, uint8_t sec_addr = 0)
     {
         (void)port;
