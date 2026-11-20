@@ -55,8 +55,6 @@ OBJDUMP		:= $(ARM_ARCH)-objdump
 STRIP		:= $(ARM_ARCH)-strip
 READELF		:= $(ARM_ARCH)-readelf
 
-include etc/platforms/linker-memory-usage.mk
-
 ADA 	    := $(GNAT_ARCH)-gcc
 BIND 	    := $(GNAT_ARCH)-gnatbind
 
