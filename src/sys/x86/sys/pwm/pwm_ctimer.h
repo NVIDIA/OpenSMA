@@ -46,6 +46,19 @@ enum class Channel : uint8_t
     None     = 0xFF,  // unused channel (paired with Instance::None)
 };
 
+// CTIMER capture channel (CAPn input / CR register). Distinct from the match
+// Channel enum so PWM match and tach capture channels cannot be mixed up.
+// The pin mux / INPUTMUX routing and the CTIMER instance itself are owned by
+// the board config tool (BOARD_InitPins / BOARD_InitPeripherals).
+enum class CaptureChannel : uint8_t
+{
+    Capture0 = 0,
+    Capture1 = 1,
+    Capture2 = 2,
+    Capture3 = 3,
+    None     = 0xFF,  // unused capture channel
+};
+
 class Driver
 {
 public:
@@ -75,6 +88,24 @@ public:
                         Channel  period_channel,
                         Channel  match_channel,
                         uint8_t  duty_cycle_percent);
+
+    /**
+     * @brief Measure one fan tach speed (blocking, polling - no interrupt).
+     *
+     * The tach pin mux, INPUTMUX routing and the free-running CTIMER are all
+     * set up by the board config tool (BOARD_InitPins / BOARD_InitPeripherals)
+     * before this is called. Waits for two consecutive rising-edge captures
+     * and converts the period between them to RPM (assumes one tach pulse per
+     * revolution). The tick rate is derived from the instance's clock and
+     * current prescaler, so any prescale set by the board config works.
+     * Waits up to ~100 ms per edge, so a stopped fan costs ~200 ms and
+     * reads 0 RPM (as does an unclocked CTIMER, e.g. on a devkit board).
+     *
+     * @param instance        CTIMER instance whose capture channels are used
+     * @param capture_channel capture channel of the fan to measure
+     * @return fan speed in RPM, 0 when no tach pulses arrive in time
+     */
+    static uint32_t measure_tach_rpm(Instance instance, CaptureChannel capture_channel);
 
 private:
     Driver()  = delete;

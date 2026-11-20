@@ -17,156 +17,92 @@
  */
 #include "nv/i2c/sensor.h"
 #include "sys/i2c/utils.h"
-#include "fsl_lpi2c.h"
 #include <climits>
 
 using namespace nv::i2c;
 
+// These transfers use the mutex-protected helpers in sys/i2c/utils.cpp: the
+// port's LPI2C peripheral is shared with other tasks, and transferring without
+// the mutex races them into arbitration-lost and FIFO errors.
+//
+// The helpers use a zero mutex timeout on the Timer task, so a contended poll
+// returns MutexError instead of a reading.
+
 I2cStatus TempSensor::read_reg(uint8_t offset, uint8_t& value)
 {
-    LPI2C_Type*             base = sys::i2c::get_base(_port);
-    lpi2c_master_transfer_t xfer{};
-    I2cBuffer               buffer{};
-    // coverity[UNUSED_VALUE] "tidy" complains no init value
-    status_t status = kStatus_Fail;
-    // write phsae
-    buffer[0]         = offset;
-    xfer.flags        = kLPI2C_TransferNoStopFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Write;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 1;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
+    I2cBuffer write_buffer{offset};
+    I2cBuffer read_buffer{};
+
+    auto status = sys::i2c::i2c_write_read(_port,
+                                           _address,
+                                           std::span<uint8_t>(write_buffer.data(), 1),
+                                           std::span<uint8_t>(read_buffer.data(), 1));
+
+    if (status == I2cStatus::Ok) {
+        value = read_buffer[0];
     }
-    // read phsae
-    xfer.flags        = kLPI2C_TransferRepeatedStartFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Read;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 1;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
-    }
-    value = buffer[0];
-    return sys::i2c::get_status(status);
+
+    return status;
 }
 
 // Read 16 bits register: MSB first
 I2cStatus TempSensor::read_reg_16bits(uint8_t offset, uint16_t& value)
 {
-    LPI2C_Type*             base = sys::i2c::get_base(_port);
-    lpi2c_master_transfer_t xfer{};
-    I2cBuffer               buffer{};
-    // coverity[UNUSED_VALUE] "tidy" complains no init value
-    status_t status = kStatus_Fail;
-    // write phsae
-    buffer[0]         = offset;
-    xfer.flags        = kLPI2C_TransferNoStopFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Write;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 1;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
+    I2cBuffer write_buffer{offset};
+    I2cBuffer read_buffer{};
+
+    auto status = sys::i2c::i2c_write_read(_port,
+                                           _address,
+                                           std::span<uint8_t>(write_buffer.data(), 1),
+                                           std::span<uint8_t>(read_buffer.data(), 2));
+
+    if (status == I2cStatus::Ok) {
+        // coverity[cert_int31_c_violation]
+        value = read_buffer[0] << CHAR_BIT | read_buffer[1];
     }
-    // read phsae
-    xfer.flags        = kLPI2C_TransferRepeatedStartFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Read;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 2;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
-    }
-    // coverity[cert_int31_c_violation]
-    value = buffer[0] << CHAR_BIT | buffer[1];
-    return sys::i2c::get_status(status);
+
+    return status;
 }
 
 I2cStatus TempSensor::write_reg(uint8_t offset, uint8_t value)
 {
-    LPI2C_Type*             base = sys::i2c::get_base(_port);
-    lpi2c_master_transfer_t xfer{};
-    I2cBuffer               buffer{};
-    // coverity[UNUSED_VALUE] "tidy" complains no init value
-    status_t status = kStatus_Fail;
-    // write phsae
-    buffer[0]         = offset;
-    buffer[1]         = value;
-    xfer.flags        = kLPI2C_TransferDefaultFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Write;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 2;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    return sys::i2c::get_status(status);
+    I2cBuffer buffer{offset, value};
+
+    return sys::i2c::i2c_write(_port, _address, std::span<uint8_t>(buffer.data(), 2));
 }
 
 // Write 16 bits register: MSB first
 I2cStatus TempSensor::write_reg_16bits(uint8_t offset, uint16_t value)
 {
-    LPI2C_Type*             base = sys::i2c::get_base(_port);
-    lpi2c_master_transfer_t xfer{};
-    I2cBuffer               buffer{};
-    // coverity[UNUSED_VALUE] "tidy" complains no init value
-    status_t status = kStatus_Fail;
-    // write phsae
-    buffer[0]         = offset;
-    buffer[1]         = value >> CHAR_BIT;
-    buffer[2]         = value & 0xFF;
-    xfer.flags        = kLPI2C_TransferDefaultFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Write;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 3;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    return sys::i2c::get_status(status);
+    I2cBuffer buffer{
+        offset, static_cast<uint8_t>(value >> CHAR_BIT), static_cast<uint8_t>(value & 0xFF)};
+
+    return sys::i2c::i2c_write(_port, _address, std::span<uint8_t>(buffer.data(), 3));
 }
 
 // PMBus/SMBus Block Read
 I2cStatus TempSensor::read_block(uint8_t offset, std::span<uint8_t> value, uint8_t& length)
 {
-    LPI2C_Type*             base = sys::i2c::get_base(_port);
-    lpi2c_master_transfer_t xfer{};
-    I2cBuffer               buffer{};
-    // coverity[UNUSED_VALUE] "tidy" complains no init value
-    status_t status = kStatus_Fail;
+    I2cBuffer write_buffer{offset};
+    I2cBuffer read_buffer{};
 
-    // Phase 1: Write command byte (with NO STOP)
-    buffer[0]         = offset;
-    xfer.flags        = kLPI2C_TransferNoStopFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Write;
-    xfer.data         = buffer.data();
-    xfer.dataSize     = 1;
-    status            = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
-    }
-
-    // Phase 2: Read block data (with REPEATED START)
-    // PMBus Block Read format: [BYTE_COUNT] [DATA0] [DATA1] ... [DATAn-1]
-    xfer.flags        = kLPI2C_TransferRepeatedStartFlag;
-    xfer.slaveAddress = _address;
-    xfer.direction    = kLPI2C_Read;
-    xfer.data         = buffer.data();
     // Read up to: 1 (byte_count) + length (max data bytes)
     // Limit to buffer size for safety
-    xfer.dataSize = (length >= I2cBufferSize - 1) ? I2cBufferSize : (length + 1);
-    status        = LPI2C_MasterTransferBlocking(base, &xfer);
-    if (status != kStatus_Success) {
-        return sys::i2c::get_status(status);
+    size_t read_size = (length >= I2cBufferSize - 1) ? I2cBufferSize : (length + 1);
+
+    auto status = sys::i2c::i2c_write_read(_port,
+                                           _address,
+                                           std::span<uint8_t>(write_buffer.data(), 1),
+                                           std::span<uint8_t>(read_buffer.data(), read_size));
+
+    if (status != I2cStatus::Ok) {
+        return status;
     }
 
     // Parse block data
-    // buffer[0] = byte_count (number of data bytes following)
-    // buffer[1..N] = actual data
-    uint8_t byte_count = buffer[0];
+    // read_buffer[0] = byte_count (number of data bytes following)
+    // read_buffer[1..N] = actual data
+    uint8_t byte_count = read_buffer[0];
 
     // Sanity check: byte_count should not exceed buffer capacity
     if (byte_count > I2cBufferSize - 1) {
@@ -178,13 +114,13 @@ I2cStatus TempSensor::read_block(uint8_t offset, std::span<uint8_t> value, uint8
         return I2cStatus::Error;
     }
 
-    // Copy data bytes (skip the byte_count at buffer[0])
+    // Copy data bytes (skip the byte_count at read_buffer[0])
     for (uint8_t i = 0; i < byte_count; i++) {
-        value[i] = buffer[1 + i];
+        value[i] = read_buffer[1 + i];
     }
 
     // Update length to actual number of bytes read
     length = byte_count;
 
-    return sys::i2c::get_status(status);
+    return I2cStatus::Ok;
 }

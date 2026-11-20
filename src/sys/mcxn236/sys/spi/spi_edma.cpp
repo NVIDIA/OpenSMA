@@ -84,11 +84,10 @@ LPSPI_Type* EdmaDriver::get_base(nv::spi::Flexcomm flexcomm)
     return bases.at(nv::common::to_underlying(flexcomm));
 }
 
-void EdmaDriver::bind(nv::spi::Flexcomm flexcomm, nv::ipc::TaskId task_id)
+void EdmaDriver::bind(nv::spi::Flexcomm flexcomm)
 {
     _base                     = get_base(flexcomm);
     _flexcomm                 = flexcomm;
-    _notification_task_id     = task_id;
     _master_xfer_ctx.driver   = this;
     _master_xfer_ctx.xferDone = false;
 }
@@ -130,7 +129,8 @@ void EdmaDriver::init()
                                          &_lpspiEdmaMasterTxDataToTxRegHandle);
 }
 
-sys::spi::Status EdmaDriver::sendRecv(uint32_t                 send_len,
+sys::spi::Status EdmaDriver::sendRecv(nv::ipc::TaskId          recipient_task_id,
+                                      uint32_t                 send_len,
                                       const std::span<uint8_t> sbuf,
                                       uint32_t /*recv_len*/,
                                       std::span<uint8_t> rbuf)
@@ -145,6 +145,7 @@ sys::spi::Status EdmaDriver::sendRecv(uint32_t                 send_len,
     masterXfer.configFlags = kLPSPI_MasterPcs0 | kLPSPI_MasterPcsContinuous
                            | kLPSPI_MasterByteSwap;
 
+    _recipient_task_id = recipient_task_id;
     // Start master transfer using eDMA
     const status_t Status = LPSPI_MasterTransferEDMA(_base, &_edma_handle, &masterXfer);
     if (Status != kStatus_Success) {
@@ -178,12 +179,10 @@ void EdmaDriver::master_edma_callback(LPSPI_Type* /*base*/,
     auto driver = static_cast<EdmaDriver*>(ctx->driver);
 
     if (status == kStatus_Success) {
-        (void)nv::ipc::TaskNotify::send(driver->_notification_task_id,
-                                        sys::spi::Event::XferDone);
+        (void)nv::ipc::TaskNotify::send(driver->_recipient_task_id, sys::spi::Event::XferDone);
     }
     else {
-        (void)nv::ipc::TaskNotify::send(driver->_notification_task_id,
-                                        sys::spi::Event::XferError);
+        (void)nv::ipc::TaskNotify::send(driver->_recipient_task_id, sys::spi::Event::XferError);
     }
     ctx->xferDone = true;
 }

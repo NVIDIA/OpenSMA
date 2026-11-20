@@ -23,6 +23,9 @@ PLDMPKG_CFG          := $(PROJECT_PLATFORM)/pldmfw-cfg-mcu-fw.json
 PLDMPKG_RECOVERY_CFG := $(PROJECT_PLATFORM)/pldmfw-cfg-mcu-recovery-fw-$(PROJECT).json
 PLDMPKG              := libexec/tools/pldmfwpkg-gen.py
 ENABLE_PQC_SIGN      ?= false
+# Alternate PQC production policy lanes may reuse the normal production SSA scope.
+MCXN556_PQC_PROD_SIGN_JOB ?= SMA_MCXN556_PQC_PROD
+MCXN556_PQC_PROD_SIGN_SSA_SCOPE ?= SIGNING_SMA_MCXN556_PQC_PROD
 
 UBS_TARGET_BIN	      = $(UBS_TARGET:.elf=.bin)
 UBS_TARGET_SIGNED     = $(UBS_TARGET:.elf=_signed.bin)
@@ -32,7 +35,7 @@ UBS_TARGET_SB_FWPKG  = $(UBS_TARGET:.elf=_signed_sb3.fwpkg)
 else ifeq ($(CHIP), mcxn236)
 UBS_TARGET_SB	      = $(UBS_TARGET:.elf=_signed.sb3)
 UBS_TARGET_SB_FWPKG  = $(UBS_TARGET:.elf=_signed_sb3.fwpkg)
-else ifeq ($(CHIP), mcxn556)
+else ifneq (,$(filter mcxn556 mcxn557,$(CHIP)))
 UBS_TARGET_SB	      = $(UBS_TARGET:.elf=_signed.sb4)
 UBS_TARGET_SB_FWPKG  = $(UBS_TARGET:.elf=_signed_sb4.fwpkg)
 endif
@@ -49,10 +52,14 @@ UBS_STREAMBOOT_TARGET_FWPKG    = $(UBS_TARGET:.elf=_sramx_signed.fwpkg)
 endif
 
 SIGN_TYPE      ?= debug
-ifeq ($(CHIP), mcxn556)
-SIGN_JOB       = $(addprefix SMA_MCXN556$(if $(filter true,$(ENABLE_PQC_SIGN)),_PQC,)_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:]))
+MCXN556_USE_PQC_PROD_SIGN_JOB = $(and $(filter true,$(ENABLE_PQC_SIGN)),$(filter prod,$(SIGN_TYPE)))
+# MCXN557 is signed with the MCXN556 jobs until it has its own signing policy.
+ifneq (,$(filter mcxn556 mcxn557,$(CHIP)))
+SIGN_JOB       = $(if $(MCXN556_USE_PQC_PROD_SIGN_JOB),$(MCXN556_PQC_PROD_SIGN_JOB),$(addprefix SMA_MCXN556$(if $(filter true,$(ENABLE_PQC_SIGN)),_PQC,)_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:])))
+SIGN_SSA_SCOPE = $(if $(MCXN556_USE_PQC_PROD_SIGN_JOB),$(MCXN556_PQC_PROD_SIGN_SSA_SCOPE),$(addprefix SIGNING_,$(SIGN_JOB)))
 else
 SIGN_JOB       = $(addprefix SMA_MCXN236_,$(shell echo $(SIGN_TYPE) | tr [:lower:] [:upper:])_$(SIGN_KEYSET))
+SIGN_SSA_SCOPE = $(addprefix SIGNING_,$(SIGN_JOB))
 endif
 
 SIGN_DESC	   = "MCU signing for dev testing"
@@ -64,10 +71,17 @@ ifeq ($(STREAMBOOT), 1)
 else
 	SIGN_MBI_CFG = $(PATH_PROJECT)/sign-parameters_mbi_$(CHIP).json
 	SIGN_SB_CFG = $(PATH_PROJECT)/sign-parameters_sb_$(CHIP).json
+	# override PROJECT retargets PATH_PROJECT at the donor sources. A project
+	# that sets SIGN_PARAM_PROJECT keeps its own keyset JSON.
+	ifneq ($(wildcard src/projects/$(SIGN_PARAM_PROJECT)/core0/sign-parameters_mbi_$(CHIP).json),)
+		SIGN_MBI_CFG = src/projects/$(SIGN_PARAM_PROJECT)/core0/sign-parameters_mbi_$(CHIP).json
+	endif
+	ifneq ($(wildcard src/projects/$(SIGN_PARAM_PROJECT)/core0/sign-parameters_sb_$(CHIP).json),)
+		SIGN_SB_CFG = src/projects/$(SIGN_PARAM_PROJECT)/core0/sign-parameters_sb_$(CHIP).json
+	endif
 endif
 SIGN_FLAG	   = 3s submit --job_type $(SIGN_JOB) --description $(SIGN_DESC) --device_code
 SIGN_REQ_ID	   = $(SIGN_MBI_REQ) $(SIGN_SB_REQ)
-SIGN_SSA_SCOPE = $(addprefix SIGNING_,$(SIGN_JOB))
 SIGN_SSA       = $(if $(SSA_CLIENT_ID),--client_id $(SSA_CLIENT_ID) --client_secret $(SSA_CLIENT_SECRET) --scope $(SIGN_SSA_SCOPE),)
 
 UBS_COMMANDS_RESULT += sign-request-mbi sign-request-sb

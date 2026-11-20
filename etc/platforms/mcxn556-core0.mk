@@ -51,6 +51,8 @@ OBJDUMP		:= $(ARM_ARCH)-objdump
 STRIP		:= $(ARM_ARCH)-strip
 READELF		:= $(ARM_ARCH)-readelf
 
+include etc/platforms/linker-memory-usage.mk
+
 ADA 	    := $(GNAT_ARCH)-gcc
 BIND 	    := $(GNAT_ARCH)-gnatbind
 
@@ -59,9 +61,13 @@ ADA_TARGET  := arm-eabi
 ADA_INSTALL := $(MCU_GNAT_PATH)/$(ADA_TARGET)/lib/gnat/$(ADA_RTS)/adalib/gnat
 #ADA_LIBS 	:= $(MCU_GNAT_PATH)/$(ADA_TARGET)/lib/gnat/$(ADA_RTS)/adalib/libgnat.a
 
-CC_FLAGS    += -Wno-implicit-function-declaration
+CC_FLAGS    += -Wno-implicit-function-declaration -fdump-rtl-expand -fstack-usage
 ADA_FLAGS   += -gnatn -gnatwa -gnatwae
-CXX_FLAGS   += -fno-exceptions -fno-rtti -fno-threadsafe-statics
+# -fdump-ipa-devirt: emit each translation unit's class-hierarchy/virtual-call-target
+# info so the stack-analysis tooling (libexec/cicd/get-heaviest-stack-path.py) can
+# eventually resolve virtual dispatch instead of treating it as an invisible blind
+# spot. C-only, so this only applies to CXX_FLAGS.
+CXX_FLAGS   += -fno-exceptions -fno-rtti -fno-threadsafe-statics -fdump-rtl-expand -fstack-usage -fdump-ipa-devirt
 CPP_FLAGS   += -E -P -x c
 
 # -- flags ------------------------------------------------------------------------------------

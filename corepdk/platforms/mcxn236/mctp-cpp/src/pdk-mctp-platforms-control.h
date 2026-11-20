@@ -19,6 +19,7 @@
 #pragma once
 
 #include <bit>
+#include <cstddef>
 
 #include "nv/mctp/enums.h"
 #include "nv/mctp/interface.h"
@@ -40,10 +41,17 @@ class Control : public pdk::mctp::app::Control
 {
 public:
     Control() = default;
-    bool process(const app::Packet& rx, app::Packet& tx);
+    bool    process(const app::Packet& rx, app::Packet& tx);
+    uint8_t get_upstream_src_eid(mctp::Client client) const;
 
 protected:
+    void record_upstream_source(mctp::Client client, uint8_t source_eid);
     void on_set_endpoint_id(const app::Packet& rx, app::Packet& tx);
+    void on_get_endpoint_id(const app::Packet& rx, app::Packet& tx) const;
+    void on_allocate_endpoint_id(const app::Packet& rx, app::Packet& tx);
     void on_get_routing_table_entry(const app::Packet& rx, app::Packet& tx) const;
+    void on_get_vendor_msg_support(const app::Packet& rx, app::Packet& tx) const;
+
+    std::array<uint8_t, static_cast<std::size_t>(mctp::Client::UsEnd)> _upstream_src_eids{};
 };
 }  // namespace pdk::mctp::platforms

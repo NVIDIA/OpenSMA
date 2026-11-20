@@ -839,4 +839,12 @@ is
       return 0;
    end Pldm_Hook_Get_Write_Fail_Retry;
 
+   function Pldm_Hook_Update_Component_Busy
+     (Component_Id : NvU16) return Boolean
+   is
+      pragma Unreferenced (Component_Id);
+   begin
+      return False;
+   end Pldm_Hook_Update_Component_Busy;
+
 end Pdk.Pldm.Hook.Plat;

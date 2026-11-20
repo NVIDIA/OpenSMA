@@ -24,8 +24,8 @@ using namespace nv::ipc;
 
 TaskHandle_t& TaskNotify::handle(TaskId id)
 {
-    nv::always_assert(nv::common::is_in_range(id));
+    NV_ALWAYS_ASSERT(nv::common::is_in_range(id));
     auto& h = Supervisor::inst().task_pub(id).handle();
-    nv::always_assert(h != nullptr);
+    NV_ALWAYS_ASSERT(h != nullptr);
     return h;
 }

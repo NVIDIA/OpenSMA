@@ -48,9 +48,21 @@ struct alignas(4) EventRequestWire
     uint32_t event_id;       // offset 12: EventId as uint32_t
 };
 
+// Structured Core1 log record sent as a QueueRequestWire payload.
+struct alignas(4) CoreLogWire
+{
+    uint16_t event;         // offset 0
+    uint8_t  level;         // offset 2
+    uint8_t  reserved0;     // offset 3
+    uint8_t  data[8];       // offset 4
+    uint16_t footprint;     // offset 12
+    uint8_t  reserved1[2];  // offset 14
+};
+
 // Compile-time verification of structure sizes
 static_assert(sizeof(QueueRequestWire) == 16, "QueueRequestWire must be 16 bytes");
 static_assert(sizeof(EventRequestWire) == 16, "EventRequestWire must be 16 bytes");
+static_assert(sizeof(CoreLogWire) == 16, "CoreLogWire must be 16 bytes");
 
 }  // namespace nv::ipc_bm
 

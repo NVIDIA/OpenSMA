@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include <cstring>
+#include <initializer_list>
 
 #include "app/pdk-mctp-app-control-wrapper.h"
 #include "app/pdk-mctp-app-enums.h"
@@ -596,6 +597,7 @@ public:
     using platforms::Control::RoutingEntryNum;
     uint8_t SupportedTypeNum = platforms::SupportedTypeNum;
     using platforms::Control::_additional_eid_count;
+    using platforms::Control::apply_routing_info_update_tolerant;
     using platforms::Control::NoNextEntry;
     using platforms::Control::on_routing_info_update;
 };
@@ -1741,6 +1743,138 @@ UBS_TEST(Control, OnUpdateRoutingInfoTest)
     };
     ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
     control.on_routing_info_update(rx12, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::ErrorInvalidData));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
+};
+
+// x86 builds compile the strict Routing Information Update policy
+// (`tolerant_routing_info_update()` is false), so OnUpdateRoutingInfoTest never
+// enters apply_routing_info_update_tolerant. Call it directly here.
+UBS_TEST(Control, ApplyRoutingInfoUpdateTolerantTest)
+{
+    CommandTestHelper control;
+    app::Packet       tx{};
+    auto&             ctx = platforms::Control::PktRes::from(tx);
+
+    const auto fill_riu = [](app::Packet& pkt, std::initializer_list<uint8_t> payload) {
+        pkt.msg.fill(0);
+        pkt.msg[0] = 0x00;
+        pkt.msg[1] = 0x00;
+        pkt.msg[2] = static_cast<uint8_t>(app::Cmd::RoutingInfoUpdate);
+        uint8_t i  = 3;
+        for (const uint8_t byte : payload) {
+            pkt.msg.at(i++) = byte;
+        }
+    };
+
+    app::Packet rx{
+        .priv =
+            {
+                   .packet_length    = 0,
+                   .packet_interface = static_cast<uint8_t>(platforms::Interface::UsI2c),
+                   .reserved0        = 0,
+                   },
+        .hdr =
+            {
+                   .hdr_ver   = 0,
+                   .rsvd      = 0,
+                   .dst_eid   = 0x01,
+                   .src_eid   = 0x02,
+                   .msg_tag   = 0x1,
+                   .tag_owner = 0,
+                   .pkt_seq   = 0,
+                   .eom       = 1,
+                   .som       = 1,
+                   },
+    };
+    fill_riu(rx, {0x00});
+
+    // Empty table: still Success, nothing stored.
+    control.apply_routing_info_update_tolerant(rx, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::Success));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);
+
+    // Mix: one storable SingleEndpoint plus a bridge entry that must be skipped.
+    fill_riu(rx,
+             {0x02,
+              static_cast<uint8_t>(app::EntryType::SingleEndpoint),
+              0x01,
+              0x21,
+              0x51,
+              static_cast<uint8_t>(app::EntryType::SingleEndpointBridge),
+              0x01,
+              0x22,
+              0x52});
+    control.apply_routing_info_update_tolerant(rx, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::Success));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x01);
+    uint8_t index = platforms::DefaultRoutingTableSize;
+    ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(index).assigned_eid), 0x21);
+    ensure::is_eq(static_cast<uint8_t>(control.routing_map().at(index).client),
+                  static_cast<uint8_t>(platforms::Interface::UsI2c));
+    ensure::is_eq(static_cast<uint8_t>(control.get_additional_address(0)), 0x51);
+
+    // All skipped: own current EID, then an EID already in the routing table.
+    platforms::set_cur_eid(
+        control.router(), static_cast<uint8_t>(platforms::Interface::UsI2c), 0x0B);
+    fill_riu(rx,
+             {0x01, static_cast<uint8_t>(app::EntryType::SingleEndpoint), 0x01, 0x0B, 0x60});
+    control.apply_routing_info_update_tolerant(rx, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::Success));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x01);
+
+    control.routing_map().at(0x00).assigned_eid = 0x0A;
+    fill_riu(rx,
+             {0x01, static_cast<uint8_t>(app::EntryType::SingleEndpoint), 0x01, 0x0A, 0x61});
+    control.apply_routing_info_update_tolerant(rx, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::Success));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x01);
+
+    // Additional table already full: still Success (strict would return
+    // ErrorInsufficientSpace).
+    control._additional_eid_count = platforms::RoutingInfoUpdateSize;
+    fill_riu(rx,
+             {0x01, static_cast<uint8_t>(app::EntryType::SingleEndpoint), 0x01, 0x30, 0x70});
+    control.apply_routing_info_update_tolerant(rx, tx);
+    ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
+                  static_cast<uint8_t>(platforms::Ccode::Success));
+    ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count),
+                  platforms::RoutingInfoUpdateSize);
+
+    // Non-bus-owner is still rejected by the outer dispatcher.
+    control._additional_eid_count = 0;
+    control._allocate_eid_bus     = static_cast<uint8_t>(platforms::Interface::UsI2c);
+    app::Packet const not_owner{
+        .priv =
+            {
+                   .packet_length    = 0,
+                   .packet_interface = static_cast<uint8_t>(platforms::Interface::UsUsb),
+                   .reserved0        = 0,
+                   },
+        .hdr =
+            {
+                   .hdr_ver   = 0,
+                   .rsvd      = 0,
+                   .dst_eid   = 0x01,
+                   .src_eid   = 0x02,
+                   .msg_tag   = 0x1,
+                   .tag_owner = 0,
+                   .pkt_seq   = 0,
+                   .eom       = 1,
+                   .som       = 1,
+                   },
+        .msg = {0x00,
+                   0x00, static_cast<uint8_t>(app::Cmd::RoutingInfoUpdate),
+                   0x01, static_cast<uint8_t>(app::EntryType::SingleEndpoint),
+                   0x01, 0x31,
+                   0x71}
+    };
+    control.on_routing_info_update(not_owner, tx);
     ensure::is_eq(static_cast<uint8_t>(ctx.completion_code),
                   static_cast<uint8_t>(platforms::Ccode::ErrorInvalidData));
     ensure::is_eq(static_cast<uint8_t>(control._additional_eid_count), 0x00);

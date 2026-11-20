@@ -30,6 +30,11 @@
 #include "nv/ipc/timer.h"
 #include "nv/thermal/state.h"
 
+#if ENABLE_FANCONTROL
+#include "nv/fancontrol/driver.h"
+#include <array>
+#endif
+
 #include NV_IPC_CONFIG_H
 
 namespace nv::thermal {
@@ -48,17 +53,58 @@ constexpr uint8_t       Tmp468Address = 0x48;
 constexpr auto PollPeriod = 50ms;
 
 // Whiteboard unit: temperatures are stored in 1/16 C ticks (16 ticks per degree).
-constexpr float TicksPerCelsius = 16.0F;
+constexpr int32_t TicksPerCelsius = 16;
 
 /// Driver gives Celsius; the whiteboard stores 1/16 C ticks. The driver value
-/// is always an exact multiple of 1/16 C, so the multiply is exact.
+/// is always an exact multiple of 1/16 C, so the (float) multiply is exact.
 int16_t celsius_to_ticks(float celsius)
 {
-    return static_cast<int16_t>(celsius * TicksPerCelsius);
+    return static_cast<int16_t>(celsius * static_cast<float>(TicksPerCelsius));
+}
+
+/// Counterpart of celsius_to_ticks(), truncated to whole degrees (the curve
+/// resolution is per-degree, so the 1/16 C fraction is dropped).
+int8_t ticks_to_celsius(int16_t ticks)
+{
+    return static_cast<int8_t>(
+        std::clamp<int32_t>(ticks / TicksPerCelsius, INT8_MIN, INT8_MAX));
 }
 
 // Event bit the periodic timer sets to wake the thermal task.
 constexpr uint32_t TickBit = 1U << 0U;
+
+#if ENABLE_FANCONTROL
+// Hottest valid reading of a slot group, or ThermalBoard::InvalidTemp if none.
+int16_t hottest_valid(std::span<const int16_t> values)
+{
+    int16_t hottest = ThermalBoard::InvalidTemp;
+    for (const int16_t value : values) {
+        if (value != ThermalBoard::InvalidTemp && value > hottest) {
+            hottest = value;
+        }
+    }
+    return hottest;
+}
+
+// Board temp = the TMP468 local sensor.
+int8_t board_temp_celsius(const ThermalBoard& board)
+{
+    return (board.local != ThermalBoard::InvalidTemp) ? ticks_to_celsius(board.local)
+                                                      : nv::fancontrol::InvalidTemp;
+}
+
+// GPU temp = hottest GPU Tsense (GA/GB); with no Tsense reading, the hottest
+// TMP468 remote (the GPU-side diodes) stands in.
+int8_t gpu_temp_celsius(const ThermalBoard& board)
+{
+    int16_t hottest = hottest_valid(board.gpu_tsense);
+    if (hottest == ThermalBoard::InvalidTemp) {
+        hottest = hottest_valid(board.remote);
+    }
+    return (hottest != ThermalBoard::InvalidTemp) ? ticks_to_celsius(hottest)
+                                                  : nv::fancontrol::InvalidTemp;
+}
+#endif  // ENABLE_FANCONTROL
 
 // Timer expiry runs in the timer-daemon context and must NOT block, so it only
 // wakes the thermal task; the blocking TMP468 read happens in poll_once().
@@ -80,7 +126,7 @@ Task::Task() : ipc::Task(ipc::TaskId::Thermal, "Thermal") {}
 void Task::make()
 {
     auto&          task      = inst();
-    constexpr auto StackSize = std::max(1024, int(configMINIMAL_STACK_SIZE));
+    constexpr auto StackSize = std::max(256, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -141,6 +187,13 @@ void Task::poll_once()
     // confirmed.
 
     ThermalState::inst().publish();
+
+#if ENABLE_FANCONTROL
+    // Every temperature update also drives the fan curves:
+    // fan 0 (PWM1) follows the board temp, fan 1 (PWM2) the GPU temp.
+    const std::array<int8_t, 2> curve_temps{board_temp_celsius(board), gpu_temp_celsius(board)};
+    nv::fancontrol::Driver::update(curve_temps);
+#endif
 }
 
 }  // namespace nv::thermal

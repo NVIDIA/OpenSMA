@@ -93,6 +93,22 @@ else
 	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plat.cpp
 	GD_PDK_CMN_LOG_PLATFORM_TYPES_H	:= "$(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plattypes.h"
 	INCLUDES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)
+  else ifeq ($(PLATFORM), mcxn557-core0)
+	PDK_CMN_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/cmn/src
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-flowcontrol-plat.adb
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-flowcontrol-plat.cpp
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plat.adb
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plat.cpp
+	GD_PDK_CMN_LOG_PLATFORM_TYPES_H	:= "$(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plattypes.h"
+	INCLUDES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)
+  else ifeq ($(PLATFORM), mcxn557-core1)
+	PDK_CMN_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/cmn/src
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-flowcontrol-plat.adb
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-flowcontrol-plat.cpp
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plat.adb
+	SOURCES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plat.cpp
+	GD_PDK_CMN_LOG_PLATFORM_TYPES_H	:= "$(PDK_CMN_PLATFORM_SPECIFIC_PATH)/pdk-cmn-log-plattypes.h"
+	INCLUDES += $(PDK_CMN_PLATFORM_SPECIFIC_PATH)
   else
   	$(ubs-fatal) "Platform $(PLATFORM) is not supported"
   endif

@@ -25,6 +25,7 @@
 #endif
 #include <limits>
 #include "fsl_edma.h"
+#include "nv/nv.h"
 
 // Declare the linker symbols as global extern "C"
 extern "C" {
@@ -214,8 +215,10 @@ static void DMAConfig(uint32_t dma_index, uint32_t channel, nv::ipc::CoreId core
     // Re-initialize DMA controllers with security settings
     // This is required because DMA was initialized before security configuration
 
-    // Enable security for DMA on both cores and configure the channels
-    edma_channel_config_t channelConfig = {
+    // Enable security for DMA on both cores and configure the channels.
+    // Static storage: DMAx_config.channelConfig[] keeps this pointer and every later EDMA_Init
+    // reads it for all channels, so it must outlive this call.
+    static edma_channel_config_t channelConfig = {
         .enableMasterIDReplication = true,
         .securityLevel             = kEDMA_ChannelSecurityLevelSecure,
         .protectionLevel           = kEDMA_ChannelProtectionLevelPrivileged,
@@ -399,7 +402,9 @@ static void HardwareConfig(nv::ipc::HardwareId hardware_id)
         case nv::ipc::HardwareId::FLEXCOMM8  :
         case nv::ipc::HardwareId::FLEXCOMM9  : FlexcommConfig(hardware_id, core_id); return;
 
-        default: return;
+        default:
+            nv::info("AHB: unhandled HardwareId %d\n", static_cast<int>(hardware_id));
+            return;
     }
 }
 
@@ -417,10 +422,6 @@ void AHBConfig()
     uint32_t shared_memory_start = reinterpret_cast<uint32_t>(&__shared_memory_start__);
     uint32_t shared_memory_end   = reinterpret_cast<uint32_t>(&__shared_memory_end__);
 
-    // Get Core1 image boundaries from linker symbols
-    uint32_t core1_text_start = reinterpret_cast<uint32_t>(&__core1_image_start__);
-    uint32_t core1_text_end   = reinterpret_cast<uint32_t>(&__core1_image_end__);
-
     // Get Core1 RAM boundaries from linker symbols
     uint32_t core1_ram_start = reinterpret_cast<uint32_t>(&__core1_ram_start__);
     uint32_t core1_ram_end   = reinterpret_cast<uint32_t>(&__core1_ram_end__);
@@ -430,10 +431,20 @@ void AHBConfig()
     // Configure shared memory access
     ConfigureRulesAccess(shared_memory_start, shared_memory_end, AHB_RAM_BLOCK_SIZE);
 
-    // Configure Core1 text access
+#if !NCSI_ENABLE
+    // Get Core1 image boundaries from linker symbols
+    // NOLINTBEGIN(*-reinterpret-cast)
+    uint32_t core1_text_start = reinterpret_cast<uint32_t>(&__core1_image_start__);
+    uint32_t core1_text_end   = reinterpret_cast<uint32_t>(&__core1_image_end__);
+    // NOLINTEND(*-reinterpret-cast)
+
+    // Configure Core1 text access (flash). NCSI bare-metal Core1 runs from
+    // SRAMX (image copied at startup), so the flash rule is unnecessary; skip
+    // to avoid granting Core1 flash access it doesn't need.
     ConfigureRulesAccess(align_down(core1_text_start, AHB_FLASH_BLOCK_SIZE),
                          align_up(core1_text_end, AHB_FLASH_BLOCK_SIZE),
                          AHB_FLASH_BLOCK_SIZE);
+#endif
 
     // Configure Core1 RAM access
     ConfigureRulesAccess(core1_ram_start, core1_ram_end, AHB_RAM_BLOCK_SIZE);

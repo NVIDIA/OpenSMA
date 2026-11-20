@@ -18,12 +18,14 @@
 
 #include "nv/mctp/nsm.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <span>
 #include <variant>
 
 #include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
@@ -31,17 +33,15 @@
 #include "nv/bootloader.h"
 #include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/flash.h"
-#include "nv/fw_parser/fw_parser_ap.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "nv/gpio/common.h"
 #include "nv/gpio/driver.h"
+#include "nv/gpio/project_gpio.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/driver.h"
 #include "nv/mctp/interface.h"
 #include "nv/nv.h"
 #include "nv/pldm/task.h"
-#include "nv/vrot/ap_background_copy.h"
-#include "nv/vrot/interface/interface.h"
 #include NV_IPC_CONFIG_H
 #include "nv/iox/task.h"
 #include "sys/flash/flash_config.h"
@@ -63,12 +63,6 @@ bool is_any_background_copy_in_progress()
                                              | nv::pldm::Task::PldmEventBits::BgEndBit;
     if (!pldm_event_bits || ((*pldm_event_bits & McuBackgroundCopyBits) != 0U)) {
         return true;
-    }
-
-    if constexpr (!nv::vrot::ApList.empty()) {
-        if (nv::vrot::ap_background_copy::is_in_progress()) {
-            return true;
-        }
     }
 
     nv::flash::ProgressPercent progress{};
@@ -102,7 +96,7 @@ bool mctp::Nsm::can_revoke_otp(Rcode& reason_code)
     nv::flash::ProgressPercent progress{};
     if (flash::Flash::background_copy_query(progress)
         == flash::Status::BackgroundCopyInprogress) {
-        reason_code = Rcode::Null;
+        reason_code = Rcode::ErrorPldmProcessing;
         return false;
     }
 
@@ -178,55 +172,6 @@ bool mctp::Nsm::can_initiate_image_copy(Ccode& completion_code, Rcode& reason_co
     return true;
 }
 
-bool mctp::Nsm::can_initiate_ap_image_copy([[maybe_unused]] const nv::vrot::ApInfo& ap,
-                                           Ccode& completion_code,
-                                           Rcode& reason_code)
-{
-    if constexpr (nv::vrot::ApList.empty()) {
-        completion_code = Ccode::ErrorUnsupportedCmd;
-        reason_code     = Rcode::Null;
-        return false;
-    }
-    else if (!nv::vrot::ap_background_copy::supports(ap)) {
-        completion_code = Ccode::ErrorUnsupportedCmd;
-        reason_code     = Rcode::Null;
-        return false;
-    }
-
-    flash::Data pldm_update_state{};
-    if (flash::Flash::get_data(flash::Key::PdsUpdateState, pldm_update_state)
-            != flash::Status::Ok
-        || pldm_update_state
-               == static_cast<flash::Data>(bootloader::Driver::State::InProgress)) {
-        completion_code = Ccode::ErrorInvalidStateForCommand;
-        reason_code     = Rcode::UpdateInProgress;
-        return false;
-    }
-
-    flash::Data ap_state{};
-    const auto  status_key = ap.id == nv::vrot::ApId::AP0 ? flash::Key::NpdsAp0FwStatus
-                                                          : flash::Key::NpdsAp1FwStatus;
-    if (flash::Flash::get_data(status_key, ap_state) != flash::Status::Ok) {
-        completion_code = Ccode::ErrorInvalidStateForCommand;
-        reason_code     = Rcode::NoBootComplete;
-        return false;
-    }
-
-    if (ap_state == static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Update_In_Progress)) {
-        completion_code = Ccode::ErrorInvalidStateForCommand;
-        reason_code     = Rcode::UpdateInProgress;
-        return false;
-    }
-
-    if (ap_state != static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete)) {
-        completion_code = Ccode::ErrorInvalidStateForCommand;
-        reason_code     = Rcode::NoBootComplete;
-        return false;
-    }
-
-    return true;
-}
-
 void mctp::Nsm::get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
                                       NsmRedundancyPolicy& redundancy_policy_current)
 {
@@ -264,16 +209,6 @@ void mctp::Nsm::get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_per
             redundancy_policy_current = NsmRedundancyPolicy::Manual;
         }
     }
-}
-
-Ccode mctp::Nsm::can_revoke_ap_otp()
-{
-    flash::Data state{};
-    if (flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, state) != flash::Status::Ok
-        || state != static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete)) {
-        return Ccode::ErrorGeneral;
-    }
-    return Ccode::Success;
 }
 
 bool mctp::Nsm::is_inactive_authenticate(uint8_t inactive_slot)
@@ -452,25 +387,6 @@ uint8_t mctp::Nsm::get_inactive_fw_state()
     }
 }
 
-uint8_t mctp::Nsm::get_ap_state()
-{
-    flash::Data update_state{};
-    auto flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, update_state);
-    if (flash_status != flash::Status::Ok) {
-        return common::Unknown;
-    }
-
-    switch (update_state) {
-        case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Update_In_Progress):
-            return common::WriteInProgress;
-        case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Update_Complete):
-            return common::PendingActivation;
-        case static_cast<flash::Data>(fw_parser::ap::ApFwStatus::Boot_Complete):
-            return common::Activated;
-        default: return common::FailedAuthentication;
-    }
-}
-
 bool mctp::Nsm::is_active_slot(uint8_t slot)
 {
     return slot == get_active_slot();
@@ -544,32 +460,6 @@ Ccode mctp::Nsm::fill_key_index(uint8_t slot, uint16_t& key_index)
     return Ccode::Success;
 }
 
-Ccode mctp::Nsm::fill_ap_key_index(uint16_t& key_index)
-{
-    const fw_parser::ap::ParsingApFwType
-         parsing_ap_fw_type = fw_parser::ap::ParsingApFwType::UpdateSlot;
-    auto image_key_index    = fw_parser::ap::get_ap_signing_key_index(parsing_ap_fw_type);
-
-    if (image_key_index.has_value()) {
-        if (std::to_underlying(*image_key_index) > KeyIndexMax) {
-            return Ccode::ErrorGeneral;
-        }
-
-        if (std::to_underlying(*image_key_index) > std::numeric_limits<uint16_t>::max()) {
-            return Ccode::ErrorGeneral;
-        }
-        else {
-            // coverity[cert_int31_c_violation] - Already checked above
-            key_index = static_cast<uint16_t>(std::to_underlying(*image_key_index));
-        }
-    }
-    else {
-        return Ccode::ErrorGeneral;
-    }
-
-    return Ccode::Success;
-}
-
 Ccode mctp::Nsm::fill_fmc_key_index(uint16_t& key_index)
 {
     const fw_parser::mcu::ParsingFwType parsing_type = fw_parser::mcu::ParsingFwType::Fmc;
@@ -594,23 +484,6 @@ Ccode mctp::Nsm::fill_key_permission(uint8_t slot, uint32_t& key_permission)
 {
     uint16_t key_index = 0;
     auto     status    = fill_key_index(slot, key_index);
-    if (status != Ccode::Success) {
-        key_permission = 0;
-        return status;
-    }
-    status = convert_key_index_to_key_permission(key_index, key_permission);
-    if (status != Ccode::Success) {
-        key_permission = 0;
-        return status;
-    }
-
-    return Ccode::Success;
-}
-
-Ccode mctp::Nsm::fill_ap_key_permission(uint32_t& key_permission)
-{
-    uint16_t key_index = 0;
-    auto     status    = fill_ap_key_index(key_index);
     if (status != Ccode::Success) {
         key_permission = 0;
         return status;
@@ -661,42 +534,10 @@ Ccode mctp::Nsm::fill_fuse_key_permission(uint32_t& key_permission)
     return Ccode::Success;
 }
 
-Ccode mctp::Nsm::fill_ap_fuse_key_permission(uint32_t& key_permission)
-{
-    // Read image key revoke from CFPA
-    uint32_t key_index_unary = 0;
-    auto     flash_status    = nv::flash::Flash::read_key_revoke(key_index_unary,
-                                                          nv::flash::KeyRollbackSelect::Ap0);
-    if (flash_status != flash::Status::Ok) {
-        return Ccode::ErrorGeneral;
-    }
-
-    auto key_index = convert_unary_to_key_index(key_index_unary);
-    auto status    = convert_key_index_to_key_permission(key_index, key_permission);
-    if (status != Ccode::Success) {
-        key_permission = 0;
-        return status;
-    }
-
-    return Ccode::Success;
-}
-
 Ccode mctp::Nsm::revoke_key_permission(uint32_t key_permission)
 {
     auto status = nv::flash::Flash::write_key_revoke(
         key_permission, nv::flash::KeyRollbackSelect::Mcu, 1s);
-    if (status != flash::Status::Ok) {
-        return Ccode::ErrorEfuseUpdateFailed;
-    }
-
-    return Ccode::Success;
-}
-
-Ccode mctp::Nsm::revoke_ap_key_permission(uint32_t key_permission)
-{
-    auto key_index = convert_unary_to_key_index(key_permission);
-    auto status    = nv::flash::Flash::write_key_revoke(
-        key_index, nv::flash::KeyRollbackSelect::Ap0, 1s);
     if (status != flash::Status::Ok) {
         return Ccode::ErrorEfuseUpdateFailed;
     }
@@ -714,23 +555,6 @@ Ccode mctp::Nsm::fill_sec_ver_num(uint8_t slot, uint32_t& rollback_protection)
 
     if (security_version.has_value()) {
         rollback_protection = (*security_version);
-    }
-    else {
-        return Ccode::ErrorGeneral;
-    }
-
-    return Ccode::Success;
-}
-
-Ccode mctp::Nsm::fill_ap_sec_ver_num(uint32_t& rollback_protection)
-{
-    const fw_parser::ap::ParsingApFwType
-        parsing_ap_fw_type = fw_parser::ap::ParsingApFwType::UpdateSlot;
-    // Read ap firmware secure version
-    auto security_version = fw_parser::ap::get_ap_sec_version(parsing_ap_fw_type);
-
-    if (security_version.has_value()) {
-        rollback_protection = static_cast<uint32_t>(*security_version);
     }
     else {
         return Ccode::ErrorGeneral;
@@ -767,33 +591,10 @@ Ccode mctp::Nsm::fill_fuse_mini_sec_ver_num(uint32_t& rollback_protection)
     return Ccode::Success;
 }
 
-Ccode mctp::Nsm::fill_ap_fuse_mini_sec_ver_num(uint32_t& rollback_protection)
-{
-    // Read secure fw version from CFPA
-    auto status = nv::flash::Flash::read_secure_fw_version(rollback_protection,
-                                                           nv::flash::KeyRollbackSelect::Ap0);
-    if (status != flash::Status::Ok) {
-        return Ccode::ErrorGeneral;
-    }
-
-    return Ccode::Success;
-}
-
 Ccode mctp::Nsm::revoke_rollback_protection(uint32_t rollback_protection)
 {
     auto status = nv::flash::Flash::write_secure_fw_version(
         rollback_protection, nv::flash::KeyRollbackSelect::Mcu, 1s);
-    if (status != flash::Status::Ok) {
-        return Ccode::ErrorEfuseUpdateFailed;
-    }
-
-    return Ccode::Success;
-}
-
-Ccode mctp::Nsm::revoke_ap_rollback_protection(uint32_t rollback_protection)
-{
-    auto status = nv::flash::Flash::write_secure_fw_version(
-        rollback_protection, nv::flash::KeyRollbackSelect::Ap0, 1s);
     if (status != flash::Status::Ok) {
         return Ccode::ErrorEfuseUpdateFailed;
     }
@@ -2000,280 +1801,6 @@ void mctp::Nsm::get_rot_state_info(const Packet& rx, Packet& tx)
            sizeof(uint16_t));
 }
 
-void mctp::Nsm::get_ap_rot_state_info(const Packet&   rx,
-                                      Packet&         tx,
-                                      const uint16_t& component_id)
-{
-    uint16_t                key_index_update      = 0;
-    uint32_t                svn_data              = 0;
-    uint32_t                min_svn_data          = 0;
-    uint32_t                ap_sku_id             = 0;
-    Ccode                   key_data_valid_update = Ccode::Success;
-    std::array<uint8_t, 16> comp_version_str{};
-    fill_packet_header_aggr(rx, tx);
-    fill_nsm_msg_header_aggr(rx, tx);
-    auto& ntx             = NsmPktRespAggr::from(tx);
-    tx.priv.packet_length = sizeof(Header) + AggregateHeaderResponseSize + sizeof(RespAggregate)
-                          - sizeof(SlotSpecificSegment);
-    ntx.completion_code = Ccode::Success;
-    ntx.telemetry_count = TelemetryCount - SlotSegmentTelemetryCount;
-
-    // TAG   LENG FIELD
-    // TAG 1,  0, BackgroundCopyEnabled
-    // TAG 2,  0, ActiveFirmwareSlot
-    // TAG 3,  0, ActiveKeySet
-    // TAG 4,  0, WriteProtectState
-    // TAG 5,  0, FirmwareSlotCount
-    // TAG 6,  0, FirmwareSlotID
-    // TAG 7,  5, FirmwareVersionString
-    // TAG 8,  2, VersionComparisonStamp
-    // TAG 9,  0, BuildType
-    // TAG 10, 0, SigningType
-    // TAG 11, 0, FirmwareState
-    // TAG 12, 1, SecurityVersionNumber
-    // TAG 13, 1, MinimumSecurityVersionNumber
-    // TAG 14, 1, SigningKeyIndex
-    // TAG 15, 0, InbandUpdatePolicy
-    // TAG 16, 3, BootStatusCode
-    // TAG 17, 0, InbandUpdatePolicyCurrent
-    // TAG 18, 0, RedundancyPolicyCurrent
-    // TAG 19, 2, ApSkuId
-    // TAG 20, 0, GlobalFailoverPolicy
-
-    // Tag 1, 2, 3, 13, 15, 16, 17, 18, 19, 20
-    // Tag 5 (slot count : n) (The following tag repeat n times)
-    // slot 0 : Tag 6, 7, 8, 9, 10, 4, 11, 12, 14
-
-    key_data_valid_update = fill_ap_key_index(key_index_update);
-    // TAG 1,  0, RedundancyPolicyPersistent
-    ntx.resp_aggregate.tag_redundancy_policy_persistent.tag = TagRedundancyPolicyPersistent;
-    ntx.resp_aggregate.tag_redundancy_policy_persistent.v   = 1;
-    ntx.resp_aggregate.tag_redundancy_policy_persistent
-        .length = RotTagLength::TagRedundancyPolicyPersistentLen;
-    ntx.resp_aggregate.tag_redundancy_policy_persistent.rsvd    = 0;
-    ntx.resp_aggregate.tag_redundancy_policy_persistent.b       = 0;
-    ntx.resp_aggregate.tag_redundancy_policy_persistent.data[0] = static_cast<uint8_t>(
-        NsmRedundancyPolicy::NotApplicable);
-
-    // TAG 2,  0, ActiveSlot
-    ntx.resp_aggregate.tag_active_firmware_slot.tag    = TagActiveFirmwareSlot;
-    ntx.resp_aggregate.tag_active_firmware_slot.v      = 1;
-    ntx.resp_aggregate.tag_active_firmware_slot.length = RotTagLength::TagActiveFirmwareSlotLen;
-    ntx.resp_aggregate.tag_active_firmware_slot.rsvd   = 0;
-    ntx.resp_aggregate.tag_active_firmware_slot.b      = 0;
-    ntx.resp_aggregate.tag_active_firmware_slot.data[0] = 0;
-
-    // TAG 3,  0, ActiveKeySet
-    ntx.resp_aggregate.tag_active_key_set.tag    = TagActiveKeySet;
-    ntx.resp_aggregate.tag_active_key_set.v      = 1;
-    ntx.resp_aggregate.tag_active_key_set.length = RotTagLength::TagActiveKeySetLen;
-    ntx.resp_aggregate.tag_active_key_set.rsvd   = 0;
-    ntx.resp_aggregate.tag_active_key_set.b      = 0;
-
-    const uint8_t KeySet                          = 0;
-    ntx.resp_aggregate.tag_active_key_set.data[0] = KeySet;
-
-    // TAG 13, 1, MinimumSecurityVersionNumber
-    fill_ap_fuse_mini_sec_ver_num(min_svn_data);
-    ntx.resp_aggregate.tag_min_security_ver_num.tag    = TagMinSecurityVerNum;
-    ntx.resp_aggregate.tag_min_security_ver_num.v      = 1;
-    ntx.resp_aggregate.tag_min_security_ver_num.length = RotTagLength::TagMinSecurityVerNumLen;
-    ntx.resp_aggregate.tag_min_security_ver_num.rsvd   = 0;
-    ntx.resp_aggregate.tag_min_security_ver_num.b      = 0;
-    auto min_svn_data_short = static_cast<uint16_t>(min_svn_data & UINT16_MAX);
-    memcpy(&ntx.resp_aggregate.tag_min_security_ver_num.data,
-           &min_svn_data_short,
-           sizeof(uint16_t));
-
-    // TAG 15, 0, InbandUpdatePolicyPersistent
-    ntx.resp_aggregate.tag_inband_update_policy_persistent
-        .tag                                                 = TagInbandUpdatePolicyPersistent;
-    ntx.resp_aggregate.tag_inband_update_policy_persistent.v = 1;
-    ntx.resp_aggregate.tag_inband_update_policy_persistent
-        .length = RotTagLength::TagInbandUpdatePolicyPersistentLen;
-    ntx.resp_aggregate.tag_inband_update_policy_persistent.rsvd    = 0;
-    ntx.resp_aggregate.tag_inband_update_policy_persistent.b       = 0;
-    ntx.resp_aggregate.tag_inband_update_policy_persistent.data[0] = static_cast<uint8_t>(
-        NsmInBandUpdatePolicy::NotApplicable);
-
-    // TAG 16, 3, BootStatusCode
-    ntx.resp_aggregate.tag_boot_status_code.tag    = TagBootStatusCode;
-    ntx.resp_aggregate.tag_boot_status_code.v      = 0;
-    ntx.resp_aggregate.tag_boot_status_code.length = RotTagLength::TagBootStatusCodeLen;
-    ntx.resp_aggregate.tag_boot_status_code.rsvd   = 0;
-    ntx.resp_aggregate.tag_boot_status_code.b      = 0;
-
-    // TAG 17, 0, InbandUpdatePolicyCurrent
-    ntx.resp_aggregate.tag_inband_update_policy_current.tag = TagInbandUpdatePolicyCurrent;
-    ntx.resp_aggregate.tag_inband_update_policy_current.v   = 1;
-    ntx.resp_aggregate.tag_inband_update_policy_current
-        .length = RotTagLength::TagInbandUpdatePolicyCurrentLen;
-    ntx.resp_aggregate.tag_inband_update_policy_current.rsvd    = 0;
-    ntx.resp_aggregate.tag_inband_update_policy_current.b       = 0;
-    ntx.resp_aggregate.tag_inband_update_policy_current.data[0] = static_cast<uint8_t>(
-        NsmInBandUpdatePolicy::NotApplicable);
-
-    // TAG 18, 0, RedundancyPolicyCurrent
-    ntx.resp_aggregate.tag_redundancy_policy_current.tag = TagRedundancyPolicyCurrent;
-    ntx.resp_aggregate.tag_redundancy_policy_current.v   = 1;
-    ntx.resp_aggregate.tag_redundancy_policy_current
-        .length = RotTagLength::TagRedundancyPolicyCurrentLen;
-    ntx.resp_aggregate.tag_redundancy_policy_current.rsvd    = 0;
-    ntx.resp_aggregate.tag_redundancy_policy_current.b       = 0;
-    ntx.resp_aggregate.tag_redundancy_policy_current.data[0] = static_cast<uint8_t>(
-        NsmInBandUpdatePolicy::NotApplicable);
-
-    // TAG 19, 2, ApSkuId
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (ap.component_id == component_id) {
-                ap_sku_id = ap.ap_sku_id;
-                break;
-            }
-        }
-    }
-    ntx.resp_aggregate.tag_ap_sku_id.tag    = TagApSkuId;
-    ntx.resp_aggregate.tag_ap_sku_id.v      = 1;
-    ntx.resp_aggregate.tag_ap_sku_id.length = RotTagLength::TagApSkuIdLen;
-    ntx.resp_aggregate.tag_ap_sku_id.rsvd   = 0;
-    ntx.resp_aggregate.tag_ap_sku_id.b      = 0;
-    // WAR: Return SKU in big endian order (Bug-5855594)
-    ntx.resp_aggregate.tag_ap_sku_id.data[0] = static_cast<uint8_t>((ap_sku_id >> ByteShift3)
-                                                                    & UINT8_MAX);
-    ntx.resp_aggregate.tag_ap_sku_id.data[1] = static_cast<uint8_t>((ap_sku_id >> ByteShift2)
-                                                                    & UINT8_MAX);
-    ntx.resp_aggregate.tag_ap_sku_id.data[2] = static_cast<uint8_t>((ap_sku_id >> ByteShift1)
-                                                                    & UINT8_MAX);
-    ntx.resp_aggregate.tag_ap_sku_id.data[3] = static_cast<uint8_t>(ap_sku_id & UINT8_MAX);
-
-    // TAG 20, 0, GlobalFailoverPolicy
-    ntx.resp_aggregate.tag_global_failover_policy.tag = TagGlobalFailoverPolicy;
-    ntx.resp_aggregate.tag_global_failover_policy.v   = 1;
-    ntx.resp_aggregate.tag_global_failover_policy
-        .length = RotTagLength::TagGlobalFailoverPolicyLen;
-    ntx.resp_aggregate.tag_global_failover_policy.rsvd    = 0;
-    ntx.resp_aggregate.tag_global_failover_policy.b       = 0;
-    ntx.resp_aggregate.tag_global_failover_policy.data[0] = static_cast<uint8_t>(
-        NsmGlobalFailoverPolicy::NotApplicable);
-
-    // TAG 5,  0, FirmwareSlotCount
-    ntx.resp_aggregate.tag_firmware_slot_count.tag     = TagFirmwareSlotCount;
-    ntx.resp_aggregate.tag_firmware_slot_count.v       = 1;
-    ntx.resp_aggregate.tag_firmware_slot_count.length  = RotTagLength::TagFirmwareSlotCountLen;
-    ntx.resp_aggregate.tag_firmware_slot_count.rsvd    = 0;
-    ntx.resp_aggregate.tag_firmware_slot_count.b       = 0;
-    ntx.resp_aggregate.tag_firmware_slot_count.data[0] = 1;  // 1 slots
-
-    // TAG 6,  0, FirmwareSlotID for slot 0
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.tag     = TagFirmwareSlotId;
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.v       = 1;
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.length  = RotTagLength::TagFirmwareSlotIdLen;
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.rsvd    = 0;
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.b       = 0;
-    ntx.resp_aggregate.tag_firmware_slot_id_slot0.data[0] = 0;
-
-    // TAG 7,  5, Firmware version string for slot 0
-    auto comp_version_str_status = get_ap_comp_version_str(
-        fw_parser::ap::ParsingApFwType::UpdateSlot);
-    if (comp_version_str_status.has_value()) {
-        comp_version_str = *comp_version_str_status;
-    }
-
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0.tag = TagFirmwareVerString;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0.v   = (comp_version_str_status.has_value())
-                                                             ? 1
-                                                             : 0;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0
-        .length = RotTagLength::TagFirmwareVerStringLen;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0.rsvd = 0;
-    ntx.resp_aggregate.tag_firmware_ver_string_slot0.b    = 0;
-
-    if (ntx.resp_aggregate.tag_firmware_ver_string_slot0.v) {
-        memcpy(&ntx.resp_aggregate.tag_firmware_ver_string_slot0.data,
-               comp_version_str.data(),
-               sizeof(comp_version_str));
-    }
-
-    // TAG 8,  2, VersionComparisonStamp for slot 0
-    auto ap_fw_version = get_ap_fw_version(fw_parser::ap::ParsingApFwType::UpdateSlot);
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.tag = TagVerComparisonStamp;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.v   = (key_data_valid_update
-                                                           == Ccode::Success)
-                                                              ? 1
-                                                              : 0;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0
-        .length = RotTagLength::TagVerComparisonStampLen;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.rsvd = 0;
-    ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.b    = 0;
-
-    if (ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.v) {
-        memcpy(&ntx.resp_aggregate.tag_ver_comparison_stamp_slot0.data,
-               &ap_fw_version,
-               sizeof(uint32_t));
-    }
-
-    // TAG 9,  0, BuildType for slot 0
-    auto build_type = get_ap_build_type(fw_parser::ap::ParsingApFwType::UpdateSlot);
-    ntx.resp_aggregate.tag_build_type_slot0.tag     = TagBuildType;
-    ntx.resp_aggregate.tag_build_type_slot0.v       = (build_type.has_value()) ? 1 : 0;
-    ntx.resp_aggregate.tag_build_type_slot0.length  = RotTagLength::TagBuildTypeLen;
-    ntx.resp_aggregate.tag_build_type_slot0.rsvd    = 0;
-    ntx.resp_aggregate.tag_build_type_slot0.b       = 0;
-    ntx.resp_aggregate.tag_build_type_slot0.data[0] = *build_type;
-
-    // TAG 10,  0, SigningType for slot 0
-    ntx.resp_aggregate.tag_signing_type_slot0.tag = TagSigningType;
-    ntx.resp_aggregate.tag_signing_type_slot0.v = (key_data_valid_update == Ccode::Success) ? 1
-                                                                                            : 0;
-    ntx.resp_aggregate.tag_signing_type_slot0.length  = RotTagLength::TagSigningTypeLen;
-    ntx.resp_aggregate.tag_signing_type_slot0.rsvd    = 0;
-    ntx.resp_aggregate.tag_signing_type_slot0.b       = 0;
-    ntx.resp_aggregate.tag_signing_type_slot0.data[0] = fill_signing_type(
-        static_cast<uint8_t>(key_index_update & UINT8_MAX));
-
-    // TAG 4,   0, WriteProtectState for slot 0
-    ntx.resp_aggregate.tag_write_protect_state_slot0.tag = TagWriteProtectState;
-    ntx.resp_aggregate.tag_write_protect_state_slot0.v   = 1;
-    ntx.resp_aggregate.tag_write_protect_state_slot0
-        .length = RotTagLength::TagWriteProtectStateLen;
-    ntx.resp_aggregate.tag_write_protect_state_slot0.rsvd    = 0;
-    ntx.resp_aggregate.tag_write_protect_state_slot0.b       = 0;
-    ntx.resp_aggregate.tag_write_protect_state_slot0.data[0] = 0;  // disabled
-
-    // TAG 11,  0, Firmware State for slot 0
-    ntx.resp_aggregate.tag_firmware_state_slot0.tag     = TagFirmwareState;
-    ntx.resp_aggregate.tag_firmware_state_slot0.v       = 1;
-    ntx.resp_aggregate.tag_firmware_state_slot0.length  = RotTagLength::TagFirmwareStateLen;
-    ntx.resp_aggregate.tag_firmware_state_slot0.rsvd    = 0;
-    ntx.resp_aggregate.tag_firmware_state_slot0.b       = 0;
-    ntx.resp_aggregate.tag_firmware_state_slot0.data[0] = get_ap_state();
-
-    // TAG 12, 1, SecurityVersionNumber for slot 0
-    ntx.resp_aggregate.tag_security_ver_num_slot0.tag    = TagSecurityVerNum;
-    ntx.resp_aggregate.tag_security_ver_num_slot0.v      = (fill_ap_sec_ver_num(svn_data)
-                                                       == Ccode::Success)
-                                                             ? 1
-                                                             : 0;
-    ntx.resp_aggregate.tag_security_ver_num_slot0.length = RotTagLength::TagSecurityVerNumLen;
-    ntx.resp_aggregate.tag_security_ver_num_slot0.rsvd   = 0;
-    ntx.resp_aggregate.tag_security_ver_num_slot0.b      = 0;
-    auto svn_data_short = static_cast<uint16_t>(svn_data & UINT16_MAX);
-    memcpy(
-        &ntx.resp_aggregate.tag_security_ver_num_slot0.data, &svn_data_short, sizeof(uint16_t));
-
-    // TAG 14, 1, SigningKeyIndex for slot 0
-    ntx.resp_aggregate.tag_signing_key_index_slot0.tag = TagSigningKeyIndex;
-    ntx.resp_aggregate.tag_signing_key_index_slot0.v = (key_data_valid_update == Ccode::Success)
-                                                         ? 1
-                                                         : 0;
-    ntx.resp_aggregate.tag_signing_key_index_slot0.length = RotTagLength::TagSigningKeyIndexLen;
-    ntx.resp_aggregate.tag_signing_key_index_slot0.rsvd   = 0;
-    ntx.resp_aggregate.tag_signing_key_index_slot0.b      = 0;
-    memcpy(&ntx.resp_aggregate.tag_signing_key_index_slot0.data,
-           &key_index_update,
-           sizeof(uint16_t));
-}
-
 void mctp::Nsm::on_get_rot_state_info(const Packet& rx, Packet& tx)
 {
     constexpr uint8_t RequestSize = 5;
@@ -2289,14 +1816,6 @@ void mctp::Nsm::on_get_rot_state_info(const Packet& rx, Packet& tx)
     if (is_fw_comp_id_valid(input_fw_comp_info, McuComponentId)) {
         get_rot_state_info(rx, tx);
         return;
-    }
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
-                get_ap_rot_state_info(rx, tx, ap.component_id);
-                return;
-            }
-        }
     }
     fill_error_packet_aggr(Ccode::ErrorInvalidData, rx, tx);
 }
@@ -2362,50 +1881,6 @@ void mctp::Nsm::query_auth_key(const Packet& rx, Packet& tx)
     memcpy(&ntx.data, &query_auth_key_resp, sizeof(QueryAuthKeyResp));
 }
 
-void mctp::Nsm::query_ap_auth_key(const Packet& rx, Packet& tx)
-{
-    constexpr uint8_t RespSize = sizeof(QueryAuthKeyResp);
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-    auto& ntx             = NsmPktResp::from(tx);
-    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + RespSize;
-    ntx.completion_code   = Ccode::Success;
-    ntx.data_size         = RespSize;
-
-    QueryAuthKeyResp query_auth_key_resp{};
-
-    uint16_t key_index      = 0;
-    uint32_t key_permission = 0;
-
-    // Permission Bitmap Length 4
-    query_auth_key_resp.bitmap_len = 4;
-    // Active
-    if (fill_ap_key_index(key_index) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-    query_auth_key_resp.active_comp_key = key_index;
-    if (fill_ap_key_permission(key_permission) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-    query_auth_key_resp.active_permission = key_permission;
-
-    // no pending -> 0xFFFF
-    query_auth_key_resp.pending_comp_key   = UINT16_MAX;
-    query_auth_key_resp.pending_permission = 0;
-
-    // EFUSE Key Permission Bitmap & Pending EFUSE Key Permission Bitmap
-    if (fill_ap_fuse_key_permission(key_permission) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-    query_auth_key_resp.active_efuse_permission  = key_permission;
-    query_auth_key_resp.pending_efuse_permission = key_permission;
-
-    memcpy(&ntx.data, &query_auth_key_resp, sizeof(QueryAuthKeyResp));
-}
-
 void mctp::Nsm::on_query_auth_key(const Packet& rx, Packet& tx)
 {
     constexpr uint8_t RequestSize = 5;
@@ -2421,14 +1896,6 @@ void mctp::Nsm::on_query_auth_key(const Packet& rx, Packet& tx)
     if (is_fw_comp_id_valid(input_fw_comp_info, McuComponentId)) {
         query_auth_key(rx, tx);
         return;
-    }
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
-                query_ap_auth_key(rx, tx);
-                return;
-            }
-        }
     }
     fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
 }
@@ -2566,98 +2033,6 @@ void mctp::Nsm::update_auth_key(const Packet&           rx,
     memcpy(&ntx.data, &bitfield, RespSize);
 }
 
-void mctp::Nsm::update_ap_auth_key(const Packet&           rx,
-                                   Packet&                 tx,
-                                   const UpdateAuthKeyReq& update_struct)
-{
-    constexpr uint8_t RespSize = 4;
-
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-    auto& ntx                 = NsmPktResp::from(tx);
-    tx.priv.packet_length     = sizeof(Header) + HeaderResponseSize + RespSize;
-    ntx.completion_code       = Ccode::Success;
-    ntx.data_size             = RespSize;
-    uint32_t      bitfield    = 0;
-    const uint8_t RequestType = update_struct.request_type;
-
-    // key_permission will be the form of "(1 << N) - 1"
-    uint32_t active_key_permission    = 0;
-    uint32_t efuse_key_permission     = 0;
-    uint32_t permitted_key_permission = 0;
-    // For input
-    uint32_t input_key_permission = 0;
-
-    auto can_revoke = can_revoke_ap_otp();
-
-    if (can_revoke != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // Key Permission Bitmap
-    if (fill_ap_key_permission(active_key_permission) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // EFUSE Key Permission Bitmap
-    if (fill_ap_fuse_key_permission(efuse_key_permission) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // Get the request Key Permission Bitmap
-    if (RequestType == UpdateKeySpecifiedValue) {
-        memcpy(&input_key_permission,
-               &update_struct.permission_bitmap,
-               sizeof(input_key_permission));
-    }
-
-    permitted_key_permission = active_key_permission;
-
-    if (RequestType == UpdateKeyPermittedValue) {
-        input_key_permission = permitted_key_permission;
-    }
-    else {
-        input_key_permission |= efuse_key_permission;
-
-        // Check if the input key permission is valid
-        // input_key_permission should be the form of "(1 << N) - 1"
-        if (!is_form_zeros_then_ones(input_key_permission)) {
-            fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-            return;
-        }
-    }
-
-    if (input_key_permission > permitted_key_permission) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-        return;
-    }
-
-    // revoke key permission only if input_key_permission > efuse_key_permission
-    // If input_key_permission <= efuse_key_permission, will not revoke key permission but also
-    // doesn't mean failed
-    if (input_key_permission > efuse_key_permission) {
-        auto revoke_ccode = revoke_ap_key_permission(input_key_permission);
-        if (revoke_ccode != Ccode::Success) {
-            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
-            return;
-        }
-
-        const uint32_t
-            comp_info = static_cast<uint32_t>(update_struct.fw_comp_info.component_index) << 16
-                      | static_cast<uint32_t>(update_struct.fw_comp_info.component_id);
-        logger::info(logger::Event::MctpNsmRevokeApKey,
-                     logger::data_from_two_u32(input_key_permission, comp_info));
-
-        Driver::mctp_send_cmd(Driver::CmdCode::RotStateInfoChange);
-    }
-
-    bitfield |= (1U << uint8_t(0));  // [0] – Automatic. EFUSE updated at completion of request.
-    memcpy(&ntx.data, &bitfield, RespSize);
-}
-
 void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
 {
     auto&             nrx                 = NsmPktReq::from(rx);
@@ -2702,25 +2077,16 @@ void mctp::Nsm::on_update_auth_key(const Packet& rx, Packet& tx)
                 return;
             }
             // GFWLYNT1-7457: Block key-revocation updates while a debug token is
-            // installed. Apply the check before component dispatch so MCU and AP
-            // targets follow the same policy.
+            // installed.
             if (nv::debugtoken::is_dbg_token_tlv_in_flash()) {
-                fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);
+                fill_error_packet_v2(
+                    Ccode::ErrorGeneral, Rcode::ErrorDebugTokenInstalled, rx, tx);
                 return;
             }
             // check comp info(comp class, comp id, comp class idx)
             if (is_fw_comp_id_valid(update_auth_key_req.fw_comp_info, McuComponentId)) {
                 update_auth_key(rx, tx, update_auth_key_req);
                 return;
-            }
-            if constexpr (nv::vrot::ApList.size() > 0) {
-                for (const auto& ap : nv::vrot::ApList) {
-                    if (is_fw_comp_id_valid(update_auth_key_req.fw_comp_info,
-                                            ap.component_id)) {
-                        update_ap_auth_key(rx, tx, update_auth_key_req);
-                        return;
-                    }
-                }
             }
         }
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
@@ -2852,42 +2218,6 @@ void mctp::Nsm::query_sec_ver_num(const Packet& rx, Packet& tx)
     memcpy(&ntx.data, &query_svn_resp, sizeof(QuerySvnResp));
 }
 
-void mctp::Nsm::query_ap_sec_ver_num(const Packet& rx, Packet& tx)
-{
-    constexpr uint8_t RespSize = sizeof(QuerySvnResp);
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-    auto& ntx             = NsmPktResp::from(tx);
-    tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + RespSize;
-    ntx.completion_code   = Ccode::Success;
-    ntx.data_size         = RespSize;
-
-    QuerySvnResp query_svn_resp{};
-
-    uint32_t svn_data     = 0;
-    uint32_t min_svn_data = 0;
-
-    // Security Version Number, index 0
-    if (fill_ap_sec_ver_num(svn_data) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-    query_svn_resp.active_svn = static_cast<uint16_t>(svn_data & UINT16_MAX);
-
-    // Minimum Security Version Number, MIN_SVN stored in EFUSE, index 4
-    if (fill_ap_fuse_mini_sec_ver_num(min_svn_data) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-    query_svn_resp.min_svn = static_cast<uint16_t>(min_svn_data & UINT16_MAX);
-
-    // no pending -> 0
-    query_svn_resp.pending_svn     = 0;
-    query_svn_resp.pending_min_svn = 0;
-
-    memcpy(&ntx.data, &query_svn_resp, sizeof(QuerySvnResp));
-}
-
 void mctp::Nsm::on_query_sec_ver_num(const Packet& rx, Packet& tx)
 {
     constexpr uint8_t RequestSize = 5;
@@ -2904,14 +2234,6 @@ void mctp::Nsm::on_query_sec_ver_num(const Packet& rx, Packet& tx)
     if (is_fw_comp_id_valid(input_fw_comp_info, McuComponentId)) {
         query_sec_ver_num(rx, tx);
         return;
-    }
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (is_fw_comp_id_valid(input_fw_comp_info, ap.component_id)) {
-                query_ap_sec_ver_num(rx, tx);
-                return;
-            }
-        }
     }
     fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
 }
@@ -3032,87 +2354,6 @@ void mctp::Nsm::update_min_sec_ver_num(const Packet&          rx,
     memcpy(&ntx.data, &bitfield, RespSize);
 }
 
-void mctp::Nsm::update_ap_min_sec_ver_num(const Packet&          rx,
-                                          Packet&                tx,
-                                          const UpdateMinSvnReq& update_struct)
-{
-    constexpr uint8_t RespSize = 4;
-
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-    auto& ntx                 = NsmPktResp::from(tx);
-    tx.priv.packet_length     = sizeof(Header) + HeaderResponseSize + RespSize;
-    ntx.completion_code       = Ccode::Success;
-    ntx.data_size             = RespSize;
-    uint32_t      bitfield    = 0;
-    const uint8_t RequestType = update_struct.request_type;
-
-    uint32_t active_svn    = 0;
-    uint16_t input_min_svn = 0;
-    uint16_t permitted_svn = 0;
-    uint32_t min_svn_data  = 0;
-
-    auto can_revoke = can_revoke_ap_otp();
-
-    if (can_revoke != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // Security Version Number
-    if (fill_ap_sec_ver_num(active_svn) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // Minimum Security Version Number, MIN_SVN stored in EFUSE
-    if (fill_ap_fuse_mini_sec_ver_num(min_svn_data) != Ccode::Success) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    if (RequestType == UpdateKeySpecifiedValue) {
-        // Requested Minimum Security Version Number 14
-        memcpy(&input_min_svn, &update_struct.min_svn, sizeof(input_min_svn));
-    }
-
-    permitted_svn = active_svn;
-
-    // Use the most restrictive value
-    if (RequestType == UpdateKeyPermittedValue) {
-        input_min_svn = permitted_svn;
-    }
-
-    if (input_min_svn > permitted_svn) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-        return;
-    }
-
-    if (RequestType == UpdateKeySpecifiedValue && input_min_svn < min_svn_data) {
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-        return;
-    }
-
-    // Equal values are ignored; higher values update the rollback-protection OTP.
-    if (input_min_svn > min_svn_data) {
-        if (revoke_ap_rollback_protection((uint32_t)input_min_svn) != Ccode::Success) {
-            fill_error_packet_v2(Ccode::ErrorGeneral, Rcode::ErrorEfuseUpdateFailed, rx, tx);
-            return;
-        }
-        const uint32_t
-            comp_info = static_cast<uint32_t>(update_struct.fw_comp_info.component_index) << 16
-                      | static_cast<uint32_t>(update_struct.fw_comp_info.component_id);
-        logger::info(
-            logger::Event::MctpNsmRevokeApRollbackProtection,
-            logger::data_from_two_u32(static_cast<uint32_t>(input_min_svn), comp_info));
-
-        Driver::mctp_send_cmd(Driver::CmdCode::RotStateInfoChange);
-    }
-
-    bitfield |= (1U << uint8_t(0));  // [0] – Automatic. EFUSE updated at completion of request.
-    memcpy(&ntx.data, &bitfield, RespSize);
-}
-
 void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
 {
     auto&             nrx            = NsmPktReq::from(rx);
@@ -3151,24 +2392,16 @@ void mctp::Nsm::on_update_min_sec_ver_num(const Packet& rx, Packet& tx)
                 return;
             }
             // GFWLYNT1-7457: Block min-SVN updates while a debug token is
-            // installed. Apply the check before component dispatch so MCU and AP
-            // targets follow the same policy.
+            // installed.
             if (nv::debugtoken::is_dbg_token_tlv_in_flash()) {
-                fill_error_packet(Ccode::ErrorDebugTokenInstalled, rx, tx);
+                fill_error_packet_v2(
+                    Ccode::ErrorGeneral, Rcode::ErrorDebugTokenInstalled, rx, tx);
                 return;
             }
             // check comp info(comp class, comp id, comp class idx)
             if (is_fw_comp_id_valid(update_min_svn_req.fw_comp_info, McuComponentId)) {
                 update_min_sec_ver_num(rx, tx, update_min_svn_req);
                 return;
-            }
-            if constexpr (nv::vrot::ApList.size() > 0) {
-                for (const auto& ap : nv::vrot::ApList) {
-                    if (is_fw_comp_id_valid(update_min_svn_req.fw_comp_info, ap.component_id)) {
-                        update_ap_min_sec_ver_num(rx, tx, update_min_svn_req);
-                        return;
-                    }
-                }
             }
             fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         }
@@ -3191,7 +2424,7 @@ void mctp::Nsm::on_query_fw_comp_id(const Packet& rx, Packet& tx)
     // - 2 byte: Component Identifier 3 ~ 4
     // - 1 byte: Component Classification Index 5
 
-    constexpr uint8_t ComponentCount = 1 + nv::vrot::ApList.size();
+    constexpr uint8_t ComponentCount = 1;
     constexpr uint8_t RespSize       = 1 + 5 * ComponentCount;
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
@@ -3202,12 +2435,6 @@ void mctp::Nsm::on_query_fw_comp_id(const Packet& rx, Packet& tx)
 
     std::array<FwCompInfo, ComponentCount> components{{}};
     components.at(0) = {NvMctpFwComponentClass, McuComponentId, 0};
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        size_t i = 1;
-        for (const auto& ap : nv::vrot::ApList) {
-            components.at(i++) = {NvMctpFwComponentClass, ap.component_id, 0};
-        }
-    }
     FwCompIds<ComponentCount> fw_comp_ids{components};
     memcpy(&ntx.data, &fw_comp_ids, sizeof(fw_comp_ids));
 
@@ -3225,20 +2452,7 @@ void mctp::Nsm::query_image_copy_progress(const Packet& rx, Packet& tx)
     ntx.data_size         = RespSize;
 
     nv::flash::ProgressPercent progress{};
-    flash::Status              flash_status = flash::Status::Error;
-    bool                       queried_ap   = false;
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        const auto latest_component_id = pldm::Task::latest_background_copy_component_id();
-        const auto ap                  = nv::vrot::find_ap_by_component_id(latest_component_id,
-                                                          nv::vrot::ApList);
-        if (ap && nv::vrot::ap_background_copy::supports(*ap)) {
-            flash_status = nv::vrot::ap_background_copy::query(*ap, progress);
-            queried_ap   = true;
-        }
-    }
-    if (!queried_ap) {
-        flash_status = flash::Flash::background_copy_query(progress);
-    }
+    const auto                 flash_status = flash::Flash::background_copy_query(progress);
 
     QueryImageCopyProgressResp query_image_copy_progress_resp{};
     if (flash_status == flash::Status::BackgroundCopyIdle) {
@@ -3278,7 +2492,7 @@ void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
     auto& image_copy_control_req = *std::bit_cast<const ImageCopyControlReq*>(
         &NsmPktReq::from(rx).data[0]);
 
-    // Only support MCU or dual-bank AP components
+    // Only support the MCU component
     auto max_component_count = 1;
     if (image_copy_control_req.component_count != max_component_count) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
@@ -3294,29 +2508,7 @@ void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
         return;
     }
 
-    const auto&                     fw_comp = image_copy_control_req.fw_comp_info[0];
-    const bool                      is_mcu  = is_fw_comp_id_valid(fw_comp, McuComponentId);
-    std::optional<nv::vrot::ApInfo> ap_target{};
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (is_fw_comp_id_valid(fw_comp, ap.component_id)) {
-                if (nv::vrot::ap_background_copy::supports(ap)) {
-                    ap_target = ap;
-                }
-                else {
-                    // Downstream RoT APs such as the CPLD do not support image copy
-                    // (see signoff bug 5579166 / bug 6217854): recognize a known AP
-                    // component (mirroring on_get_rot_state_info) and report it as
-                    // unsupported, vs. ErrorInvalidData for an unknown component id.
-                    fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
-                    return;
-                }
-                break;
-            }
-        }
-    }
-
-    if (!is_mcu && !ap_target) {
+    if (!is_fw_comp_id_valid(image_copy_control_req.fw_comp_info[0], McuComponentId)) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
@@ -3334,37 +2526,11 @@ void mctp::Nsm::initiate_image_copy(const Packet& rx, Packet& tx)
     ntx.completion_code   = Ccode::Success;
     ntx.data_size         = 0;
 
-    Ccode      completion_code = Ccode::Success;
-    Rcode      reason_code     = Rcode::Null;
-    const bool can_initiate    = ap_target ? can_initiate_ap_image_copy(
-                                              ap_target.value(), completion_code, reason_code)
-                                           : can_initiate_image_copy(completion_code, reason_code);
-    if (!can_initiate) {
+    Ccode completion_code = Ccode::Success;
+    Rcode reason_code     = Rcode::Null;
+    if (!can_initiate_image_copy(completion_code, reason_code)) {
         fill_error_packet_v2(completion_code, reason_code, rx, tx);
         return;
-    }
-
-    if constexpr (!nv::vrot::ApList.empty()) {
-        if (ap_target) {
-            const auto start_status = nv::vrot::ap_background_copy::start(
-                ap_target.value(),
-                nv::vrot::active_slot(ap_target.value()),
-                nv::vrot::inactive_slot(ap_target.value()));
-            if (start_status != nv::flash::Status::Ok) {
-                fill_error_packet_v2(
-                    Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
-                return;
-            }
-
-            const auto schedule_status = pldm::Task::pldm_ap_bg_start(ap_target->component_id);
-            if (schedule_status != pldm::Status::Ok) {
-                nv::vrot::ap_background_copy::cancel(false);
-                fill_error_packet_v2(
-                    Ccode::ErrorInvalidStateForCommand, Rcode::ImageCopyInProgress, rx, tx);
-                return;
-            }
-            return;
-        }
     }
 
     const auto schedule_status = pldm::Task::pldm_bg_start();
@@ -3470,6 +2636,10 @@ void mctp::Nsm::fill_nsm_msg_header(const Packet& rx, Packet& tx) const
     ntx.ocp_version   = nrx.ocp_version;
     ntx.ocp_type      = nrx.ocp_type;
     ntx.ocp           = nrx.ocp;
+
+    // Error paths also need the request's message type and command for correlation.
+    ntx.nv_msg_type = nrx.nv_msg_type;
+    memcpy(&ntx.cmd_code, &nrx.cmd_code, sizeof(ntx.cmd_code));
 }
 
 void mctp::Nsm::fill_error_packet_aggr(Ccode code, const Packet& rx, Packet& tx) const
@@ -3592,14 +2762,15 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
     Type0GpioResp gpio_resp{};
 
     // Check if offset and length exceed the total number of GPIOs
-    if ((offset + length) > nv::ipc::GpioNum) {
+    const uint16_t gpio_count = nv::ipc::gpio_count();
+    if ((offset + length) > gpio_count) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
 
     // Special case: discover all supported GPIOs
     if (offset == 0 && length == 0) {
-        length = nv::ipc::GpioNum;
+        length = gpio_count;
     }
 
     // Set response header
@@ -3613,7 +2784,9 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
     memset(gpio_resp.gpio.data(), 0, gpio_resp.gpio.size());
 
     // Check if GPIO spoofing error injection is active
-    const bool gpio_spoofing_active = is_gpio_spoofing_activate();
+    const bool gpio_spoofing_active = is_gpio_spoofing_activate()
+                                   && nv::gpio::is_gpio_spoofing_output_enabled(
+                                          nv::gpio::GpioSpoofingOutputInterface::Nsm);
 
     // Virtual and physical GPIOs use the same spoofing path (get_gpio_spoofing_value) when EI
     // on. Read GPIOs directly starting from offset
@@ -3621,7 +2794,7 @@ void mctp::Nsm::on_dcd_get_gpio(const Packet& rx, Packet& tx)
         const uint16_t gpio_index = offset + i;
 
         // Get GPIO configuration for this index
-        const auto&              gpio_config = nv::ipc::GpioSetup.at(gpio_index);
+        const auto&              gpio_config = nv::ipc::gpio_at(gpio_index);
         const nv::gpio::GpioPort port        = std::get<0>(gpio_config);
         const nv::gpio::GpioPin  pin         = std::get<1>(gpio_config);
 
@@ -3688,7 +2861,7 @@ void mctp::Nsm::on_dcd_set_gpio(const Packet& rx, Packet& tx)
     Type0GpioResp gpio_resp{};
 
     // Check if offset and length exceed the total number of GPIOs
-    if ((offset + length) > nv::ipc::GpioNum) {
+    if ((offset + length) > nv::ipc::gpio_count()) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
@@ -3716,7 +2889,7 @@ void mctp::Nsm::on_dcd_set_gpio(const Packet& rx, Packet& tx)
         const uint16_t gpio_index = offset + i;
 
         // Get GPIO configuration for this index
-        const auto&              gpio_config = nv::ipc::GpioSetup.at(gpio_index);
+        const auto&              gpio_config = nv::ipc::gpio_at(gpio_index);
         const nv::gpio::GpioPort port        = std::get<0>(gpio_config);
         const nv::gpio::GpioPin  pin         = std::get<1>(gpio_config);
 
@@ -3782,83 +2955,39 @@ bool mctp::Nsm::is_gpio_spoofing_activate()
 
 bool mctp::Nsm::get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value)
 {
-    // Check if gpio_index is valid
-    if (gpio_index >= nv::ipc::GpioSetup.size()) {
-        return false;
-    }
-
-    // Search through IoxConfigs to find the matching PinConfig
-    if constexpr (nv::ipc::EnableIoxEmulation) {
-        // Get port and pin from GpioSetup array
-        const auto& gpio_entry = nv::ipc::GpioSetup.at(gpio_index);
-        const auto  port       = std::get<0>(gpio_entry);
-        const auto  pin        = std::get<1>(gpio_entry);
-
-        for (const auto& iox_config : nv::ipc::IoxConfigs) {
-            for (const auto& pin_config : iox_config.pinConfig) {
-                if (pin_config.port == port && pin_config.pin == pin) {
-                    // Set pin_value based on GpioState and return true
-                    pin_value = (pin_config.val == nv::gpio::GpioState::High) ? 1 : 0;
-                    return true;
-                }
-            }
-        }
-    }
-
-    // Default to 0 if not found, but still return true (valid gpio_index)
-    pin_value = 0;
-    return true;
+    return nv::gpio::Driver::get_gpio_default_value(gpio_index, pin_value);
 }
 
 bool mctp::Nsm::get_gpio_spoofing_value(uint16_t gpio_index, uint8_t& pin_value)
 {
-    // Check if gpio_index is valid
-    if (gpio_index >= nv::ipc::GpioSetup.size()) {
-        return false;
-    }
-
-    // Get port and pin from GpioSetup array
-    const auto& gpio_entry = nv::ipc::GpioSetup.at(gpio_index);
-    const auto  port       = std::get<0>(gpio_entry);
-    const auto  pin        = std::get<1>(gpio_entry);
-
-    // Virtual GPIO has no hardware direction; treat as input for spoofing eligibility.
-    if (port != nv::gpio::vrPort) {
-        nv::gpio::Direction dir = gpio::Direction::Input;
-        if (nv::gpio::Driver::getDirection(port, pin, dir) != nv::gpio::Status::Ok) {
-            return false;
-        }
-
-        if (dir != nv::gpio::Direction::Input) {
-            return false;
-        }
-    }
-
-    // Search through GPIO spoofing entries
-    const auto& gpio_spoofing = type5_data.gpioSpoofingResp;
-    const auto  num_entries   = gpio_spoofing.gpio_spoofing_header.ei_gpio_number;
-
-    for (uint16_t i = 0; i < num_entries && i < MaxGPIOSpoofingEntries; ++i) {
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
-        const auto& entry = gpio_spoofing.gpio_ei_entries[i];
-
-        // Check if this entry matches the gpio_index and is activated
-        if (entry.gpioIndex == gpio_index && entry.activated == 1) {
-            // Set the spoofed GPIO value and return true (spoofing is active)
-            pin_value = entry.polarity;
-            return true;
-        }
-    }
-
-    // No matching spoofing entry found, get default value and return true (isolating physical
-    // gpio state from spoofing)
-    get_gpio_default_value(gpio_index, pin_value);
-    return true;
+    return nv::gpio::Driver::read_gpio_spoofing_value(gpio_index, pin_value);
 }
 
-void mctp::Nsm::notifyIoxSpoofingState(bool spoofingActive)
+void mctp::Nsm::notifyGpioSpoofingState(bool spoofingActive)
 {
-    if constexpr (nv::ipc::EnableIoxEmulation) {
+    static_assert(nv::gpio::MaxGpioSpoofingEntries == MaxGPIOSpoofingEntries);
+
+    std::array<nv::gpio::GpioSpoofingEntryState, nv::gpio::MaxGpioSpoofingEntries> entries{};
+    const auto entry_num = std::min(
+        static_cast<uint8_t>(type5_data.gpioSpoofingResp.gpio_spoofing_header.ei_gpio_number),
+        static_cast<uint8_t>(entries.size()));
+    for (uint8_t i = 0; i < entry_num; ++i) {
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+        const auto& source_entry = type5_data.gpioSpoofingResp.gpio_ei_entries[i];
+        entries.at(i)            = nv::gpio::GpioSpoofingEntryState{
+                       .gpioIndex = source_entry.gpioIndex,
+                       .activated = static_cast<uint8_t>(source_entry.activated),
+                       .polarity  = static_cast<uint8_t>(source_entry.polarity),
+        };
+    }
+
+    nv::gpio::Driver::update_gpio_spoofing(
+        spoofingActive,
+        std::span<const nv::gpio::GpioSpoofingEntryState>(entries.data(), entry_num));
+
+    if constexpr (nv::ipc::EnableIoxEmulation
+                  && nv::gpio::is_gpio_spoofing_output_enabled(
+                      nv::gpio::GpioSpoofingOutputInterface::Iox)) {
         // Send to IOX task
         nv::iox::Task::send_gpio_spoofing_update(spoofingActive, type5_data.gpioSpoofingResp);
     }

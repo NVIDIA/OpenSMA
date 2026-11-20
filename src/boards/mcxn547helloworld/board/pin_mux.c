@@ -11,7 +11,7 @@ product: Pins v17.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.09.10
+processor_version: 26.03.20
 external_user_signals: {}
 pin_labels:
 - {pin_num: T6, pin_signal: PIO4_12/WUU0_IN20/USB0_VBUS_DET/FC2_P0/CT4_MAT0/FLEXIO0_D20/PLU_OUT0/CAN0_RXD/ADC0_A5/ADC1_A5, label: GA_GPIO9_IROT_ERROR_N, identifier: xxd;P12;IROT_ERROR}
@@ -87,9 +87,6 @@ BOARD_InitPins:
     direction: INPUT}
   - {pin_num: T8, peripheral: GPIO4, signal: 'GPIO, 15', pin_signal: PIO4_15/WUU0_IN21/TRIG_OUT4/USB1_VBUS_DIG/CT4_MAT3/FLEXIO0_D23/PLU_OUT3/ADC0_A1/CMP0_IN4P, direction: INPUT}
   - {pin_num: T10, peripheral: GPIO4, signal: 'GPIO, 20', pin_signal: PIO4_20/TRIG_IN8/FC2_P4/CT2_MAT0/FLEXIO0_D28/ADC1_A6, direction: INPUT}
-  - {pin_num: E4, peripheral: I3C1, signal: PUR, pin_signal: PIO1_15/WUU0_IN13/FC3_P3/CT_INP11/SCT0_IN5/FLEXIO0_D23/SMARTDMA_PIO11/PLU_IN3/ENET0_RXD1/I3C1_PUR/TSI0_CH24/ADC1_A15}
-  - {pin_num: F4, peripheral: I3C1, signal: SCL, pin_signal: PIO1_17/FC5_P1/FC3_P5/CT_INP13/SCT0_OUT7/FLEXIO0_D25/SMARTDMA_PIO13/PLU_OUT5/ENET0_RXD3/I3C1_SCL/ADC1_A17}
-  - {pin_num: F6, peripheral: I3C1, signal: SDA, pin_signal: PIO1_16/WUU0_IN14/FC5_P0/FC3_P4/CT_INP12/SCT0_OUT6/FLEXIO0_D24/SMARTDMA_PIO12/PLU_OUT4/ENET0_RXD2/I3C1_SDA/ADC1_A16}
   - {pin_num: C6, peripheral: LP_FLEXCOMM3, signal: LPFLEXCOMM_P0, pin_signal: PIO1_0/WUU0_IN6/LPTMR0_ALT3/TRIG_IN0/FC3_P0/FC4_P4/CT_INP4/SCT0_OUT6/FLEXIO0_D8/SAI1_TX_BCLK/TSI0_CH0/ADC0_A16/CMP0_IN0,
     pull_select: up, pull_enable: enable}
   - {pin_num: C5, peripheral: LP_FLEXCOMM3, signal: LPFLEXCOMM_P1, pin_signal: PIO1_1/TRIG_IN1/FC3_P1/FC4_P5/CT_INP5/SCT0_OUT7/FLEXIO0_D9/SAI1_TX_FS/TSI0_CH1/ADC0_A17/CMP1_IN0,
@@ -130,12 +127,6 @@ BOARD_InitPins:
  * END ****************************************************************************************************************/
 void BOARD_InitPins(void)
 {
-    /* Enables the clock for GPIO0: Enables clock */
-    CLOCK_EnableClock(kCLOCK_Gpio0);
-    /* Enables the clock for GPIO3: Enables clock */
-    CLOCK_EnableClock(kCLOCK_Gpio3);
-    /* Enables the clock for GPIO4: Enables clock */
-    CLOCK_EnableClock(kCLOCK_Gpio4);
     /* Enables the clock for PORT0 controller: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port0);
     /* Enables the clock for PORT1: Enables clock */
@@ -146,62 +137,12 @@ void BOARD_InitPins(void)
     CLOCK_EnableClock(kCLOCK_Port3);
     /* Enables the clock for PORT4: Enables clock */
     CLOCK_EnableClock(kCLOCK_Port4);
-
-    gpio_pin_config_t GPIO_LED_config = {
-        .pinDirection = kGPIO_DigitalOutput,
-        .outputLogic = 1U
-    };
-    /* Initialize GPIO functionality on pin PIO0_5 (pin A14)  */
-    GPIO_PinInit(BOARD_INITPINS_GPIO_LED_GPIO, BOARD_INITPINS_GPIO_LED_PIN, &GPIO_LED_config);
-
-    gpio_pin_config_t GPIO_INT_config = {
-        .pinDirection = kGPIO_DigitalInput,
-        .outputLogic = 0U
-    };
-    /* Initialize GPIO functionality on pin PIO0_26 (pin F10)  */
-    GPIO_PinInit(BOARD_INITPINS_GPIO_INT_GPIO, BOARD_INITPINS_GPIO_INT_PIN, &GPIO_INT_config);
-
-    gpio_pin_config_t SPI0_CS0_config = {
-        .pinDirection = kGPIO_DigitalOutput,
-        .outputLogic = 1U
-    };
-    /* Initialize GPIO functionality on pin PIO3_0 (pin B17)  */
-    GPIO_PinInit(BOARD_INITPINS_SPI0_CS0_GPIO, BOARD_INITPINS_SPI0_CS0_PIN, &SPI0_CS0_config);
-
-    gpio_pin_config_t SPI0_CS1_config = {
-        .pinDirection = kGPIO_DigitalOutput,
-        .outputLogic = 1U
-    };
-    /* Initialize GPIO functionality on pin PIO3_19 (pin K17)  */
-    GPIO_PinInit(BOARD_INITPINS_SPI0_CS1_GPIO, BOARD_INITPINS_SPI0_CS1_PIN, &SPI0_CS1_config);
-
-    gpio_pin_config_t IROT_ERROR_config = {
-        .pinDirection = kGPIO_DigitalInput,
-        .outputLogic = 0U
-    };
-    /* Initialize GPIO functionality on pin PIO4_12 (pin T6)  */
-    GPIO_PinInit(BOARD_INITPINS_IROT_ERROR_GPIO, BOARD_INITPINS_IROT_ERROR_PIN, &IROT_ERROR_config);
-
-    gpio_pin_config_t IROT_BOOT_config = {
-        .pinDirection = kGPIO_DigitalInput,
-        .outputLogic = 0U
-    };
-    /* Initialize GPIO functionality on pin PIO4_13 (pin T7)  */
-    GPIO_PinInit(BOARD_INITPINS_IROT_BOOT_GPIO, BOARD_INITPINS_IROT_BOOT_PIN, &IROT_BOOT_config);
-
-    gpio_pin_config_t THERM_config = {
-        .pinDirection = kGPIO_DigitalInput,
-        .outputLogic = 0U
-    };
-    /* Initialize GPIO functionality on pin PIO4_15 (pin T8)  */
-    GPIO_PinInit(BOARD_INITPINS_THERM_GPIO, BOARD_INITPINS_THERM_PIN, &THERM_config);
-
-    gpio_pin_config_t PGOOD_config = {
-        .pinDirection = kGPIO_DigitalInput,
-        .outputLogic = 0U
-    };
-    /* Initialize GPIO functionality on pin PIO4_20 (pin T10)  */
-    GPIO_PinInit(BOARD_INITPINS_PGOOD_GPIO, BOARD_INITPINS_PGOOD_PIN, &PGOOD_config);
+    /* Enables the clock for GPIO0: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Gpio0);
+    /* Enables the clock for GPIO3: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Gpio3);
+    /* Enables the clock for GPIO4: Enables clock */
+    CLOCK_EnableClock(kCLOCK_Gpio4);
 
     /* PORT0_12 (pin D11) is configured as FC0_P0 */
     PORT_SetPinMux(PORT0, 12U, kPORT_MuxAlt3);
@@ -331,36 +272,6 @@ void BOARD_InitPins(void)
 
                      /* Input Buffer Enable: Enables. */
                      | PORT_PCR_IBE(PCR_IBE_ibe1));
-
-    /* PORT1_15 (pin E4) is configured as I3C1_PUR */
-    PORT_SetPinMux(PORT1, 15U, kPORT_MuxAlt10);
-
-    PORT1->PCR[15] = ((PORT1->PCR[15] &
-                       /* Mask bits to zero which are setting */
-                       (~(PORT_PCR_IBE_MASK)))
-
-                      /* Input Buffer Enable: Enables. */
-                      | PORT_PCR_IBE(PCR_IBE_ibe1));
-
-    /* PORT1_16 (pin F6) is configured as I3C1_SDA */
-    PORT_SetPinMux(PORT1, 16U, kPORT_MuxAlt10);
-
-    PORT1->PCR[16] = ((PORT1->PCR[16] &
-                       /* Mask bits to zero which are setting */
-                       (~(PORT_PCR_IBE_MASK)))
-
-                      /* Input Buffer Enable: Enables. */
-                      | PORT_PCR_IBE(PCR_IBE_ibe1));
-
-    /* PORT1_17 (pin F4) is configured as I3C1_SCL */
-    PORT_SetPinMux(PORT1, 17U, kPORT_MuxAlt10);
-
-    PORT1->PCR[17] = ((PORT1->PCR[17] &
-                       /* Mask bits to zero which are setting */
-                       (~(PORT_PCR_IBE_MASK)))
-
-                      /* Input Buffer Enable: Enables. */
-                      | PORT_PCR_IBE(PCR_IBE_ibe1));
 
     /* PORT1_8 (pin A1) is configured as FC4_P0 */
     PORT_SetPinMux(PORT1, 8U, kPORT_MuxAlt2);
@@ -531,6 +442,62 @@ void BOARD_InitPins(void)
 
                       /* Input Buffer Enable: Enables. */
                       | PORT_PCR_IBE(PCR_IBE_ibe1));
+
+    gpio_pin_config_t GPIO_LED_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO0_5 (pin A14)  */
+    GPIO_PinInit(BOARD_INITPINS_GPIO_LED_GPIO, BOARD_INITPINS_GPIO_LED_PIN, &GPIO_LED_config);
+
+    gpio_pin_config_t GPIO_INT_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO0_26 (pin F10)  */
+    GPIO_PinInit(BOARD_INITPINS_GPIO_INT_GPIO, BOARD_INITPINS_GPIO_INT_PIN, &GPIO_INT_config);
+
+    gpio_pin_config_t SPI0_CS0_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO3_0 (pin B17)  */
+    GPIO_PinInit(BOARD_INITPINS_SPI0_CS0_GPIO, BOARD_INITPINS_SPI0_CS0_PIN, &SPI0_CS0_config);
+
+    gpio_pin_config_t SPI0_CS1_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 1U
+    };
+    /* Initialize GPIO functionality on pin PIO3_19 (pin K17)  */
+    GPIO_PinInit(BOARD_INITPINS_SPI0_CS1_GPIO, BOARD_INITPINS_SPI0_CS1_PIN, &SPI0_CS1_config);
+
+    gpio_pin_config_t IROT_ERROR_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO4_12 (pin T6)  */
+    GPIO_PinInit(BOARD_INITPINS_IROT_ERROR_GPIO, BOARD_INITPINS_IROT_ERROR_PIN, &IROT_ERROR_config);
+
+    gpio_pin_config_t IROT_BOOT_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO4_13 (pin T7)  */
+    GPIO_PinInit(BOARD_INITPINS_IROT_BOOT_GPIO, BOARD_INITPINS_IROT_BOOT_PIN, &IROT_BOOT_config);
+
+    gpio_pin_config_t THERM_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO4_15 (pin T8)  */
+    GPIO_PinInit(BOARD_INITPINS_THERM_GPIO, BOARD_INITPINS_THERM_PIN, &THERM_config);
+
+    gpio_pin_config_t PGOOD_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO4_20 (pin T10)  */
+    GPIO_PinInit(BOARD_INITPINS_PGOOD_GPIO, BOARD_INITPINS_PGOOD_PIN, &PGOOD_config);
 }
 /***********************************************************************************************************************
  * EOF

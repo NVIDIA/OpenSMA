@@ -31,9 +31,9 @@ using namespace nv::spi;
 
 void Task::make(Config config)
 {
-    // TODO : decide the stack size for spi task
     // TODO : decide the priority of spi
-    constexpr auto StackSize = std::max(384, int(configMINIMAL_STACK_SIZE));
+    // leave ~232 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(416, int(configMINIMAL_STACK_SIZE));
 
     switch (config.port_id) {
         case Port::Zero: {
@@ -223,7 +223,6 @@ void Task::handle_tx(Buffer& buffer)
     auto status = _spb.spi_mctp_send(buffer);
     if (status != SpbStatus::Ok) {
         error_log(status, _client);
-        // oob_error array has few entries, supported only first errors from SpbStatus
         nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
     }
 }
@@ -234,7 +233,6 @@ void Task::handle_rx()
     auto   status = _spb.spi_mctp_recv(buffer);
     if (status != SpbStatus::Ok) {
         error_log(status, _client);
-        // oob_error array has few entries, supported only first errors from SpbStatus
         nv::perf_mon::Driver::set_transaction_error(_oob_bus, static_cast<uint8_t>(status));
     }
     else {

@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <climits>
 #include "nv/ctimer/ctimer.h"
+#include "nv/ipc/supervisor.h"
 
 using namespace nv::spi;
 using Status = ExtFlash::Status;
@@ -130,8 +131,13 @@ Status ExtFlash::read_sfdp(uint32_t sfdp_addr, std::span<uint8_t> buffer)
         0x00,
     };
     cs_assert();
-    _driver.sendRecv(cmd.size(), cmd, cmd.size(), cmd);
-    _driver.sendRecv(buffer.size(), buffer, buffer.size(), buffer);
+    _driver.sendRecv(
+        nv::ipc::Supervisor::inst().current_task_id(), cmd.size(), cmd, cmd.size(), cmd);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(),
+                     buffer.size(),
+                     buffer,
+                     buffer.size(),
+                     buffer);
     cs_deassert();
     return Status::Ok;
 }
@@ -266,7 +272,8 @@ Status ExtFlash::write_enable()
 
     std::array<uint8_t, 1> buf = {ExtFlashCmd::WREN};
     cs_assert();
-    _driver.sendRecv(buf.size(), buf, buf.size(), buf);
+    _driver.sendRecv(
+        nv::ipc::Supervisor::inst().current_task_id(), buf.size(), buf, buf.size(), buf);
     cs_deassert();
     return Status::Ok;
 }
@@ -276,7 +283,8 @@ Status ExtFlash::read_status(uint8_t& status_reg)
     // Clock out [RDSR, 0x00], receive [junk, status]
     std::array<uint8_t, 2> buf = {ExtFlashCmd::RDSR, 0x00};
     cs_assert();
-    _driver.sendRecv(buf.size(), buf, buf.size(), buf);
+    _driver.sendRecv(
+        nv::ipc::Supervisor::inst().current_task_id(), buf.size(), buf, buf.size(), buf);
     cs_deassert();
     status_reg = buf[1];
     return Status::Ok;
@@ -308,7 +316,8 @@ Status ExtFlash::read_id(uint32_t& jedec_id)
     // Clock out [RDID, 0, 0, 0], receive [junk, mfg, mem_type, capacity]
     std::array<uint8_t, 4> buf = {ExtFlashCmd::RDID, 0x00, 0x00, 0x00};
     cs_assert();
-    _driver.sendRecv(buf.size(), buf, buf.size(), buf);
+    _driver.sendRecv(
+        nv::ipc::Supervisor::inst().current_task_id(), buf.size(), buf, buf.size(), buf);
     cs_deassert();
     jedec_id = (static_cast<uint32_t>(buf[1]) << 16) | (static_cast<uint32_t>(buf[2]) << 8)
              | static_cast<uint32_t>(buf[3]);
@@ -358,8 +367,12 @@ Status ExtFlash::read(uint8_t partition_idx, uint32_t offset, std::span<uint8_t>
     const uint8_t                                 cmd_len = build_addressed_cmd(
         cmd, ExtFlashCmd::READ, ExtFlashCmd::READ4, address);
     cs_assert();
-    _driver.sendRecv(cmd_len, cmd, cmd_len, cmd);
-    _driver.sendRecv(buffer.size(), buffer, buffer.size(), buffer);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(), cmd_len, cmd, cmd_len, cmd);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(),
+                     buffer.size(),
+                     buffer,
+                     buffer.size(),
+                     buffer);
     cs_deassert();
     return Status::Ok;
 }
@@ -386,8 +399,12 @@ Status ExtFlash::page_program(uint32_t address, std::span<const uint8_t> data)
     const std::span<uint8_t> rx_discard{};
 
     cs_assert();
-    _driver.sendRecv(cmd_len, cmd, cmd_len, cmd);
-    _driver.sendRecv(data.size(), data_tx, data.size(), rx_discard);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(), cmd_len, cmd, cmd_len, cmd);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(),
+                     data.size(),
+                     data_tx,
+                     data.size(),
+                     rx_discard);
     cs_deassert();
 
     return wait_busy(_spec.op_timeout_ms);
@@ -462,7 +479,7 @@ Status ExtFlash::erase_sector(const FlashPartition& partition, uint32_t offset)
     const uint8_t                                 cmd_len = build_addressed_cmd(
         cmd, ExtFlashCmd::SE, ExtFlashCmd::SE4, address);
     cs_assert();
-    _driver.sendRecv(cmd_len, cmd, cmd_len, cmd);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(), cmd_len, cmd, cmd_len, cmd);
     cs_deassert();
 
     return wait_busy(_spec.op_timeout_ms);
@@ -481,7 +498,8 @@ Status ExtFlash::erase_chip()
 
     std::array<uint8_t, 1> cmd = {ExtFlashCmd::CE};
     cs_assert();
-    _driver.sendRecv(cmd.size(), cmd, cmd.size(), cmd);
+    _driver.sendRecv(
+        nv::ipc::Supervisor::inst().current_task_id(), cmd.size(), cmd, cmd.size(), cmd);
     cs_deassert();
 
     return wait_busy(_spec.op_timeout_ms);
@@ -525,7 +543,7 @@ Status ExtFlash::erase_block(const FlashPartition& partition, uint32_t offset)
     const uint8_t                                 cmd_len = build_addressed_cmd(
         cmd, ExtFlashCmd::BE, ExtFlashCmd::BE4, address);
     cs_assert();
-    _driver.sendRecv(cmd_len, cmd, cmd_len, cmd);
+    _driver.sendRecv(nv::ipc::Supervisor::inst().current_task_id(), cmd_len, cmd, cmd_len, cmd);
     cs_deassert();
 
     return wait_busy(_spec.op_timeout_ms);

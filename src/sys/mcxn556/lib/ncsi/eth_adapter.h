@@ -44,7 +44,9 @@ extern "C" {
 // RX queue: Ethernet -> USB
 #define ETH_ADAPTER_FRAME_RX_BUFFER_LENGTH (16U)
 
-#define ETH_ADAPTER_MAX_FRAME_LEN (1514U)
+// IEEE 802.1Q VLAN tagged frame: 14 (hdr) + 4 (VLAN) + 1500 (payload) = 1518
+// FCS (4 bytes) is stripped by hardware before DMA delivery
+#define ETH_ADAPTER_MAX_FRAME_LEN (1518U)
 
 /*******************************************************************************
  * Types

@@ -66,6 +66,39 @@ bool nv::i3c::Driver::enec()
     return true;
 }
 
+bool nv::i3c::Driver::enec([[maybe_unused]] uint8_t address)
+{
+    // TODO implement
+    return true;
+}
+
+bool nv::i3c::Driver::register_ibi([[maybe_unused]] uint8_t address)
+{
+    // TODO implement
+    return true;
+}
+
+void nv::i3c::Driver::set_ibi_nack()
+{
+    // TODO implement
+}
+
+bool nv::i3c::Driver::recover_irq_storm_if_pending()
+{
+    return false;
+}
+
+void nv::i3c::Driver::set_ibi_ack_mandatory()
+{
+    // TODO implement
+}
+
+bool nv::i3c::Driver::set_mrl_mwl([[maybe_unused]] uint8_t address)
+{
+    // TODO implement
+    return true;
+}
+
 bool nv::i3c::Driver::write([[maybe_unused]] uint8_t            address,
                             [[maybe_unused]] std::span<uint8_t> data)
 {

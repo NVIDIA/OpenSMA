@@ -28,7 +28,7 @@
 #include "nv/flash/flash.h"
 #include "nv/gpio/common.h"
 #include "nv/gpio/driver.h"
-#include "nv/i2c/lattice_driver.h"
+#include "nv/gpio/project_gpio.h"
 #include "nv/i2c/task.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/logger/log.h"
@@ -128,7 +128,7 @@ Ccode appendRecord_error_counter_telemetry(uint8_t               telemetry_tagid
     response.latached_error = nv::perf_mon::Driver::get_latached_error(oobBus);
     response.type           = nv::perf_mon::Driver::get_oob_bus_type(oobBus);
     // get counters for all error types
-    for (uint8_t error_type = 0; error_type < nv::perf_mon::error_type_num; ++error_type) {
+    for (uint8_t error_type = 0; error_type < nv::perf_mon::ErrorTypeNum; ++error_type) {
         response.error_count.at(error_type) = nv::perf_mon::Driver::get_transaction_error(
             oobBus, error_type);
     }
@@ -170,7 +170,8 @@ Ccode appendRecord_all_error_counter_telemetries(TelemetryRecordArray& devDiagTe
 Ccode appendRecord_gpio_telemetry(uint8_t               telemetry_tagid,
                                   TelemetryRecordArray& devDiagTelemetryArray)
 {
-    if (nv::ipc::GpioNum == 0) {
+    const auto gpio_count = nv::ipc::gpio_count();
+    if (gpio_count == 0) {
         const uint8_t empty = 0;
         if (true == devDiagTelemetryArray.addRecordNvU8(telemetry_tagid, empty)) {
             return Ccode::Success;
@@ -180,12 +181,12 @@ Ccode appendRecord_gpio_telemetry(uint8_t               telemetry_tagid,
 
     // format output
     Type4GpioResp t4_resp{};
-    t4_resp.gpioNum = nv::ipc::GpioNum;
+    t4_resp.gpioNum = gpio_count;
 
     // Read GPIOs directly starting from offset
-    for (uint16_t gpio_index = 0; gpio_index < nv::ipc::GpioNum; gpio_index++) {
+    for (uint16_t gpio_index = 0; gpio_index < gpio_count; gpio_index++) {
         // Get GPIO configuration for this index
-        const auto&              gpio_config = nv::ipc::GpioSetup.at(gpio_index);
+        const auto&              gpio_config = nv::ipc::gpio_at(gpio_index);
         const nv::gpio::GpioPort port        = std::get<0>(gpio_config);
         const nv::gpio::GpioPin  pin         = std::get<1>(gpio_config);
 
@@ -237,20 +238,18 @@ Ccode appendRecord_task_priority(TelemetryRecordArray& devDiagTelemetryArray)
     T4TaskIdAndPriorityResponse response{};
     uint8_t                     task     = 0;
     uint8_t                     priority = 0;
-    // TaskId::Timer and TaskId::Idle will NOT be copied into response
-    size_t     size_to_copy = 0;
-    const auto task_timer   = static_cast<uint8_t>(nv::ipc::TaskId::Timer);
-    for (size_t counter = 0; counter < task_priority.size(); ++counter) {
-        const auto& item = task_priority.at(counter);
-        task             = static_cast<uint8_t>(std::get<0>(item));
-        priority         = static_cast<uint8_t>(std::get<1>(item));
-        if (task >= task_timer) {
-            // stop at TaskId::Timer as there is no information,
-            //  neither for TaskId::Idle
-            break;
+    // Same task set as appendRecord_task_execution_time(): created tasks plus Timer and Idle
+    size_t size_to_copy = 0;
+    size_t entries      = 0;
+    for (const auto& item : task_priority) {
+        if (std::get<1>(item) == nv::ipc::Task::Priority::Invalid) {
+            continue;
         }
+        task                  = static_cast<uint8_t>(std::get<0>(item));
+        priority              = static_cast<uint8_t>(std::get<1>(item));
         size_to_copy         += sizeof(task) + sizeof(priority);
-        response.at(counter)  = std::make_pair(task, priority);
+        response.at(entries)  = std::make_pair(task, priority);
+        ++entries;
     }
     if (false
         == devDiagTelemetryArray.addRecordVariableArray(
@@ -262,8 +261,9 @@ Ccode appendRecord_task_priority(TelemetryRecordArray& devDiagTelemetryArray)
 
 /**
  * @brief Get Task Execution time values and inserts into Aggregate response array
- *        For each Task there will be a Aggregate element data
- *        It starts with tagId DIAG_TASK0_EXECUTION_TIME and then increment the TagId
+ *        For each Task created by the product there will be a Aggregate element data
+ *        The TagId is DIAG_TASK0_EXECUTION_TIME + TaskId, so tasks that are not created
+ *        leave a gap in the TagId sequence
  * @param devDiagTelemetryArray - The Aggregate response array
  * @return none
  */
@@ -280,11 +280,16 @@ Ccode appendRecord_task_execution_time(TelemetryRecordArray& devDiagTelemetryArr
     const uint16_t t4_resp_size = sizeof(resp.task_id)
                                 + (element_size * T4TaskExecutionTimeEntryNum);
 
-    uint8_t task_counter = 0;  // will be used to set the current tag
     // ipc::TaskId::Timer and ipc::TaskId::Idle will be the latest 2 TASK_X_EXECUTION_TIME
     for (auto itask = static_cast<uint32_t>(ipc::TaskId::Begin);
          itask < static_cast<uint32_t>(ipc::TaskId::KernelEnd);
-         ++itask, ++task_counter) {
+         ++itask) {
+        // Timer and Idle are kernel tasks outside the supervisor table and always exist
+        const auto task_id = static_cast<ipc::TaskId>(itask);
+        if ((task_id < ipc::TaskId::End)
+            && (ipc::Supervisor::inst().task_pub(task_id).handle() == nullptr)) {
+            continue;
+        }
         execution_time.fill(0);
         nv::perf_mon::Driver::get_task_execution_time(static_cast<ipc::TaskId>(itask),
                                                       execution_time);
@@ -292,7 +297,7 @@ Ccode appendRecord_task_execution_time(TelemetryRecordArray& devDiagTelemetryArr
         resp.execution_time = execution_time;
         if (false
             == devDiagTelemetryArray.addRecordVariableArray(
-                DIAG_TASK0_EXECUTION_TIME + task_counter, t4_resp_size, resp)) {
+                static_cast<uint8_t>(DIAG_TASK0_EXECUTION_TIME + itask), t4_resp_size, resp)) {
             return Ccode::ErrorInvalidLength;
         }
     }
@@ -493,13 +498,6 @@ bool Nsm::process_diagnostics(const Packet& rx, Packet& tx)
             }
             return unsupported_command();
 
-        case cmd::GetCpldRegisterTable:
-            if constexpr (is_cmd_set(NsmMsgType::Diagnostics, cmd::GetCpldRegisterTable)) {
-                on_dev_diag_get_cpld_register_table(rx, tx);
-                break;
-            }
-            return unsupported_command();
-
         default: return unsupported_command();
     }
     return true;
@@ -520,20 +518,27 @@ void Nsm::on_dev_diag_get_diagnostics(const Packet& rx, Packet& tx)
     auto&         nrx     = NsmPktReq::from(rx);
     const uint8_t segment = nrx.data[0];
 
-    // segment must be always be
-    if (segment != DevDiagGetDiagnosticsFirstSegment) {
+    if (segment > TelemetryRecordArray::MaxSegmentId) {
         fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
 
     // devDiagTelemetryArray will copy data into &ntx.data[1],
-    // considering size = TelemetryRecordArray::MaxNsmBulkResponseSize including the Segment
+    // considering size = TelemetryRecordArray::MaxNsmBulkResponseSize including the Segment.
+    // Every request rebuilds all records and keeps those of the requested segment.
     TelemetryRecordArray devDiagTelemetryArray(
         &ntx.data[1], TelemetryRecordArray::MaxNsmBulkResponseSize - 1);
+    devDiagTelemetryArray.select_segment(segment);
     auto rcCode = getDeviceDiagnostics(devDiagTelemetryArray);
 
     if (rcCode != Ccode::Success) {
         fill_error_packet(rcCode, rx, tx);
+        return;
+    }
+
+    const uint8_t last_segment = devDiagTelemetryArray.last_segment();
+    if (segment > last_segment) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
         return;
     }
     const auto data_size   = devDiagTelemetryArray.arraySize() + 1;
@@ -551,8 +556,8 @@ void Nsm::on_dev_diag_get_diagnostics(const Packet& rx, Packet& tx)
         return;
     }
 
-    // set no more segments
-    ntx.data[0] = DevDiagGetDiagnosticsNoMoreSegments;
+    ntx.data[0] = (segment < last_segment) ? static_cast<uint8_t>(segment + 1)
+                                           : DevDiagGetDiagnosticsNoMoreSegments;
 }
 
 void Nsm::on_dev_diag_get_reset_statistics(const Packet& rx, Packet& tx)
@@ -618,41 +623,96 @@ void Nsm::on_dev_diag_get_reset_statistics(const Packet& rx, Packet& tx)
     memcpy(reset_reason_and_wdt_info.data() + offset, &reset_hfsr, sizeof(reset_hfsr));
     offset += sizeof(reset_hfsr);
 
+    static_assert(static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::End)
+                      >= static_cast<uint32_t>(nv::ipc::TaskId::End),
+                  "There are more Tasks than TaskMonitor");
+
     uint32_t aggregate_task_event = 0;
-    for (uint32_t i = 0; i < static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::End); i++) {
+
+    // used for management of any task still not defined in AggregateTaskEvent
+    constexpr auto UnNamedAggregateTaskLimit = static_cast<uint32_t>(AggregateTaskEvent::End);
+    auto           unnamed_task_index = static_cast<uint32_t>(AggregateTaskEvent::UnNamedArray);
+
+    for (auto i = nv::watchdog::TaskMonitorIndex::Begin;
+         i < nv::watchdog::TaskMonitorIndex::End;
+         i = static_cast<nv::watchdog::TaskMonitorIndex>(static_cast<uint32_t>(i) + 1)) {
         if (reset_event_bits & nv::common::bit(i)) {
             switch (i) {
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Mctp):
+                case nv::watchdog::TaskMonitorIndex::Mctp:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::Mctp);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I2c0):
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I2c1):
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I2c2):
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I2c3):
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I2c4):
+                case nv::watchdog::TaskMonitorIndex::I2c0:
+                case nv::watchdog::TaskMonitorIndex::I2c1:
+                case nv::watchdog::TaskMonitorIndex::I2c2:
+                case nv::watchdog::TaskMonitorIndex::I2c3:
+                case nv::watchdog::TaskMonitorIndex::I2c4:
+                case nv::watchdog::TaskMonitorIndex::I2c5:
+                case nv::watchdog::TaskMonitorIndex::I2c6:
+                case nv::watchdog::TaskMonitorIndex::I2c7:
+                case nv::watchdog::TaskMonitorIndex::I2c8:
+                case nv::watchdog::TaskMonitorIndex::I2c9:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::I2C);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I3c0):
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::I3c1):
+                case nv::watchdog::TaskMonitorIndex::I3c0:
+                case nv::watchdog::TaskMonitorIndex::I3c1:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::I3C);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Pldm):
+                case nv::watchdog::TaskMonitorIndex::Pldm:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::PLDM);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Usb):
+                case nv::watchdog::TaskMonitorIndex::Usb:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::USB);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Flash):
+                case nv::watchdog::TaskMonitorIndex::Flash:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::Flash);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Logger):
+                case nv::watchdog::TaskMonitorIndex::Logger:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::Logger);
                     break;
-                case static_cast<uint32_t>(nv::watchdog::TaskMonitorIndex::Spdm):
+                case nv::watchdog::TaskMonitorIndex::Spdm:
                     aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::SPDM);
                     break;
+                case nv::watchdog::TaskMonitorIndex::Lstp:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::LSTP);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Iox:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::IOX);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Ssif0:
+                case nv::watchdog::TaskMonitorIndex::Ssif1:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::SSIF);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Ipc0:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::IPC0);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Ipc1:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::IPC1);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Spi0:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::SPI0);
+                    break;
+                case nv::watchdog::TaskMonitorIndex::Diag:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::Diag);
+                    break;
+
+#ifdef NV_UNITTEST
+                case nv::watchdog::TaskMonitorIndex::Unittest:
+                    aggregate_task_event |= static_cast<uint32_t>(AggregateTaskEvent::Unittest);
+                    break;
+#endif
                 // coverity[dead_error_begin] -- suspress warning for default case
-                default: break;
+                default:
+                    // management of any task still not defined in AggregateTaskEvent
+                    if (unnamed_task_index <= UnNamedAggregateTaskLimit) {
+                        aggregate_task_event |= unnamed_task_index;
+                        // next bit position in AggregateTaskEvent::UnNamedArray array
+                        unnamed_task_index <<= 1UL;
+                    }
+                    else {
+                        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+                        return;
+                    }
+                    break;
             }
         }
     }
@@ -976,73 +1036,6 @@ void Nsm::on_dev_diag_clear_hsc_faults(const Packet& rx, Packet& tx)
     ntx.data_size         = 0;
     ntx.completion_code   = Ccode::Success;
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
-}
-
-void Nsm::on_dev_diag_get_cpld_register_table(const Packet& rx, Packet& tx)
-{
-    constexpr uint8_t RequestSize = sizeof(CpldRegisterTableReq);
-    if (!is_input_length_valid(rx, RequestSize)) {
-        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
-        return;
-    }
-
-    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
-        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
-        return;
-    }
-
-    fill_packet_header(rx, tx);
-    fill_nsm_msg_header(rx, tx);
-
-    auto& nrx = NsmPktReq::from(rx);
-    auto& ntx = NsmPktResp::from(tx);
-
-    // Parse request data
-    CpldRegisterTableReq req{};
-    memcpy(&req, static_cast<const void*>(nrx.data), sizeof(CpldRegisterTableReq));
-
-    // Validate segment index, MCU only supports one segment 0
-    if (req.segment_index != CpldRegisterTableFirstSegment) {
-        // Client should not send 0xFF in request
-        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
-        return;
-    }
-
-    std::array<uint8_t, Cpld_User_Reg::CPLD_USER_REG_SIZE> cpld_reg_buf = {};
-
-    auto& cpld   = nv::i2c::LatticeCpld::inst();
-    auto  status = cpld.dump_cpld_registers(cpld_reg_buf);
-
-    if (status != nv::i2c::I2cStatus::Ok) {
-        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-        return;
-    }
-
-    // Prepare response
-    CpldRegisterTableResp resp{};
-    resp.next_segment = CpldRegisterTableNoMoreSegments;  // Default: no more segments
-    std::memcpy(&resp.segment_data[0], cpld_reg_buf.data(), sizeof(resp.segment_data));
-
-    if (sizeof(CpldRegisterTableResp) > CpldRegTablePayloadMaxSize) {
-        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
-        return;
-    }
-
-    memcpy(static_cast<void*>(ntx.data), &resp, sizeof(CpldRegisterTableResp));
-
-    const uint16_t total_data_size = sizeof(CpldRegisterTableResp);
-
-    ntx.completion_code = Ccode::Success;
-    ntx.data_size       = total_data_size;
-
-    const auto packet_length = sizeof(Header) + HeaderResponseSize + total_data_size;
-    if (packet_length <= std::numeric_limits<uint16_t>::max()) {
-        tx.priv.packet_length = packet_length;
-    }
-    else {
-        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
-        return;
-    }
 }
 
 }  // namespace nv::mctp

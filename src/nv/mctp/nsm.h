@@ -39,7 +39,6 @@
 #include "nv/mctp/nsm_type_4.h"
 #include "nv/mctp/nsm_type_5.h"
 #include "nv/mctp/nsm_type_ff.h"
-#include "nv/vrot/interface/types.h"
 #include "sys/common/error-inject.h"
 
 // Forward declarations to reduce compile size
@@ -59,7 +58,6 @@ constexpr size_t   NvMctpNsmNonceSize            = 8;
 constexpr size_t   NvMctpVersionLength           = 17;
 constexpr uint8_t  NvPldmMcuComponentIdPrefix    = 0xFF;
 constexpr uint8_t  TelemetryCount                = 29;
-constexpr uint8_t  SlotSegmentTelemetryCount     = 9;
 constexpr uint32_t ByteShift1                    = 8;
 constexpr uint32_t ByteShift2                    = 16;
 constexpr uint32_t ByteShift3                    = 24;
@@ -469,6 +467,8 @@ public:
         MaxNsmBulkResponseSize = Constants::MctpTxBufSize - sizeof(nv::mctp::PrivateHeader)
                                - sizeof(nv::mctp::Header)
                                - Constants::NsmAggregateHeaderResponseSize;
+    // Highest segment index; 0xFF is reserved for "no more segments"
+    static constexpr uint8_t MaxSegmentId = 0xFE;
 
 public:
     /**
@@ -504,12 +504,28 @@ public:
         rewind();
     }
 
+    /**
+     * @brief Splits the records into segments of the storage size, on record boundaries,
+     *        and keeps only the records of @a segment. Records of the other segments are
+     *        accepted but not stored, so a full pass also yields @sa last_segment().
+     * @param segment - Segment to keep, 0 to @a MaxSegmentId
+     */
+    void select_segment(uint8_t segment)
+    {
+        _segmented      = true;
+        _target_segment = segment;
+        rewind();
+    }
+
+    /** @returns The index of the last segment filled so far in segmented mode */
+    uint8_t last_segment() const { return _current_segment; }
+
     template<typename DataValue>
     bool addRecordNvU8(uint8_t tag, const DataValue& value, const bool valid = true)
     {
         TelemetryRecord<sizeof(uint8_t)> telemetry;
         return telemetry.populate(tag, value, valid)
-            && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
+            && add_record(telemetry.record(), telemetry.size());
     }
 
     template<typename DataValue>
@@ -517,7 +533,7 @@ public:
     {
         TelemetryRecord<sizeof(uint16_t)> telemetry;
         return telemetry.populate(tag, value, valid)
-            && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
+            && add_record(telemetry.record(), telemetry.size());
     }
 
     template<typename DataValue>
@@ -525,7 +541,7 @@ public:
     {
         TelemetryRecord<sizeof(uint32_t)> telemetry;
         return telemetry.populate(tag, value, valid)
-            && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
+            && add_record(telemetry.record(), telemetry.size());
     }
 
     template<typename DataValue>
@@ -533,14 +549,14 @@ public:
     {
         TelemetryRecord<sizeof(uint64_t)> telemetry;
         return telemetry.populate(tag, value, valid)
-            && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
+            && add_record(telemetry.record(), telemetry.size());
     }
 
     bool addTimestampRecord(uint8_t tag)
     {
         TelemetryRecord<sizeof(uint64_t)> telemetry(tag);
         return telemetry.setTimeStampValue()
-            && copy_into_data(telemetry.record(), telemetry.size()) && ++_elements;
+            && add_record(telemetry.record(), telemetry.size());
     }
 
     template<typename DataValue>
@@ -568,7 +584,12 @@ public:
         if (encoded_size_power_of_two == array_size) {
             telemetry.v = validated;
             // copy only flags from telemetry, do not use telemetry.size() here
-            ret = copy_into_data(telemetry.record(), sizeof(telemetry) - 1)
+            constexpr uint16_t HeaderSize = sizeof(telemetry) - 1;
+            const auto         admit      = admit_record(HeaderSize + array_size);
+            if (admit != Admit::Store) {
+                return admit == Admit::Skip;
+            }
+            ret = copy_into_data(telemetry.record(), HeaderSize)
                && copy_into_data(&value, array_size) && ++_elements;
         }
         else {
@@ -580,6 +601,10 @@ public:
             telemetry_multi_bytes.b                  = 1;  // indicate it is multi byte
             telemetry_multi_bytes.encoded_length     = 0;
             telemetry_multi_bytes.multi_bytes_length = array_size;
+            const auto admit = admit_record(sizeof(telemetry_multi_bytes) + array_size);
+            if (admit != Admit::Store) {
+                return admit == Admit::Skip;
+            }
             ret = copy_into_data(&telemetry_multi_bytes, sizeof(telemetry_multi_bytes))
                && copy_into_data(&value, array_size) && ++_elements;
         }
@@ -599,8 +624,10 @@ public:
 
     void rewind()
     {
-        _offset   = 0;
-        _elements = 0;
+        _offset          = 0;
+        _elements        = 0;
+        _current_segment = 0;
+        _segment_used    = 0;
     }
 
     void*    data() const { return _data; }
@@ -676,10 +703,53 @@ protected:
     }
 
 private:
+    enum class Admit : uint8_t
+    {
+        Store,   // record belongs to the selected segment
+        Skip,    // record belongs to another segment
+        Reject,  // record does not fit in a segment
+    };
+
+    /**
+     * @brief Places a record of @a record_size bytes in the current segment, or opens the
+     *        next one when it does not fit. Always Store when segmented mode is off.
+     */
+    Admit admit_record(uint16_t record_size)
+    {
+        if (!_segmented) {
+            return Admit::Store;
+        }
+        if (record_size > _size) {
+            return Admit::Reject;
+        }
+        if ((_segment_used + record_size) > _size) {
+            if (_current_segment == MaxSegmentId) {
+                return Admit::Reject;
+            }
+            ++_current_segment;
+            _segment_used = 0;
+        }
+        _segment_used = static_cast<uint16_t>(_segment_used + record_size);
+        return (_current_segment == _target_segment) ? Admit::Store : Admit::Skip;
+    }
+
+    bool add_record(const void* record, uint16_t record_size)
+    {
+        const auto admit = admit_record(record_size);
+        if (admit != Admit::Store) {
+            return admit == Admit::Skip;
+        }
+        return copy_into_data(record, record_size) && ++_elements;
+    }
+
     size_t   _size;
     uint16_t _offset;
     uint8_t* _data;
     uint16_t _elements;
+    bool     _segmented{false};
+    uint8_t  _target_segment{0};
+    uint8_t  _current_segment{0};
+    uint16_t _segment_used{0};
 };
 
 class TelemetryRecordArrayBuffer : public TelemetryRecordArray
@@ -748,22 +818,6 @@ struct [[gnu::packed]] RespAggregate
         tag_security_ver_num_slot1;
     TelemetryRecord<power_of_two(RotTagLength::TagSigningKeyIndexLen)>
         tag_signing_key_index_slot1;
-};
-
-struct [[gnu::packed]] SlotSpecificSegment
-{
-    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareSlotIdLen)> tag_firmware_slot_id;
-    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareVerStringLen)>
-        tag_firmware_ver_string;
-    TelemetryRecord<power_of_two(RotTagLength::TagVerComparisonStampLen)>
-                                                                   tag_ver_comparison_stamp;
-    TelemetryRecord<power_of_two(RotTagLength::TagBuildTypeLen)>   tag_build_type;
-    TelemetryRecord<power_of_two(RotTagLength::TagSigningTypeLen)> tag_signing_type;
-    TelemetryRecord<power_of_two(RotTagLength::TagWriteProtectStateLen)>
-                                                                       tag_write_protect_state;
-    TelemetryRecord<power_of_two(RotTagLength::TagFirmwareStateLen)>   tag_firmware_state;
-    TelemetryRecord<power_of_two(RotTagLength::TagSecurityVerNumLen)>  tag_security_ver_num;
-    TelemetryRecord<power_of_two(RotTagLength::TagSigningKeyIndexLen)> tag_signing_key_index;
 };
 
 // Request Mesage Header V1
@@ -1512,6 +1566,7 @@ protected:
     void on_plat_env_getTemperatureReading(const Packet& rx, Packet& tx);
     void on_plat_env_getPowerDraw(const Packet& rx, Packet& tx);
     void on_plat_env_getVoltage(const Packet& rx, Packet& tx);
+    void on_plat_env_getCurrent(const Packet& rx, Packet& tx);
     void on_plat_env_getInventoryInformation(const Packet& rx, Packet& tx);
     void on_plat_env_setThermalParameter(const Packet& rx, Packet& tx);
     void on_plat_env_getThermalParameter(const Packet& rx, Packet& tx);
@@ -1527,7 +1582,6 @@ protected:
     void on_dev_diag_enable_disable_write_protection(const Packet& rx, Packet& tx);
     void on_dev_diag_get_device_hsc_alert(const Packet& rx, Packet& tx);
     void on_dev_diag_clear_hsc_faults(const Packet& rx, Packet& tx);
-    void on_dev_diag_get_cpld_register_table(const Packet& rx, Packet& tx);
 
     // Type 4 Debug Token
     bool process_debugtoken_diagnostics(const Packet& rx, Packet& tx);
@@ -1548,7 +1602,7 @@ protected:
     void on_dev_cfg_set_gpu_degrade_mode(const Packet& rx, Packet& tx);
     void on_dev_cfg_enable_disable_power_supply(const Packet& rx, Packet& tx);
     bool get_gpio_default_value(uint16_t gpio_index, uint8_t& pin_value);
-    void notifyIoxSpoofingState(bool spoofingActive);
+    void notifyGpioSpoofingState(bool spoofingActive);
 
     void on_dev_cfg_get_sma_baseboard_settings(const Packet& rx, Packet& tx);
     void on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx);
@@ -1559,30 +1613,22 @@ protected:
     Ccode handle_get_ncsi_mac(NsmPktResp& ntx);
     // Type 6
     void get_rot_state_info(const Packet& rx, Packet& tx);
-    void get_ap_rot_state_info(const Packet& rx, Packet& tx, const uint16_t& component_id);
     void on_get_rot_state_info(const Packet& rx, Packet& tx);
     void query_auth_key(const Packet& rx, Packet& tx);
-    void query_ap_auth_key(const Packet& rx, Packet& tx);
     void on_query_auth_key(const Packet& rx, Packet& tx);
     void query_image_copy_progress(const Packet& rx, Packet& tx);
     void initiate_image_copy(const Packet& rx, Packet& tx);
     void on_image_copy_control(const Packet& rx, Packet& tx);
     void update_auth_key(const Packet& rx, Packet& tx, const UpdateAuthKeyReq& update_struct);
-    void
-    update_ap_auth_key(const Packet& rx, Packet& tx, const UpdateAuthKeyReq& update_struct);
     void on_update_auth_key(const Packet& rx, Packet& tx);
     bool is_irreversible_ctrl_enabled();
     void disable_irreversible_ctrl();
     void on_ctrl_irreversible_conf(const Packet& rx, Packet& tx);
     void query_sec_ver_num(const Packet& rx, Packet& tx);
-    void query_ap_sec_ver_num(const Packet& rx, Packet& tx);
     void on_query_sec_ver_num(const Packet& rx, Packet& tx);
     void on_query_fw_comp_id(const Packet& rx, Packet& tx);
     void
     update_min_sec_ver_num(const Packet& rx, Packet& tx, const UpdateMinSvnReq& update_struct);
-    void update_ap_min_sec_ver_num(const Packet&          rx,
-                                   Packet&                tx,
-                                   const UpdateMinSvnReq& update_struct);
     void on_update_min_sec_ver_num(const Packet& rx, Packet& tx);
     bool process_firmware(const Packet& rx, Packet& tx);
     // Type FF - NVIDIA Internal
@@ -1646,40 +1692,28 @@ protected:
     bool     is_input_length_valid(const Packet& rx, uint8_t size);
     bool     can_revoke_otp(Rcode& reason_code);
     bool     can_initiate_image_copy(Ccode& completion_code, Rcode& reason_code);
-    bool     can_initiate_ap_image_copy(const nv::vrot::ApInfo& ap,
-                                        Ccode&                  completion_code,
-                                        Rcode&                  reason_code);
     void     get_redundancy_policy(NsmRedundancyPolicy& redundancy_policy_persistent,
                                    NsmRedundancyPolicy& redundancy_policy_current);
-    Ccode    can_revoke_ap_otp();
     bool     is_inactive_authenticate(uint8_t inactive_slot);
     bool     is_active_slot(uint8_t slot);
     uint8_t  get_inactive_fw_state();
-    uint8_t  get_ap_state();
     uint32_t array_to_u32(std::array<uint8_t, 4>& buffer);
     uint8_t  get_inactive_slot();
     uint32_t convert_unary_to_key_index(uint32_t unary_value);
     bool     is_form_zeros_then_ones(uint32_t num);
     Ccode    convert_key_index_to_key_permission(uint16_t key_index, uint32_t& key_permission);
     Ccode    fill_key_index(uint8_t slot, uint16_t& key_index);
-    Ccode    fill_ap_key_index(uint16_t& key_index);
     Ccode    fill_fmc_key_index(uint16_t& key_index);
     Ccode    fill_key_permission(uint8_t slot, uint32_t& key_permission);
-    Ccode    fill_ap_key_permission(uint32_t& key_permission);
     Ccode    fill_fmc_key_permission(uint32_t& key_permission);
     Ccode    fill_fuse_key_permission(uint32_t& key_permission);
-    Ccode    fill_ap_fuse_key_permission(uint32_t& key_permission);
     Ccode    fill_sec_ver_num(uint8_t slot, uint32_t& rollback_protection);
-    Ccode    fill_ap_sec_ver_num(uint32_t& rollback_protection);
     Ccode    fill_fmc_sec_ver_num(uint32_t& rollback_protection);
     Ccode    fill_fuse_mini_sec_ver_num(uint32_t& rollback_protection);
-    Ccode    fill_ap_fuse_mini_sec_ver_num(uint32_t& rollback_protection);
     Ccode    revoke_rollback_protection(uint32_t rollback_protection);
-    Ccode    revoke_ap_rollback_protection(uint32_t rollback_protection);
     uint8_t  fill_signing_type(uint8_t index);
     void     fill_boot_status_code(std::array<uint8_t, 8>& input);
     Ccode    revoke_key_permission(uint32_t key_permission);
-    Ccode    revoke_ap_key_permission(uint32_t key_permission);
 
     Control&                                              _ctl;
     bool                                                  irreversible_input_received  = false;

@@ -22,7 +22,6 @@
 #include "nv/flash/common.h"
 #include "nv/flash/datastore.h"
 #include "nv/ipc/queue.h"
-#include "nv/secure_boot/authenticate_data.h"
 namespace nv::flash {
 
 class Flash
@@ -49,15 +48,6 @@ public:
     static Status set_data(Key                   key,
                            const Data&           data,
                            nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
-
-    static Status
-    get_ap_fw_authenticate_data(nv::secure_boot::AuthenticateData& authenticate_data,
-                                Key                                key,
-                                nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
-    static Status
-    set_ap_fw_authenticate_data(const nv::secure_boot::AuthenticateData& authenticate_data,
-                                Key                                      key,
-                                nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());
 
     static Status get_data_from_kernel(Key key, Data& data);
 

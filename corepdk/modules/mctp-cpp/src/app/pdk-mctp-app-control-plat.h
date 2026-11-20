@@ -25,7 +25,20 @@
 
 namespace pdk::mctp::platforms {
 void on_enumerate_plat();
-void on_routing_info_update_plat(uint8_t requester_eid,
-                                 uint8_t requester_interface,
-                                 uint8_t update_eid);
+// Called once after a Routing Information Update request has been processed and
+// at least one entry was stored. `update_eid` is the last entry stored: the
+// strict handler applies exactly one per request, while the tolerant one may
+// apply several and leaves the full result in the routing table.
+void    on_routing_info_update_plat(uint8_t requester_eid,
+                                    uint8_t requester_interface,
+                                    uint8_t update_eid);
+bool    should_allocate_downstream_pool(uint8_t packet_interface);
+uint8_t get_upstream_routing_index(uint8_t packet_interface);
+uint8_t get_reported_eid_pool_size(uint8_t packet_interface);
+// EID that downstream routing slot `index` must be assigned, given the start EID of the
+// pool its bus owner allocated. The slot index alone is not the offset on products that
+// bridge a second upstream domain: those reserve leading EIDs of the pool for bridge
+// aliases. Both the allocate-time pre-fill and the Set Endpoint ID path resolve the EID
+// through here so they can never disagree.
+uint8_t get_downstream_pool_eid(uint8_t start_eid, uint8_t index);
 }  // namespace pdk::mctp::platforms

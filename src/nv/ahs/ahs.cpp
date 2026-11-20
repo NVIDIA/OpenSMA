@@ -34,11 +34,13 @@ constexpr static bool EnablePerstLMonitoring = ENABLE_PERST_MONITORING ? true : 
 // 1-channel/1-drive - PX90E (Orchid CX9)
 // 1-channel/8-drive - Single VPP supporting all 8 drives (not likely to be used).
 // 1-channel/4-drive - Single VPP supporting 4 drives (P9357-C00 testing only)
+// 1-channel/5-drive - Single VPP supporting 5 drives (P4514)
 // 2-channel/4-drive - Dual VPP (MCIO0/MCIO2) supporting 4 drives each (P9357-C01)
 // 4-channel/2-drive - Quad VPP (MCIO0/MCIO1/MCIO2/MCIO3) supporting 2 drives each
 // (P9357-C00/B00??)
 static_assert((nv::nhp::NumNhpInstances == 1U && nv::nhp::NumE1sDrives == 1U)
                   || (nv::nhp::NumNhpInstances == 1U && nv::nhp::NumE1sDrives == 4U)
+                  || (nv::nhp::NumNhpInstances == 1U && nv::nhp::NumE1sDrives == 5U)
                   || (nv::nhp::NumNhpInstances == 1U && nv::nhp::NumE1sDrives == 8U)
                   || (nv::nhp::NumNhpInstances == 2U && nv::nhp::NumE1sDrives == 4U)
                   || (nv::nhp::NumNhpInstances == 4U && nv::nhp::NumE1sDrives == 2U),
@@ -113,8 +115,10 @@ AHS::AHS(const AhsConfig& config, nv::ipc::Event* hotSwapEvent)
     // Initialize the I2C devices
     for (uint8_t gpioIndex = 0; gpioIndex < NumGpioExpanders; gpioIndex++) {
         e1s_gpio_expanders.at(gpioIndex).emplace(0x0000, 0x0000, InputPinMask);
-        auto const num_drives = (nhp::NumE1sDrives == 1U) ? IO_EXPANDER_ONE_SSD
-                                                          : IO_EXPANDER_TWO_SSD;
+        // An expander hosts two SSDs (banks 0 and 1) unless it is the last one of an
+        // odd drive count, in which case only bank 0 is populated.
+        auto const hasSecondDrive = ((gpioIndex * 2U) + 1U) < nhp::NumE1sDrives;
+        auto const num_drives     = hasSecondDrive ? IO_EXPANDER_TWO_SSD : IO_EXPANDER_ONE_SSD;
         ahs_eeproms.at(gpioIndex).emplace(ahs_io_expander_addresses.at(gpioIndex), num_drives);
     }
 

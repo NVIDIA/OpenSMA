@@ -71,7 +71,7 @@ Event::Status Event::set(Bits bits, CoreId dest_core)
             xEventGroupSetBits(handle(), bits);
         }
     }
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_event_data(_id, true, bits);
         if (status != nv::ipc::task::Status::Ok) {
             return Status::CommunicationFailed;
@@ -94,7 +94,7 @@ Event::Status Event::clear(Bits bits)
             xEventGroupClearBits(handle(), bits);
         }
     }
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_event_data(_id, false, bits);
         if (status != nv::ipc::task::Status::Ok) {
             return Status::CommunicationFailed;

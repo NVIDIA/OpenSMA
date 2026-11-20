@@ -24,10 +24,11 @@
 #include "nv/i2c/eeprom_cache.h"
 #include "nv/i2c/i2c_forward.h"
 #include "nv/i2c/port.h"
+#include "nv/i2c/queue_map.h"
 #include "nv/i2c/recovery.h"
-#include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/ipc/timer.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/router.h"
@@ -59,8 +60,6 @@ public:
         nv::ipc::TaskId          task_id;
         std::string_view         task_name;
         nv::mctp::Client         client;
-        nv::ipc::EventId         event_id;
-        nv::ipc::QueueId         queue_id;
         Port                     port_id;
         uint8_t                  target_addr;
         nv::ipc::BootedEventBits boot_event;
@@ -89,11 +88,11 @@ public:
         // whose device/LSTP/recovery address is 0x62 but whose recovery-mode indicator (the
         // probe target) is 0x63; keeping them separate leaves recovery/TX on 0x62 untouched.
         uint8_t ap_probe_addr;
+        // Task that owns emulation devices, used for SlaveFunction::Emulation
+        nv::ipc::TaskId emul_task_id;
         constexpr Config(nv::ipc::TaskId          task_id_,
                          std::string_view         task_name_,
                          nv::mctp::Client         client_,
-                         nv::ipc::EventId         event_id_,
-                         nv::ipc::QueueId         queue_id_,
                          Port                     port_id_,
                          uint8_t                  target_addr_,
                          nv::ipc::BootedEventBits boot_event_,
@@ -103,12 +102,11 @@ public:
                          nv::mctp::Client ap_status_client_        = nv::mctp::Client::End,
                          bool             plain_status_probe_      = false,
                          bool             probe_ack_is_down_       = false,
-                         uint8_t          ap_probe_addr_           = 0)
+                         uint8_t          ap_probe_addr_           = 0,
+                         nv::ipc::TaskId  emul_task_id_            = nv::ipc::TaskId::End)
         : task_id(task_id_)
         , task_name(task_name_)
         , client(client_)
-        , event_id(event_id_)
-        , queue_id(queue_id_)
         , port_id(port_id_)
         , target_addr(target_addr_)
         , boot_event(boot_event_)
@@ -119,10 +117,11 @@ public:
         , plain_status_probe(plain_status_probe_)
         , probe_ack_is_down(probe_ack_is_down_)
         , ap_probe_addr(ap_probe_addr_)
+        , emul_task_id(emul_task_id_)
         {}
     };
 
-    enum Event : nv::ipc::Event::Bits
+    enum Event : nv::ipc::TaskNotify::Bits
     {
         CtrlDone          = 1_bit,
         CtrlBusBusy       = 2_bit,
@@ -137,12 +136,6 @@ public:
         CtrlNoTransfer    = 11_bit,
     };
 
-    static constexpr auto CtrlWaitEvents = Event::CtrlDone | Event::CtrlBusBusy | Event::CtrlNak
-                                         | Event::CtrlArbLost | Event::CtrlError
-                                         | Event::CtrlTimeout | Event::CtrlFifoError
-                                         | Event::CtrlBitError | Event::CtrlPinLowTimeout
-                                         | Event::CtrlDmaError | Event::CtrlNoTransfer;
-
     enum class RequestType : uint16_t
     {
         MctpRx,
@@ -155,9 +148,9 @@ public:
         I2cResponse,
         I2cRecovery,
         CheckApStatus,
-        I2cLoopbackTest,
         EepromUpdate,
-        CheckTargetTimeout
+        CheckTargetTimeout,
+        VrFaultDump
     };
 
     enum class Status
@@ -184,11 +177,11 @@ public:
     static void         eeprom_update(nv::ipc::Timer& timer);
     static Task::Status wdt_notify(nv::watchdog::TaskMonitorIndex taskId);
     static Task::Status send_recovery_request(RecoveryCmd cmd, mctp::Client client);
+    /// Safe to call from ISR context. The owning task runs poll_vr_fault_dump() for its port.
+    static Task::Status send_vr_fault_dump(nv::ipc::QueueId queue_id);
     static void         check_ap_status(nv::ipc::Timer& timer);
     static void         check_target_timeout(nv::ipc::Timer& timer);
     static void         repeated_start_timeout(nv::ipc::Timer& timer);
-    static void         request_i2c_loopback_test();
-    static void         stop_polling_timers();
     static bool         to_i2c(ipchandler::Id    src_id,
                                uint8_t           address,
                                ipchandler::Id    i2c_ipchandler_id,
@@ -196,6 +189,8 @@ public:
                                uint16_t          read_length,
                                I2cFlags          flags,
                                ipc::Queue::Item& item);
+
+    static bool to_i2c_recovery(ipchandler::Id src_id, ipchandler::Id i2c_ipchandler_id);
 
     static bool to_i2c_from_isr(ipchandler::Id    src_id,
                                 uint8_t           address,
@@ -257,8 +252,7 @@ private:
     RoutingTable                        _routing_table{};
     nv::mctp::Client                    _client;
     nv::mctp::Client                    _ap_status_client;
-    nv::ipc::Event&                     _event;
-    nv::ipc::Queue&                     _queue;
+    nv::ipc::QueueId                    _queue_id;  // Primary queue
     Port                                _port;
     sys::i2c::Driver                    _driver;
     std::array<uint8_t, UINT8_MAX + 1U> _eid_addr_map;
@@ -268,6 +262,7 @@ private:
     nv::ipc::Timer                      _repeated_start_timer;
     nv::ipc::Timer                      _target_timeout_timer;
     nv::ipchandler::Id                  _ipchandler_id;
+    bool                                _has_slave_function{false};
     APStatus                            _ap_status{APStatus::Querying};
     // Consecutive failed I2C probes required before declaring the AP down. Debounces
     // transient NAKs since the probe bus (I2C) differs from the EROT data path (SPI).
@@ -296,6 +291,12 @@ private:
     // this so it can never drive a START into a half-finished LSTP block/repeated-start.
     bool _bus_idle{true};
 
+    static nv::ipc::Queue::Status
+    send_request(nv::ipc::QueueId      queue_id,
+                 const Request&        request,
+                 nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max(),
+                 bool                  is_isr  = false);
+
     void handle_rx(std::span<uint8_t> buffer);
     void handle_tx(std::span<uint8_t> buffer, uint16_t additional_info);
     void handle_update_sensor(std::span<uint8_t> buffer);
@@ -317,7 +318,6 @@ private:
                                      size_t             read_len);
     void handle_i2c_response(std::span<uint8_t> buffer);
     void handle_i2c_recovery(std::span<uint8_t> buffer);
-    void handle_i2c_loopback_test();
 
     I2cStatus smbus_block_read_wrapper(uint8_t            address,
                                        std::span<uint8_t> write_buffer,
@@ -329,6 +329,9 @@ private:
                       std::span<uint8_t> read_buffer,
                       I2cFlags           flags,
                       size_t&            read_len);
+    /// After a successful xfer: keep the bus held (restart the repeated-start
+    /// timer) or mark it idle. Errors are returned unchanged.
+    I2cStatus hold_or_idle(I2cStatus status, I2cFlags flags);
     I2cStatus wait_for_i2c_completion();
     void      handle_ap_status(APStatus set_status);
     // True for the decoupled EROT-style liveness probe: a dedicated probe address
@@ -381,7 +384,10 @@ struct TaskWithCache
 template<Port PortId>
 static void make_task_by_port(Task::Config config)
 {
-    constexpr auto i2c_task_stack_size = nv::lstp::EnableI2c ? 640 : 480;
+    // leave ~232/~208 bytes of margin above the worst-case observed stack usage
+    constexpr auto i2c_task_stack_size = (nv::lstp::EnableI2c && !nv::lstp::I2cSmallBuffer)
+                                           ? 864
+                                           : 672;
     constexpr auto StackSize = std::max(i2c_task_stack_size, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     if constexpr (nv::ipc::EnableEepromBridge) {
@@ -400,22 +406,11 @@ static void make_task_by_port(Task::Config config)
     }
 }
 
-/// Map MCTP I2C client to the IPC queue for that downstream / US I2C task.
-constexpr inline nv::ipc::QueueId client_to_i2c_queue_id(nv::mctp::Client client)
-{
-    using namespace nv::ipc;
-    switch (client) {
-        case nv::mctp::Client::UsI2c : return QueueId::I2c0;
-        case nv::mctp::Client::DsI2c0: return QueueId::I2c1;
-        case nv::mctp::Client::DsI2c1: return QueueId::I2c2;
-        case nv::mctp::Client::DsI2c2: return QueueId::I2c3;
-        case nv::mctp::Client::DsI2c3: return QueueId::I2c4;
-        case nv::mctp::Client::DsI2c4: return QueueId::I2c5;
-        case nv::mctp::Client::DsI2c5: return QueueId::I2c6;
-        case nv::mctp::Client::DsI2c6: return QueueId::I2c7;
-        case nv::mctp::Client::DsI2c7: return QueueId::I2c8;
-        default                      : return QueueId::End;
-    }
-}
+void on_ap_status_endpoint_change(uint8_t endpoint_index, uint8_t status);
+
+/// Called by the task that owns `port` when it handles a VrFaultDump request, so VR controller
+/// reads stay serialized with LSTP traffic on that bus. `bus_idle` is false while a transfer is
+/// held open with NoStop or after a failed transfer. Weak no-op by default.
+void poll_vr_fault_dump(Port port, bool bus_idle);
 
 }  // namespace nv::i2c

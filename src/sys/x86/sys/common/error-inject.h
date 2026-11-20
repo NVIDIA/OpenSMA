@@ -28,6 +28,9 @@ public:
     [[noreturn]] [[maybe_unused]] static void trigger_SecureFault(void);
     [[noreturn]] [[maybe_unused]] static void trigger_WatchdogReset(void);
     [[noreturn]] [[maybe_unused]] static void trigger_MemManageFault(void);
+    // No-op on the x86 posix build (no SSP/__stack_chk_fail path under test); kept for parity
+    // with the target error-inject headers.
+    [[maybe_unused]] static void trigger_StackCheckFail(void);
 };
 
 }  // namespace sys::common

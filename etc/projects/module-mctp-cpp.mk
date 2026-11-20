@@ -41,6 +41,10 @@ else
 	MCTP_CPP_MODULE_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/mctp-cpp/src
   else ifeq ($(PLATFORM), mcxn556-core1)
 	MCTP_CPP_MODULE_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/mctp-cpp/src
+  else ifeq ($(PLATFORM), mcxn557-core0)
+	MCTP_CPP_MODULE_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/mctp-cpp/src
+  else ifeq ($(PLATFORM), mcxn557-core1)
+	MCTP_CPP_MODULE_PLATFORM_SPECIFIC_PATH := corepdk/platforms/mcxn236/mctp-cpp/src
   else
   	$(ubs-fatal) "Platform $(PLATFORM) is not supported"
   endif

@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #include "nv/ipchandler/ipchandler.h"
+#include "nv/i2c/queue_map.h"
 #include "nv/logger/log.h"
 using namespace nv;
 using namespace ipchandler;
@@ -55,27 +56,30 @@ Status Driver::handler(const Header hdr, nv::ipc::Queue::Item item)
     auto status = Status::Success;
 
     switch (hdr.dst_id) {
-        case Id::I3c0:
-            status = to_i3c(item, nv::i3c::Task::GetQueueFromIpchandlerId<Id::I3c0>());
+        case Id::I3c0  : status = to_i3c(item, nv::ipc::QueueId::I3c0); break;
+        case Id::I3c1  : status = to_i3c(item, nv::ipc::QueueId::I3c1); break;
+        case Id::I2c0  :
+        case Id::I2c1  :
+        case Id::I2c2  :
+        case Id::I2c3  :
+        case Id::I2c4  :
+        case Id::I2c5  :
+        case Id::I2c6  :
+        case Id::I2c7  :
+        case Id::I2c8  :
+        case Id::I2c9  :
+        case Id::VrI2c0:
+        case Id::VrI2c1: {
+            const auto queue_id = nv::i2c::ipchandler_to_i2c_queue(hdr.dst_id);
+            if (queue_id == nv::ipc::QueueId::End) {
+                return Status::UnknownTask;
+            }
+            status = to_i2c(item, queue_id);
             break;
-        case Id::I3c1:
-            status = to_i3c(item, nv::i3c::Task::GetQueueFromIpchandlerId<Id::I3c1>());
-            break;
-        case Id::I2c0  : status = to_i2c(item, nv::ipc::QueueId::I2c0); break;
-        case Id::I2c1  : status = to_i2c(item, nv::ipc::QueueId::I2c1); break;
-        case Id::I2c2  : status = to_i2c(item, nv::ipc::QueueId::I2c2); break;
-        case Id::I2c3  : status = to_i2c(item, nv::ipc::QueueId::I2c3); break;
-        case Id::I2c4  : status = to_i2c(item, nv::ipc::QueueId::I2c4); break;
-        case Id::I2c5  : status = to_i2c(item, nv::ipc::QueueId::I2c5); break;
-        case Id::I2c6  : status = to_i2c(item, nv::ipc::QueueId::I2c6); break;
-        case Id::I2c7  : status = to_i2c(item, nv::ipc::QueueId::I2c7); break;
-        case Id::I2c8  : status = to_i2c(item, nv::ipc::QueueId::I2c8); break;
-        case Id::I2c9  : status = to_i2c(item, nv::ipc::QueueId::I2c9); break;
-        case Id::VrI2c0: status = to_i2c(item, nv::ipc::QueueId::VrI2c0); break;
-        case Id::VrI2c1: status = to_i2c(item, nv::ipc::QueueId::VrI2c1); break;
-        case Id::Usb   : status = to_usb(item); break;
-        case Id::Pldm  : status = to_pldm(item); break;
-        default        : return Status::UnknownTask;
+        }
+        case Id::Usb : status = to_usb(item); break;
+        case Id::Pldm: status = to_pldm(item); break;
+        default      : return Status::UnknownTask;
     }
 
     return status;

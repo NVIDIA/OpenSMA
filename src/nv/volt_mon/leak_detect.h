@@ -46,7 +46,7 @@ namespace nv {
 // Forward declaration - only volt_mon::init() may call module init()
 namespace volt_mon {
 void init(bool, bool, bool, bool);
-void init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
+void init(nv::ipc::TimerId timerId, std::chrono::microseconds period, bool init_leak_detect);
 }  // namespace volt_mon
 
 namespace leak_detect {
@@ -58,6 +58,20 @@ constexpr Threshold Hysteresis   = to_adc_value(HysteresisMv);
 
 constexpr uint8_t PdsLeakDetMaxSlots       = 4;
 constexpr uint8_t PdsLeakDetEntriesPerSlot = 2;
+
+/**
+ * @brief Read the board strap that arms leak-detect outputs.
+ *
+ * The return value is not the strap level. Only handle_runtime_strap() calls this.
+ * The timer implementation provides a weak default.
+ *
+ * @param[out] enabled Strap level when the project follows a runtime strap.
+ *                     Unused when the function returns false.
+ * @return false This project does not follow a runtime strap.
+ *               handle_runtime_strap() leaves enabled_ as init() set it.
+ * @return true  @p enabled is the strap level (true = armed).
+ */
+bool read_runtime_strap(bool& enabled);
 
 /**
  * @brief Leak detection driver class
@@ -187,7 +201,9 @@ public:
     void clear_error_injection();
 
 private:
-    friend void nv::volt_mon::init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
+    friend void nv::volt_mon::init(nv::ipc::TimerId          timerId,
+                                   std::chrono::microseconds period,
+                                   bool                      init_leak_detect);
 
     /**
      * @brief Initialize the leak detection system
@@ -210,7 +226,7 @@ private:
     // Status
     bool alertActive;
 
-    // Runtime enable/disable flag
+    // Runtime enable/disable flag. Strap-following projects update this after init.
     bool enabled_ = true;
 
     // GPIO states
@@ -234,6 +250,17 @@ private:
      * @return true if successful, false otherwise
      */
     void initialize_hardware_gpio();
+
+    /**
+     * @brief Apply the runtime strap to leak-detect outputs.
+     *
+     * Called from init() and process_reading(). read_runtime_strap() writes enabled_.
+     * A false return leaves enabled_ unchanged.
+     *
+     * On the falling edge, vGPIO is published as Open (0b11) and each sensor state is
+     * set to Invalid. The next armed sample then follows the normal state-transition path.
+     */
+    void handle_runtime_strap();
 
     /**
      * @brief Check thresholds for sensor

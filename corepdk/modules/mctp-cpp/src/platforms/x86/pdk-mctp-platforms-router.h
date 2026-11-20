@@ -35,6 +35,10 @@ struct ShardRoutingTable
     bool      is_set_eid_sent;
     uint8_t   assigned_eid;
     Interface client;
+    // Kept in sync with the mcxn236 platform's entry: shared code references
+    // this field outside any template, so it must exist even where the CPU
+    // bridge is disabled.
+    uint8_t bridge_real_eid{};
 };
 
 struct RoutingTableEntry

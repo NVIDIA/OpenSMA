@@ -15,6 +15,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <span>
+
 #include "sys/watchdog/wwdt_driver.h"
 #include "nv/ipc/timer.h"
 #include "nv/watchdog/notify_interface.h"
@@ -36,5 +38,14 @@ public:
     static bool               is_reset(nv::bootloader::Driver::ImageIndex index);
     static constexpr uint32_t RetryThreshold = 2;
 };
+
+/**
+ * Tasks the runtime watchdog expects to check in.
+ *
+ * The weak default is the project's nv::ipc::TaskMonitorList. A multi-product image
+ * overrides this so only tasks the strap-selected product actually creates are
+ * monitored; a monitored-but-absent task would stall the watchdog feed.
+ */
+std::span<const TaskMonitorIndex> project_task_monitor_list();
 
 }  // namespace nv::watchdog

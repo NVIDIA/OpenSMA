@@ -41,7 +41,9 @@
 #endif
 #endif
 #if ((defined(USB_CONFIG_LSTP)) && (USB_CONFIG_LSTP > 0U))
+#ifndef USB_DEVICE_CONFIG_VENDOR_SPECIFIC
 #define USB_DEVICE_CONFIG_VENDOR_SPECIFIC (1U)
+#endif
 #endif
 #endif
 #if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)                           \
@@ -53,9 +55,18 @@
 #define USB_DEVICE_CONFIG_CDC_ACM (1U)
 #endif
 #endif
-#define USB_DEVICE_CONFIG_MCTP          (1U)
-#define USB_DEVICE_CONFIG_KHCI          (0U)  // full speed usb driver (12Mbps)
-#define USB_DEVICE_CONFIG_EHCI          (1U)  // high speed usb driver (480Mbps)
+#ifndef USB_CONFIG_KHCI_MCTP
+#define USB_CONFIG_KHCI_MCTP (0U)
+#endif
+
+/* The optional KHCI MCTP port is a second USB device instance. */
+#ifndef USB_DEVICE_CONFIG_MCTP
+#define USB_DEVICE_CONFIG_MCTP (1U + USB_CONFIG_KHCI_MCTP)
+#endif
+#define USB_DEVICE_CONFIG_KHCI (USB_CONFIG_KHCI_MCTP)  // full speed (12Mbps)
+#ifndef USB_DEVICE_CONFIG_EHCI
+#define USB_DEVICE_CONFIG_EHCI (1U)  // high speed usb driver (480Mbps)
+#endif
 #define USB_DEVICE_CONFIG_LPCIP3511FS   (0U)
 #define USB_DEVICE_CONFIG_LPCIP3511HS   (0U)
 #define USB_DEVICE_CONFIG_REMOTE_WAKEUP (1U)
@@ -81,6 +92,7 @@
 #endif
 #endif
 #if defined(USB_DEVICE_CONFIG_KHCI) && (USB_DEVICE_CONFIG_KHCI > 0U)
+#define USB_DEVICE_CONFIG_KHCI_DMA_ALIGN_BUFFER_LENGTH (64U)
 #ifndef CONTROLLER_ID
 #define CONTROLLER_ID kUSB_ControllerKhci0
 #endif

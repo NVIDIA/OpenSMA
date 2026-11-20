@@ -24,6 +24,7 @@
 #include "nv/logger/log.h"
 #include "nv/nv.h"
 
+#include "nv/gpio/driver.h"
 #include "nv/iox/task.h"
 
 namespace nv::busbar_temp {
@@ -121,6 +122,19 @@ void BusbarTemp::update_virtual_gpio(uint8_t sensorIdx, VrGpioState state)
             nv::logger::error_no_wait(
                 nv::logger::Event::BusbarTempVrgpioUpdateFail,
                 {sensorIdx, _sensor.ioxAddr, _sensor.ioxPin.at(0), static_cast<uint8_t>(state)},
+                nv::logger::OutputDirection::Flash);
+        }
+    }
+    else if constexpr (nv::ipc::EnableLstp) {
+        // LSTP virtual GPIO: pin index lives in ioxPin (see project busbar config).
+        auto&         _sensor = sensor.at(sensorIdx);
+        const uint8_t pinVal  = (state == VrGpioState::Nominal) ? uint8_t{0} : uint8_t{1};
+        const auto    status  = nv::gpio::Driver::write_virtual_physical_gpio(
+            nv::gpio::vrPort, _sensor.ioxPin.at(0), pinVal);
+        if (status != nv::gpio::Status::Ok) {
+            nv::logger::error_no_wait(
+                nv::logger::Event::BusbarTempVrgpioUpdateFail,
+                {sensorIdx, 0xff, _sensor.ioxPin.at(0), static_cast<uint8_t>(state)},
                 nv::logger::OutputDirection::Flash);
         }
     }

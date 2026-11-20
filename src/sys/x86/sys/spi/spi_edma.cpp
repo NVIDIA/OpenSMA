@@ -23,8 +23,7 @@
 using namespace nv;
 using namespace sys::spi;
 
-void EdmaDriver::bind([[maybe_unused]] nv::spi::Flexcomm flexcomm,
-                      [[maybe_unused]] nv::ipc::TaskId   task_id)
+void EdmaDriver::bind([[maybe_unused]] nv::spi::Flexcomm flexcomm)
 {
     return;
 }
@@ -34,7 +33,8 @@ void EdmaDriver::init()
     return;
 }
 
-sys::spi::Status EdmaDriver::sendRecv([[maybe_unused]] uint32_t                 send_len,
+sys::spi::Status EdmaDriver::sendRecv([[maybe_unused]] nv::ipc::TaskId recipient_task_id,
+                                      [[maybe_unused]] uint32_t        send_len,
                                       [[maybe_unused]] const std::span<uint8_t> sbuf,
                                       [[maybe_unused]] uint32_t                 recv_len,
                                       [[maybe_unused]] std::span<uint8_t>       rbuf)

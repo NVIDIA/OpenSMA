@@ -16,12 +16,30 @@
  * limitations under the License.
  */
 #pragma once
+#include <bitset>
 #include <chrono>
+#include <cstddef>
+#include <initializer_list>
 #include <stdint.h>
 
 #include "nv/common/literals.h"
 
 namespace nv::i2c {
+
+constexpr size_t NumI2cAddresses = 128;
+
+using AddressMask = std::bitset<NumI2cAddresses>;
+
+constexpr AddressMask AllAddressesMask = AddressMask{}.set();
+
+constexpr AddressMask address_mask(std::initializer_list<uint8_t> addresses)
+{
+    AddressMask mask;
+    for (const uint8_t address : addresses) {
+        mask.set(address);
+    }
+    return mask;
+}
 
 uint8_t constexpr SmbusBlockReadLength = 32;
 
@@ -29,7 +47,8 @@ constexpr auto RepeatedStartTimeoutMs = std::chrono::milliseconds(500);
 
 enum class I2cStatus : uint8_t
 {
-    Ok,
+    Begin = 0,
+    Ok    = Begin,
     Error,
     Busy,
     Nak,
@@ -42,6 +61,7 @@ enum class I2cStatus : uint8_t
     DmaError,
     NoTransfer,
     TargetRxError,
+    End
 };
 
 enum class I2cQueueError : uint8_t

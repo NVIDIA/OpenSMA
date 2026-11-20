@@ -21,6 +21,7 @@
 #include <concepts>
 #include <type_traits>
 
+#include "nv/i2c/common.h"
 #include "nv/mctp/control.h"
 #include "nv/mctp/enums.h"
 #include "nv/mctp/interface.h"
@@ -55,12 +56,10 @@ protected:
     bool on_register_table_access(const Packet& rx, Packet& tx);
     void on_add_ext_timestamp(const Packet& rx, Packet& tx);
     void on_scan_i2c(const Packet& rx, Packet& tx) const;
-    void on_ap_provision(const Packet& rx, Packet& tx) const;
-    void on_query_ap_provision_status(const Packet& rx, Packet& tx) const;
+    void on_i2c_freq_control(const Packet& rx, Packet& tx) const;
+    void on_bus_mode_control(const Packet& rx, Packet& tx) const;
     void on_download_coverage(const Packet& rx, Packet& tx) const;
     void on_fan_control(const Packet& rx, Packet& tx) const;
-    void on_get_key_exchange_info(const Packet& rx, Packet& tx) const;
-    void on_install_exchanged_key(const Packet& rx, Packet& tx) const;
 
     void action_background_copy(const Packet& rx, Packet& tx) const;
 
@@ -70,4 +69,11 @@ protected:
 
 using VendorPktReq = pdk::mctp::app::VendorPktReq;
 using VendorPktRes = pdk::mctp::app::VendorPktRes;
+
+// I2CS master bus (I2C/I3C) mux control (bus mode VDM, bug 6478775). The weak
+// default (vendor.cpp) reports no mux; a board with one overrides both in this
+// namespace (nv::mctp), e.g. e4188/core0/i2cs_bus_mode.cpp.
+nv::i2c::I2cStatus set_i2cs_bus_mode(bool use_i3c);
+uint8_t            get_i2cs_bus_mode();
+
 }  // namespace nv::mctp

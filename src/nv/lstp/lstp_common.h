@@ -19,14 +19,17 @@
 
 #include <algorithm>
 #include <array>
+#include <span>
+#include <cstddef>
 #include <cstdint>
 #include <tuple>
 #include <type_traits>
 #include <variant>
 
-#include "nv/spi/spi_types.h"
-#include "nv/i2c/i2c_types.h"
 #include "nv/gpio/common.h"
+#include "nv/i2c/i2c_types.h"
+#include "nv/i2c/port.h"
+#include "nv/spi/spi_types.h"
 #include "sys/common/common.h"
 
 namespace nv::lstp {
@@ -62,13 +65,15 @@ constexpr size_t  LSTP_MAX_CHANNELS = 255;
 
 enum class LstpChannelType : uint8_t
 {
-    Management = 0,
-    Spi        = 1,
-    Gpio       = 2,
-    I2c        = 3,
-    Uart       = 4,
-    Ipmi       = 5
-    /* 0x06 - 0x7E Reserved for future use */
+    Management = 0x00,
+    Spi        = 0x01,
+    Gpio       = 0x02,
+    I2c        = 0x03,
+    Uart       = 0x04,
+    Ipmi       = 0x05,
+    /* 0x06 - 0x7E Reserved for future use
+       0x7E can be used to reserve a channel ID, driver will skip with a warning */
+    Reserved = 0x7E,
     /* 0x7F - 0xFF is OEM Defined */
 };
 
@@ -353,6 +358,14 @@ enum class LstpGpioCommand : uint8_t
 
 using GpioIndex = uint16_t;
 
+/// Origin of a GPIO IRQ event. GPIO spoofing isolates LSTP from the pins, so while it is active
+/// only levels it commands may surface as events.
+enum class GpioIrqSource : uint8_t
+{
+    Pin,       ///< Edge observed on the physical or virtual pin.
+    Spoofing,  ///< Level change commanded through NSM Type 5 GPIO spoofing.
+};
+
 template<typename GpioIndexMap>
 constexpr GpioIndex LstpGpioIdFromPortPin(const GpioIndexMap& gpio_index_map,
                                           nv::gpio::GpioPort  port,
@@ -393,10 +406,25 @@ struct [[gnu::packed]] LstpGpioSetIrqConfigRequest
     LstpGpioIrqConfig irq_type;
 };
 
+/// Payload of the LSTP GPIO IrqEvent packet sent to the host. Its size is what goes into the
+/// LSTP header length field, so the layout is fixed by the protocol.
+struct [[gnu::packed]] LstpGpioIrqEvent
+{
+    GpioIndex     gpio_index;
+    LstpGpioState value;
+};
+static_assert(sizeof(LstpGpioIrqEvent) == sizeof(GpioIndex) + sizeof(LstpGpioState),
+              "LSTP GPIO IrqEvent payload layout is fixed by the protocol");
+
+/// Item queued from the producer to the LSTP task for a pending GPIO IRQ. Kept separate from
+/// the wire payload so it can carry data the host never sees.
 struct [[gnu::packed]] LstpGpioIrqEventRequest
 {
     GpioIndex     gpio_index;
     LstpGpioState value;
+    /// Lets the consumer tell a physical edge queued before GPIO spoofing began from a level
+    /// change commanded while it is active.
+    GpioIrqSource source;
 };
 
 inline LstpGpioDirection LstpGpioDirection_from(nv::gpio::Direction dir)
@@ -461,6 +489,11 @@ struct [[gnu::packed]] LstpI2cChannelConfig
     uint8_t  bus_arbitration_retries  = 0U;
 };
 
+struct LstpI2cChannelPriv
+{
+    nv::i2c::AddressMask need_debug_token;
+};
+
 constexpr uint8_t LstpI2cCmdMask = 0xBF;  // Bits [0:5] for command
 enum LstpI2cCommandFlags : uint8_t
 {
@@ -519,7 +552,15 @@ enum class LstpIpmiCommand : uint8_t
 };
 
 struct [[gnu::packed]] LstpIpmiChannelConfig
-{};
+{
+    // Firmware-private SSIF binding. IPMI has no host-visible channel configuration payload.
+    nv::i2c::Port      i2c_port = nv::i2c::Port::End;
+    nv::gpio::GpioPort alert_port;
+    nv::gpio::GpioPin  alert_pin;
+    bool               default_enabled = false;
+};
+
+constexpr uint8_t LstpIpmiMaxInstances = 2;
 
 /*****************************************************
  * LSTP UART Channel
@@ -555,6 +596,13 @@ struct [[gnu::packed]] LstpUartChannelConfig
 };
 
 /*****************************************************
+ * Dummy config scructure for reserved channel IDs
+ *****************************************************/
+
+struct LstpReservedChannelConfig
+{};
+
+/*****************************************************
  * Compile-time config helpers
  *****************************************************/
 
@@ -563,13 +611,17 @@ using LstpChannelConfig = std::variant<LstpManagementConfig,
                                        LstpGpioChannelConfig,
                                        LstpI2cChannelConfig,
                                        LstpIpmiChannelConfig,
-                                       LstpUartChannelConfig>;
+                                       LstpUartChannelConfig,
+                                       LstpReservedChannelConfig>;
+
+using LstpChannelPriv = std::variant<std::monostate, LstpI2cChannelPriv>;
 
 struct LstpChannelEntry
 {
     LstpChannelInfo   info;
     LstpChannelConfig config;
     nv::ipc::CoreId   core_id;
+    LstpChannelPriv   priv;
 };
 
 template<size_t N>
@@ -609,17 +661,46 @@ constexpr bool ValidateLstpChannelConfigs(const std::array<LstpChannelEntry, N>&
                     return false;
                 }
                 break;
-            case LstpChannelType::Ipmi:
+            case LstpChannelType::Ipmi: {
                 if (!std::holds_alternative<LstpIpmiChannelConfig>(cfg)) {
                     return false;
                 }
+                const auto& ipmi_cfg = std::get<LstpIpmiChannelConfig>(cfg);
+                if (info.id >= LstpIpmiMaxInstances || ipmi_cfg.i2c_port >= nv::i2c::Port::End
+                    || ipmi_cfg.alert_port == nv::gpio::InvalidGpioPort
+                    || ipmi_cfg.alert_pin == nv::gpio::InvalidGpioPin) {
+                    return false;
+                }
                 break;
+            }
             case LstpChannelType::Uart:
                 if (!std::holds_alternative<LstpUartChannelConfig>(cfg)) {
                     return false;
                 }
                 break;
+            case LstpChannelType::Reserved:
+                if (!std::holds_alternative<LstpReservedChannelConfig>(cfg)) {
+                    return false;
+                }
+                break;
             default: return false;
+        }
+    }
+
+    for (size_t i = 0; i < channels.size(); ++i) {
+        if (channels[i].info.type != LstpChannelType::Ipmi) {
+            continue;
+        }
+        const auto& lhs = std::get<LstpIpmiChannelConfig>(channels[i].config);
+        for (size_t j = i + 1; j < channels.size(); ++j) {
+            if (channels[j].info.type != LstpChannelType::Ipmi) {
+                continue;
+            }
+            const auto& rhs = std::get<LstpIpmiChannelConfig>(channels[j].config);
+            if (channels[i].info.id == channels[j].info.id || lhs.i2c_port == rhs.i2c_port
+                || (lhs.alert_port == rhs.alert_port && lhs.alert_pin == rhs.alert_pin)) {
+                return false;
+            }
         }
     }
     return true;
@@ -658,6 +739,61 @@ constexpr uint8_t GetFirstChannelId(const std::array<LstpChannelEntry, N>& chann
     return channels.size();
 }
 
+/** Runtime linear search - for use on span (runtime product tables). */
+inline uint8_t GetFirstChannelId(std::span<const LstpChannelEntry> channels,
+                                 LstpChannelType                   channel_type)
+{
+    for (uint8_t i = 0; i < static_cast<uint8_t>(channels.size()); ++i) {
+        if (channels[i].info.type == channel_type) {
+            return i;
+        }
+    }
+    return static_cast<uint8_t>(channels.size());
+}
+
+/**
+ * Project-specific LSTP tables.
+ * Weak defaults return the envelope compile-time tables (from config.h);
+ * multi-product images provide strong overrides in product_config.cpp (Core0)
+ * and product_bm_config.cpp (Core1).
+ */
+std::span<const LstpGpioPinInfo>  project_pin_configs();
+std::span<const LstpChannelEntry> project_lstp_channels();
+
+template<size_t N>
+constexpr uint8_t GetChannelId(const std::array<LstpChannelEntry, N>& channels,
+                               const LstpChannelType                  channel_type,
+                               const nv::i2c::Port                    i2c_port)
+{
+    if (channel_type != LstpChannelType::Ipmi) {
+        return channels.size();
+    }
+
+    for (size_t i = 0; i < channels.size(); ++i) {
+        if (channels[i].info.type == channel_type
+            && std::get<LstpIpmiChannelConfig>(channels[i].config).i2c_port == i2c_port) {
+            return static_cast<uint8_t>(i);
+        }
+    }
+    return channels.size();
+}
+
+/** Resolves the channel id of one specific peripheral instance, for channel types that a
+ *  project may declare more than once (a board with several UARTs, for example). Returns
+ *  channels.size() when no such channel exists. */
+template<size_t N>
+constexpr uint8_t GetChannelIdByInstance(const std::array<LstpChannelEntry, N>& channels,
+                                         const LstpChannelType                  channel_type,
+                                         const uint8_t                          instance)
+{
+    for (uint8_t i = 0; i < channels.size(); ++i) {
+        if ((channels[i].info.type == channel_type) && (channels[i].info.id == instance)) {
+            return i;
+        }
+    }
+    return channels.size();
+}
+
 template<size_t N>
 constexpr bool projectHasVirtualGpios(const std::array<LstpGpioPinInfo, N>& pin_configs)
 {
@@ -669,6 +805,17 @@ constexpr bool projectHasVirtualGpios(const std::array<LstpGpioPinInfo, N>& pin_
 /** Preserve legacy per-pin GPIO config writes while the device reports locked mode. */
 template<size_t N>
 constexpr LstpConfigMode GpioWriteConfigMode(const std::array<LstpGpioPinInfo, N>& pin_configs)
+{
+    for (const auto& pin_info : pin_configs) {
+        if (pin_info.allow_lstp_direction_control) {
+            return LstpConfigMode::NonVolatile;
+        }
+    }
+    return LstpConfigMode::Locked;
+}
+
+/** Runtime overload -- for product tables selected at runtime (see project_pin_configs). */
+inline LstpConfigMode GpioWriteConfigMode(std::span<const LstpGpioPinInfo> pin_configs)
 {
     for (const auto& pin_info : pin_configs) {
         if (pin_info.allow_lstp_direction_control) {

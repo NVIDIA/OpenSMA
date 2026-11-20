@@ -73,6 +73,13 @@ public:
     static void            init();
     static i3c_ibi_data_t* get_ibi_data(uint8_t instance);
     static void            log_status(i3c_master_edma_handle_t& handle);
+    // Clear only the EZH IBI completion handshake, leaving the read/write
+    // offload flags owned by an in-flight transfer untouched.
+    static void clear_ibi_stop(uint8_t instance);
+    // Clear the per-instance EZH<->CPU handshake flags (i3c_read_write_start,
+    // i3c_ibi_won, ibi_stop, read_write_stop) so a re-init after an I3C
+    // interrupt-storm recovery starts the SmartDMA state machine clean.
+    static void reset_flags(uint8_t instance);
 };
 
 }  // namespace sys::smartdma

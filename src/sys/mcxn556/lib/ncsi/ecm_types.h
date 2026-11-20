@@ -31,7 +31,8 @@ extern "C" {
 namespace nv::ecm_bm {
 
 // ECM configuration constants
-constexpr uint16_t EthFrameMaxLength = 1514U;
+// IEEE 802.1Q VLAN tagged frame: 14 (hdr) + 4 (VLAN) + 1500 (payload) = 1518
+constexpr uint16_t EthFrameMaxLength = 1518U;
 constexpr uint8_t  MacAddressLength  = 6U;
 
 // Re-export USB MCTP types from nv::usb for backward compatibility

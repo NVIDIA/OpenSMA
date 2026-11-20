@@ -18,6 +18,15 @@
 #include "nv/lstp/lstp_router.h"
 #include "nv/lstp/lstp_task.h"
 
+// Weak default for project_pin_configs (Core0 only; product_config.cpp provides
+// the strong override that returns the installed product's table).
+namespace nv::lstp {
+__attribute__((weak)) std::span<const LstpGpioPinInfo> project_pin_configs()
+{
+    return PinConfigs;
+}
+}  // namespace nv::lstp
+
 #include <bit>
 #include <chrono>
 #include <cstring>
@@ -40,23 +49,26 @@ namespace {
 
 inline nv::gpio::Status gpio_read(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, uint8_t& data)
 {
-    if constexpr (projectHasVirtualGpios(PinConfigs)) {
+    if constexpr (nv::gpio::is_gpio_spoofing_output_enabled(
+                      nv::gpio::GpioSpoofingOutputInterface::LstpGpio)) {
+        if (nv::gpio::Driver::read_gpio_spoofing_value(port, pin, data)) {
+            return nv::gpio::Status::Ok;
+        }
+    }
+
+    if (port == nv::gpio::vrPort) {
         return nv::gpio::Driver::read_virtual_physical_gpio(port, pin, data);
     }
-    else {
-        return nv::gpio::Driver::read(port, pin, data);
-    }
+    return nv::gpio::Driver::read(port, pin, data);
 }
 
 inline nv::gpio::Status
 gpio_write(nv::gpio::GpioPort port, nv::gpio::GpioPin pin, const uint8_t data)
 {
-    if constexpr (projectHasVirtualGpios(PinConfigs)) {
+    if (port == nv::gpio::vrPort) {
         return nv::gpio::Driver::write_virtual_physical_gpio(port, pin, data);
     }
-    else {
-        return nv::gpio::Driver::write(port, pin, data);
-    }
+    return nv::gpio::Driver::write(port, pin, data);
 }
 
 }  // namespace
@@ -69,7 +81,8 @@ LstpTask::LstpTask(Config config) noexcept
 void LstpTask::make(Config config)
 {
     if constexpr (EnableGpio) {
-        constexpr auto StackSize = std::max(640, int(configMINIMAL_STACK_SIZE));
+        // leave ~272 bytes of margin above the worst-case observed stack usage
+        constexpr auto StackSize = std::max(576, int(configMINIMAL_STACK_SIZE));
 
         NV_TASK_DATA static LstpTask                   task(config);
         NV_STACK static sys::ipc::TaskStack<StackSize> stack;
@@ -172,11 +185,11 @@ void LstpTask::process_gpio_req()
             while (req_offset + sizeof(LstpGpioGetValueRequest) <= req_size) {
                 auto& req   = from<LstpGpioGetValueRequest>(&req_buffer.data()[req_offset]);
                 req_offset += sizeof(LstpGpioGetValueRequest);
-                if (req.gpio_index >= LstpGpioNum) {
+                if (req.gpio_index >= project_pin_configs().size()) {
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto& pin_info    = PinConfigs.at(req.gpio_index);
+                const auto& pin_info    = project_pin_configs()[req.gpio_index];
                 uint8_t     value       = 0;
                 auto        gpio_status = gpio_read(pin_info.port, pin_info.pin, value);
                 if (LstpStatus_from(gpio_status) != LstpStatus::Success) {
@@ -197,12 +210,12 @@ void LstpTask::process_gpio_req()
             while (req_offset + sizeof(LstpGpioSetValueRequest) <= req_size) {
                 auto& req   = from<LstpGpioSetValueRequest>(&req_buffer.data()[req_offset]);
                 req_offset += sizeof(LstpGpioSetValueRequest);
-                if (req.gpio_index >= LstpGpioNum
+                if (req.gpio_index >= project_pin_configs().size()
                     || (req.value != LstpGpioState::Low && req.value != LstpGpioState::High)) {
                     send_resp(0, LstpStatus::Error);
                     return;
                 }
-                const auto&         pin_info = PinConfigs.at(req.gpio_index);
+                const auto&         pin_info = project_pin_configs()[req.gpio_index];
                 nv::gpio::Direction dir{};
                 gpio_get_direction(pin_info, dir);
                 if (dir != nv::gpio::Direction::Output) {
@@ -224,7 +237,7 @@ void LstpTask::process_gpio_req()
                 return;
             }
             auto& req = from<LstpGpioGetIrqConfigRequest>(&req_buffer.data()[req_offset]);
-            if (req.gpio_index >= LstpGpioNum) {
+            if (req.gpio_index >= project_pin_configs().size()) {
                 send_resp(0, LstpStatus::Error);
                 return;
             }
@@ -243,12 +256,16 @@ void LstpTask::process_gpio_req()
                 return;
             }
             auto& req = from<LstpGpioSetIrqConfigRequest>(&req_buffer.data()[req_offset]);
-            if (req.gpio_index >= LstpGpioNum || req.irq_type > LstpGpioIrqConfig::Max) {
+            if (req.gpio_index >= project_pin_configs().size()
+                || req.irq_type > LstpGpioIrqConfig::Max) {
                 send_resp(0, LstpStatus::Error);
                 return;
             }
-            const auto& [port, pin, pin_config, allow_set_irq, _] = PinConfigs.at(
-                req.gpio_index);
+            const auto& [port,
+                         pin,
+                         pin_config,
+                         allow_set_irq,
+                         _] = project_pin_configs()[req.gpio_index];
             if (!allow_set_irq) {
                 send_resp(0, LstpStatus::NotSupported);
                 return;
@@ -295,14 +312,23 @@ void LstpTask::process_gpio_req()
  * Process IRQ events from GPIO pins
  *****************************************************/
 
-void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
+void LstpTask::submit_gpio_irq(GpioIndex gpio_idx, GpioIrqSource source)
 {
     if (!nv::usb::Task::is_lstp_device_connected()) {
         return;
     }
 
+    // While spoofing is active the LSTP view is isolated from the pins, so a pin edge must not
+    // surface as an IRQ event. Reached from ISR context, hence the plain atomic read.
+    if constexpr (nv::gpio::is_gpio_spoofing_output_enabled(
+                      nv::gpio::GpioSpoofingOutputInterface::LstpGpio)) {
+        if (source == GpioIrqSource::Pin && nv::gpio::Driver::is_gpio_spoofing_active()) {
+            return;
+        }
+    }
+
     uint8_t     value    = 0;
-    const auto& pin_info = PinConfigs.at(gpio_idx);
+    const auto& pin_info = project_pin_configs()[gpio_idx];
     if (LstpStatus_from(gpio_read(pin_info.port, pin_info.pin, value)) != LstpStatus::Success) {
         return;
     }
@@ -310,6 +336,7 @@ void LstpTask::submit_gpio_irq(GpioIndex gpio_idx)
     LstpGpioIrqEventRequest req{};
     req.gpio_index = gpio_idx;
     req.value      = static_cast<LstpGpioState>(value);
+    req.source     = source;
 
     auto  item   = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&req), sizeof(req));
     auto& queue  = nv::ipc::Queue::make(nv::ipc::QueueId::LstpGpioIrq);
@@ -329,9 +356,9 @@ void LstpTask::process_gpio_irq()
     auto  item      = nv::ipc::Queue::Item(std::bit_cast<uint8_t*>(&event), sizeof(event));
     auto& irq_queue = nv::ipc::Queue::make(nv::ipc::QueueId::LstpGpioIrq);
 
-    // Find GPIO channel ID (assuming single GPIO channel)
-    const uint8_t ch_id = GetFirstChannelId(LstpChannels, LstpChannelType::Gpio);
-    if (ch_id == LstpNumChannels) {
+    // Find GPIO channel ID (assuming single GPIO channel) in the installed product table.
+    const uint8_t ch_id = GetFirstChannelId(project_lstp_channels(), LstpChannelType::Gpio);
+    if (ch_id >= static_cast<uint8_t>(project_lstp_channels().size())) {
         return;
     }
 
@@ -343,17 +370,27 @@ void LstpTask::process_gpio_irq()
         size_t payload_offset   = sizeof(LstpHdr);
 
         while (irq_queue.size() > 0
-               && payload_offset + sizeof(LstpGpioIrqEventRequest) <= nv::ipc::UsbLstpMsgSize) {
+               && payload_offset + sizeof(LstpGpioIrqEvent) <= nv::ipc::UsbLstpMsgSize) {
             if (irq_queue.recv(item, std::chrono::microseconds(0))
                 != nv::ipc::Queue::Status::Ok) {
                 break;
             }
+            // A pin edge queued before isolation began must not surface once the LSTP view is
+            // isolated from the pins; only spoofing-commanded changes get through.
+            if constexpr (nv::gpio::is_gpio_spoofing_output_enabled(
+                              nv::gpio::GpioSpoofingOutputInterface::LstpGpio)) {
+                if (event.source == GpioIrqSource::Pin
+                    && nv::gpio::Driver::is_gpio_spoofing_active()) {
+                    continue;
+                }
+            }
             if (!LstpGpioIrqEventMatches(_irq_config.at(event.gpio_index), event.value)) {
                 continue;
             }
-            auto& req       = from<LstpGpioIrqEventRequest>(&irq_buffer.data()[payload_offset]);
-            req             = event;
-            payload_offset += sizeof(LstpGpioIrqEventRequest);
+            auto& req       = from<LstpGpioIrqEvent>(&irq_buffer.data()[payload_offset]);
+            req.gpio_index  = event.gpio_index;
+            req.value       = event.value;
+            payload_offset += sizeof(LstpGpioIrqEvent);
         }
 
         const size_t payload_len = payload_offset - sizeof(LstpHdr);

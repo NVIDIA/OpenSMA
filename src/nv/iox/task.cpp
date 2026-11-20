@@ -17,6 +17,7 @@
  */
 #include "nv/common/debug.h"
 #include "nv/gpio/driver.h"
+#include "nv/gpio/project_gpio.h"
 #include "nv/iox/task.h"
 
 #include <bit>
@@ -38,7 +39,8 @@ namespace nv::iox {
 
 void Task::make()
 {
-    constexpr auto           StackSize = std::max(480, int(configMINIMAL_STACK_SIZE));
+    // leave ~280 bytes of margin above the worst-case observed stack usage
+    constexpr auto           StackSize = std::max(512, int(configMINIMAL_STACK_SIZE));
     NV_TASK_DATA static Task task;
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
@@ -468,9 +470,9 @@ void Task::apply_spoofing_to_input_port(uint8_t iox_offset, uint8_t regn, uint8_
 
         // Find the GPIO index in GpioSetup
         uint16_t gpio_index = UINT16_MAX;
-        for (uint16_t g = 0; g < nv::ipc::GpioNum; ++g) {
-            if (std::get<0>(nv::ipc::GpioSetup.at(g)) == port
-                && std::get<1>(nv::ipc::GpioSetup.at(g)) == pin) {
+        for (uint16_t g = 0; g < nv::ipc::gpio_count(); ++g) {
+            if (std::get<0>(nv::ipc::gpio_at(g)) == port
+                && std::get<1>(nv::ipc::gpio_at(g)) == pin) {
                 gpio_index = g;
                 break;
             }

@@ -27,9 +27,6 @@
 #include "nv/ipc/supervisor.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "mpu_syscall_numbers.h"
-#include "nv/i2c/task.h"
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-dcl37-c,cert-dcl51-cpp)
-NV_SHARED_BSS nv::mctp::SelfTest::I2cLoopbackTestResultStruct loopback_result{0};
 using namespace nv::mctp;
 
 // privileged functions
@@ -190,26 +187,7 @@ SelfTestStatus SelfTest::populate_result(uint32_t tests, const std::span<uint8_t
                             offset,
                             NeedLength[common::to_underlying(SelfTestCmd::StackUsage)]));
                         offset += NeedLength[common::to_underlying(SelfTestCmd::StackUsage)];
-                        break;
                     }
-                case SelfTestCmd::I2cLoopbackTest:
-                    status = i2c_loopback_test(buffer.subspan(
-                        offset,
-                        NeedLength[common::to_underlying(SelfTestCmd::I2cLoopbackTest)]));
-                    if (status != SelfTestStatus::Success) {
-                        return status;
-                    }
-                    offset += NeedLength[common::to_underlying(SelfTestCmd::I2cLoopbackTest)];
-                    break;
-                case SelfTestCmd::I2cLoopbackTestResult:
-                    status = i2c_loopback_test_result(buffer.subspan(
-                        offset,
-                        NeedLength[common::to_underlying(SelfTestCmd::I2cLoopbackTestResult)]));
-                    if (status != SelfTestStatus::Success) {
-                        return status;
-                    }
-                    offset += NeedLength[common::to_underlying(
-                        SelfTestCmd::I2cLoopbackTestResult)];
                     break;
                 default: break;
             }
@@ -364,9 +342,10 @@ SelfTestStatus SelfTest::stack_usage(const std::span<uint8_t>& buffer)
             return SelfTestStatus::ErrorBufferTooSmall;
         }
 
-        uint16_t stack    = 0;
-        uint32_t offset   = 0;
-        auto     total_id = static_cast<uint8_t>(nv::ipc::TaskId::KernelEnd);
+        uint16_t stack  = 0;
+        uint32_t offset = 0;
+        // Timer and Idle are kernel tasks outside the supervisor table
+        auto total_id = static_cast<uint8_t>(nv::ipc::TaskId::End);
 
         for (auto id = static_cast<uint8_t>(nv::ipc::TaskId::Begin); id < total_id;
              id      = id + 1) {
@@ -408,37 +387,6 @@ SelfTestStatus SelfTest::test_perf(const std::span<uint8_t>& buffer)
     memcpy(buffer.data() + sizeof(usb_rx_to_i3c_tx_latency),
            &i3c_rx_to_usb_tx_latency,
            sizeof(i3c_rx_to_usb_tx_latency));
-
-    return SelfTestStatus::Success;
-}
-
-SelfTestStatus SelfTest::i2c_loopback_test(const std::span<uint8_t>& buffer)
-{
-    if (buffer.size() < NeedLength[common::to_underlying(SelfTestCmd::I2cLoopbackTest)]) {
-        return SelfTestStatus::ErrorBufferTooSmall;
-    }
-
-    if (loopback_result.IsRunning) {
-        return SelfTestStatus::Error;
-    }
-    loopback_result.IsRunning       = 1;
-    constexpr int     MaxPort       = 9;
-    constexpr uint8_t DefaultResult = 0xff;
-    for (int i = 0; i <= MaxPort; i++) {
-        loopback_result.flexcomm_result.at(i) = DefaultResult;
-    }
-    // start to request the i2c loopback test
-    nv::i2c::Task::request_i2c_loopback_test();
-    return SelfTestStatus::Success;
-}
-
-SelfTestStatus SelfTest::i2c_loopback_test_result(const std::span<uint8_t>& buffer)
-{
-    if (buffer.size() < NeedLength[common::to_underlying(SelfTestCmd::I2cLoopbackTestResult)]) {
-        return SelfTestStatus::ErrorBufferTooSmall;
-    }
-
-    std::memcpy(buffer.data(), &loopback_result, sizeof(loopback_result));
 
     return SelfTestStatus::Success;
 }

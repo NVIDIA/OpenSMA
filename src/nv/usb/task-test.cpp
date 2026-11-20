@@ -20,6 +20,7 @@
 
 #include "nv/ipc/queue.h"
 #include "nv/ipc/supervisor.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/mctp/driver.h"
 #include "nv/mctp/interface.h"
 #include "nv/usb/task.h"
@@ -57,6 +58,21 @@ public:
         auto& mctptask = nv::ipc::Supervisor::inst().task(ipc::TaskId::Mctp);
         mctptask.resume();
     }
+};
+
+TEST_F(Usb, MctpUsbFsSpanningHeaderLength)
+{
+    usb::UsbMctpSpanningHeader header{};
+    constexpr uint16_t PacketLength = 0x1234U;
+
+    header.set_packet_length(PacketLength);
+
+    ensure::is_eq(header.length_msb, 0x12U);
+    ensure::is_eq(header.length_lsb, 0x34U);
+    ensure::is_eq(header.packet_length(), PacketLength);
+
+    header.length_msb |= 0xE0U;
+    ensure::is_eq(header.packet_length(), PacketLength);
 };
 
 TEST_F(Usb, MctpUsbRx)
@@ -148,8 +164,6 @@ TEST_F(Usb, MctpUsbTx)
 
     usb::Task::set_mctp_tx_done_event();
 
-    auto& usb_event = ipc::Event::make(ipc::EventId::UsbTask);
-    auto  bits      = usb_event.wait(0xFFFF, false, false, 0s);
-    auto  event     = bits.value();
-    ensure::is_eq(event, 0x00);
+    auto notification = ipc::TaskNotify::get(ipc::TaskId::Usb);
+    ensure::is_eq(notification.value(), 0x00);
 };

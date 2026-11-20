@@ -19,6 +19,8 @@
 #include "nv/gpio/common.h"
 #include "sys/gpio/driver.h"
 
+#include <span>
+
 namespace nv::gpio {
 
 class Driver : protected sys::gpio::Driver
@@ -52,6 +54,13 @@ public:
     static Status read(GpioPort port, GpioPin pin, uint8_t& data);
     static Status read_force(GpioPort port, GpioPin pin, uint8_t& data);
     static Status read_virtual_physical_gpio(GpioPort port, GpioPin pin, uint8_t& data);
+    static void   update_gpio_spoofing(bool                                    active,
+                                       std::span<const GpioSpoofingEntryState> entries);
+    /// Safe to call from ISR context.
+    static bool   is_gpio_spoofing_active();
+    static bool   get_gpio_default_value(uint16_t gpio_index, uint8_t& data);
+    static bool   read_gpio_spoofing_value(uint16_t gpio_index, uint8_t& data);
+    static bool   read_gpio_spoofing_value(GpioPort port, GpioPin pin, uint8_t& data);
     static Status read_gpio_port(GpioPort port, uint32_t& gpioBitmap);
     static Status write(GpioPort port, GpioPin pin, const uint8_t Data);
     static Status write_virtual_physical_gpio(GpioPort port, GpioPin pin, uint8_t data);

@@ -47,8 +47,6 @@
 #include "sys/common/common.h"
 #include "nv/iox/common.h"
 #include "nv/i2c/vr_i2c_bus_slot.h"
-#include "nv/pldm/common.h"
-#include "nv/vrot/interface/types.h"
 #include "nv/volt_mon/common.h"
 #include "core0/powersensor.h"
 #include "nv/vcom/vruart/common.h"
@@ -77,8 +75,9 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 
 namespace nv::ipc {
 
-constexpr bool EanbleTaskSamePriority = false;
-constexpr bool EnableLstp             = true;
+constexpr bool EnableTaskSamePriority   = false;
+constexpr bool EnableCustomTaskPriority = false;
+constexpr bool EnableLstp               = true;
 
 /********************* Uart over USB Config starts *********************/
 constexpr nv::vruart::Signal   pintx{.port = 2, .pin = 3};
@@ -119,7 +118,7 @@ constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
     },
     LstpChannelEntry{
         LstpChannelInfo{LstpChannelType::Ipmi, 0, "SSIF"},
-        LstpIpmiChannelConfig{}
+        LstpIpmiChannelConfig{nv::i2c::Port::Two, 1, 6} // FLEXCOMM2, P1_6 alert
     },
     LstpChannelEntry{
         LstpChannelInfo{LstpChannelType::Uart, static_cast<uint8_t>(nv::ipc::UartOverUsbUartInstance), "UART"},
@@ -144,12 +143,7 @@ namespace nv::ipc {
 // Indicate if it is dual core project
 constexpr bool EnableDualCore = true;
 constexpr bool EnableNcsi     = false;
-// Enable SmartDMA for I3C
-#if defined(I3C_DMA_USE_STOP_OFFLOAD) || (I3C_DMA_USE_STOP_OFFLOAD == 1)
-constexpr bool EnableSmartDMA = true;
-#else
 constexpr bool EnableSmartDMA = false;
-#endif
 
 // After USB bus reset while enumerated, record mailbox and soft-reset
 constexpr bool EnableUsbPortResetSelfReset = false;
@@ -169,7 +163,7 @@ enum class TaskId
 #endif
     Pldm,
     Logger,
-    Ssif,
+    Ssif0,
     Ipc0,
     Ipc1,
     Privileged = Ipc1 + 1,
@@ -202,7 +196,7 @@ constexpr inline std::array<TaskInfo, int(TaskId::KernelEnd) + 1> TaskInfos{
 #endif
     TaskInfo{    TaskId::Pldm,    CoreId::Core0},
     TaskInfo{  TaskId::Logger,    CoreId::Core0},
-    TaskInfo{    TaskId::Ssif,    CoreId::Core0},
+    TaskInfo{   TaskId::Ssif0,    CoreId::Core0},
     TaskInfo{    TaskId::Ipc0,    CoreId::Core0},
     TaskInfo{    TaskId::Ipc1,    CoreId::Core1},
     TaskInfo{     TaskId::Usb,    CoreId::Core0},
@@ -267,14 +261,6 @@ enum class QueueId
     I2c1,
     I2c2,
     I2c3,
-    I2c4,
-    I2c5,
-    I2c6,
-    I2c7,
-    I2c8,
-    I2c9,
-    VrI2c0,
-    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -299,9 +285,10 @@ enum class QueueId
     LstpTx,
     LstpGpioIrq,
     LstpToGpio,
-    Ssif,
-    UbridgeTx,
-    UbridgeRx,
+    Ssif0,
+    Ssif1,
+    Ubridge0Tx,
+    Ubridge0Rx,
     End
 };
 
@@ -326,13 +313,8 @@ enum class MutexId
 enum class EventId
 {
     Begin,
-    I2c0,
-    I2c1,
-    I2c2,
-    I2c3,
     I3c0,
     PldmTask,
-    UsbTask,
     FlashEvent,
     Spi0Event,
     Spi1Event,
@@ -342,55 +324,59 @@ enum class EventId
     DiagEvent,
     TaskBootStatus,
     TaskAliveStatus,
-    Spi0EdmaDriverEvent,
-    Ssif,
-    UartBridgeEvent,
+    Ssif0,
+    Ssif1,
+    Uart0BridgeEvent,
     End
 };
 
 using EventInfo = std::tuple<EventId, CoreId>;
 
 constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
-    EventInfo{              EventId::Begin,                     CoreId::Invalid},
-    EventInfo{               EventId::I2c0,    get_core_from_task(TaskId::I2c0)},
-    EventInfo{               EventId::I2c1,    get_core_from_task(TaskId::I2c1)},
-    EventInfo{               EventId::I2c2,    get_core_from_task(TaskId::I2c2)},
-    EventInfo{               EventId::I2c3,    get_core_from_task(TaskId::I2c3)},
-    EventInfo{               EventId::I3c0,    get_core_from_task(TaskId::I3c0)},
-    EventInfo{           EventId::PldmTask,    get_core_from_task(TaskId::Pldm)},
-    EventInfo{            EventId::UsbTask,     get_core_from_task(TaskId::Usb)},
-    EventInfo{         EventId::FlashEvent,   get_core_from_task(TaskId::Flash)},
-    EventInfo{          EventId::Spi0Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{          EventId::Spi1Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{          EventId::Spi2Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{           EventId::LogEvent,  get_core_from_task(TaskId::Logger)},
-    EventInfo{           EventId::SpdmTask,                        CoreId::Both},
-    EventInfo{          EventId::DiagEvent,    get_core_from_task(TaskId::Diag)},
-    EventInfo{     EventId::TaskBootStatus,                       CoreId::Core0},
-    EventInfo{    EventId::TaskAliveStatus,                        CoreId::Both},
-    EventInfo{EventId::Spi0EdmaDriverEvent,    get_core_from_task(TaskId::Spi0)},
-    EventInfo{               EventId::Ssif,    get_core_from_task(TaskId::Ssif)},
-    EventInfo{    EventId::UartBridgeEvent, get_core_from_task(TaskId::Ubridge)}
+    EventInfo{           EventId::Begin,                     CoreId::Invalid},
+    EventInfo{            EventId::I3c0,    get_core_from_task(TaskId::I3c0)},
+    EventInfo{        EventId::PldmTask,    get_core_from_task(TaskId::Pldm)},
+    EventInfo{      EventId::FlashEvent,   get_core_from_task(TaskId::Flash)},
+    EventInfo{       EventId::Spi0Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{       EventId::Spi1Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{       EventId::Spi2Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{        EventId::LogEvent,  get_core_from_task(TaskId::Logger)},
+    EventInfo{        EventId::SpdmTask,                        CoreId::Both},
+    EventInfo{       EventId::DiagEvent,    get_core_from_task(TaskId::Diag)},
+    EventInfo{  EventId::TaskBootStatus,                       CoreId::Core0},
+    EventInfo{ EventId::TaskAliveStatus,                        CoreId::Both},
+    EventInfo{           EventId::Ssif0,   get_core_from_task(TaskId::Ssif0)},
+    EventInfo{           EventId::Ssif1, get_core_from_task(TaskId::Invalid)},
+    EventInfo{EventId::Uart0BridgeEvent, get_core_from_task(TaskId::Ubridge)}
 };
 
 using ClientInfo = std::tuple<mctp::Client, TaskId>;
 
 constexpr inline std::array<ClientInfo, int(mctp::Client::End)> ClientInfos{
-    ClientInfo{ mctp::Client::UsI2c,    TaskId::I2c0},
-    ClientInfo{ mctp::Client::UsUsb,     TaskId::Usb},
-    ClientInfo{mctp::Client::DsI2c0,    TaskId::I2c1},
-    ClientInfo{mctp::Client::DsI2c1,    TaskId::I2c2},
-    ClientInfo{mctp::Client::DsI2c2, TaskId::Invalid},
-    ClientInfo{mctp::Client::DsI2c3, TaskId::Invalid},
-    ClientInfo{mctp::Client::DsI3c0,    TaskId::I3c0},
-    ClientInfo{mctp::Client::DsI3c1, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Pldm,    TaskId::Pldm},
-    ClientInfo{  mctp::Client::Spdm,    TaskId::Spdm},
-    ClientInfo{mctp::Client::Spdm4K,    TaskId::Spdm},
-    ClientInfo{  mctp::Client::Spi0, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Spi1, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Spi2, TaskId::Invalid},
+    ClientInfo{  mctp::Client::UsI2c,    TaskId::I2c0},
+    ClientInfo{  mctp::Client::UsUsb,     TaskId::Usb},
+    ClientInfo{mctp::Client::UsUsbFs, TaskId::Invalid},
+    ClientInfo{  mctp::Client::UsI3c, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c0,    TaskId::I2c1},
+    ClientInfo{ mctp::Client::DsI2c1,    TaskId::I2c2},
+    ClientInfo{ mctp::Client::DsI2c2, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c3, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI3c0,    TaskId::I3c0},
+    ClientInfo{ mctp::Client::DsI3c1, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Pldm,    TaskId::Pldm},
+    ClientInfo{   mctp::Client::Spdm,    TaskId::Spdm},
+    ClientInfo{ mctp::Client::Spdm4K,    TaskId::Spdm},
+    ClientInfo{   mctp::Client::Spi0, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Spi1, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Spi2, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c4, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c5, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c6, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c7, TaskId::Invalid}
 };
+
+static_assert(mctp::client_infos_in_enum_order(ClientInfos),
+              "ClientInfos must list every mctp::Client in enum order");
 
 /// All Stream Buffers must be part of this enum.
 enum class StreamBufferId
@@ -446,9 +432,6 @@ constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos
                          0x40},
 };
 
-constexpr uint32_t ApEcdsa384PublicKeySize = 96;
-constexpr std::array<std::array<uint8_t, ApEcdsa384PublicKeySize>, 2> ApFwPublicKeys{};
-
 constexpr uint32_t SpdmRequestQueueSize      = 2048;
 constexpr uint32_t SpdmRxQueueSize           = 72;
 constexpr uint32_t SpdmCryptoHelperQueueSize = 12;
@@ -480,14 +463,6 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {               QueueId::I2c1,            8,                                                528,    get_core_from_task(TaskId::I2c1)},
     {               QueueId::I2c2,            8,                                                528,    get_core_from_task(TaskId::I2c2)},
     {               QueueId::I2c3,            8,                                                528,    get_core_from_task(TaskId::I2c3)},
-    {               QueueId::I2c4,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I2c5,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I2c6,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I2c7,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I2c8,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {               QueueId::I2c9,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {             QueueId::VrI2c0,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {             QueueId::VrI2c1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c0,            8,                                                524,    get_core_from_task(TaskId::I3c0)},
     {               QueueId::I3c1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi0,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
@@ -521,9 +496,10 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
               LstpGpioIrqQDepth,                                   LstpGpioIrqQSize,
               get_core_from_task(TaskId::Lstp)                                                                                                   },
     {         QueueId::LstpToGpio,            1,                                    LstpToGpioQSize,    get_core_from_task(TaskId::Lstp)},
-    {               QueueId::Ssif,            1,                                                258,    get_core_from_task(TaskId::Ssif)},
-    {          QueueId::UbridgeTx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)},
-    {          QueueId::UbridgeRx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)}
+    {              QueueId::Ssif0,            1,                                                258,   get_core_from_task(TaskId::Ssif0)},
+    {              QueueId::Ssif1,            1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {         QueueId::Ubridge0Tx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)},
+    {         QueueId::Ubridge0Rx,            4,                                   UbridgeQueueSize, get_core_from_task(TaskId::Ubridge)}
 };
 
 constexpr uint32_t I3cQueueMaxTxSize = 128;
@@ -604,7 +580,8 @@ constexpr inline std::array<I2cTimerInfo, 1> I2cTimerInfos{
 [[maybe_unused]] constexpr auto MaxQueuesPerTask = 4;
 [[maybe_unused]] constexpr auto MaxEventsPerTask = 4;
 
-constexpr uint8_t GpioNum = 6;
+constexpr uint8_t GpioNum            = 6;
+constexpr bool    EnableMultiProduct = false;
 enum Port : gpio::GpioPort
 {
     GlobalWpPort = nv::gpio::InvalidGpioPort,
@@ -708,13 +685,24 @@ enum BootedEventBits : uint32_t
     Logger         = nv::common::bit(10),
     Spdm           = nv::common::bit(11),
     Lstp           = nv::common::bit(12),
-    Ssif           = nv::common::bit(13),
+    Ssif0          = nv::common::bit(13),
     Ubridge        = nv::common::bit(14),
-    SecureBoot     = nv::common::bit(15),
     BootStatusMask = (nv::common::bit(15) - 1),
 };
 
-static_assert((BootStatusMask & SecureBoot) == 0, "No-AP build must not wait for SecureBoot");
+using UartBridgeConfig = nv::vruart::BridgeConfig<TaskId, QueueId, EventId, BootedEventBits>;
+constexpr inline std::array<UartBridgeConfig, 1> UartBridgeConfigs{
+    UartBridgeConfig{"UartBridge",
+                     TaskId::Ubridge,
+                     QueueId::Ubridge0Tx,
+                     QueueId::Ubridge0Rx,
+                     EventId::Uart0BridgeEvent,
+                     BootedEventBits::Ubridge,
+                     pintx, pinrx,
+                     UartOverUsbBaudrate, UartOverUsbEdmaTxChn,
+                     UartOverUsbEdmaRxChn, UartOverUsbEdmaInstance,
+                     UartOverUsbUartInstance},
+};
 
 constexpr uint32_t WatchdogResetMs       = 2000;
 constexpr uint32_t CheckTaskBootStatusMs = 1000;
@@ -733,9 +721,6 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 2> TaskMonitorList{
 
 constexpr bool EnableRuntimeWdt       = false;
 constexpr bool EnableCP2112NativeGpio = false;
-constexpr bool EnablePufEngine        = false;
-constexpr bool EnableEcdhP384Engine   = false;
-constexpr bool EnableAesGCM           = false;
 
 // MCU heartbeat config
 constexpr bool           EnableMcuHeartbeat = false;
@@ -749,6 +734,10 @@ constexpr bool DebugTokenEnabled = true;
 constexpr bool EnableSmbDirect = true;
 // I2C scan VDM support
 constexpr bool EnableI2cScanVdm = false;
+// I2C master frequency control VDM support
+constexpr bool EnableI2cFreqVdm = false;
+// I2CS master bus (I2C/I3C) switch VDM support
+constexpr bool EnableBusModeVdm = false;
 // I2c virtual address mapping configuration
 constexpr bool I2cManualNackMode = true;  // true, when mapping is not existed in the
                                           // I2cVirtualAddressMappingTable, command will send
@@ -875,6 +864,9 @@ constexpr bool EnableDelayInI3CInit = false;
 constexpr uint32_t CheckApStatusTimerUs = 0;
 // Use the I2C AP status timer if I3C is not enabled
 constexpr bool UseI2cApStatusTimer = false;
+// When true: skip get_status while ApDown (re-up via erot_recovery). Querying still pings once
+// at boot.
+constexpr bool SuppressApStatusPingWhenDown = false;
 // GPU I3C pull up status pin
 constexpr bool               I3CPullUpCheck = false;
 constexpr nv::gpio::GpioPort I3CPullUpPort  = 0;
@@ -894,9 +886,11 @@ constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
 /******** ******** Virtual I2C Config Starts ******** ********/
-constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline size_t        VrI2c0DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c0SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
 constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c1SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
 /******** ******** Virtual I2C Config Ends ******** ********/
 
@@ -1073,13 +1067,6 @@ NV_SHARED_DATA inline std::array<nv::i2c::I2cTempSensorConfig, I2cTempSensorSize
 
 }  // namespace nv::mctp
 
-namespace nv::vrot {
-constexpr inline std::array<ApInfo, 0> ApList = {{}};
-}  // namespace nv::vrot
-
-static_assert(nv::vrot::ApList.size() == 0,
-              "Update BootStatusMask if this project gains an AP");
-
 namespace nv::i2c {
 constexpr size_t                      I2cBufferSize                   = 512;
 constexpr bool                        EnableI2cPeripheralRecovery     = false;
@@ -1123,6 +1110,9 @@ static_assert(!(SmbusCacheRefreshMs > 0 && nv::ipc::SmbSensorUpdateMs > 0),
 namespace nv::lstp {
 // Device specific constraint on LSTP I2C buffer size. Make sure you really want to set this
 constexpr bool I2cSmallBuffer = false;
+
+// WAR for GPU I2C-over-I3C - GPU I2C will hang on I2C transaction other then block read/write
+constexpr bool NackI2cReadOnI3c = false;
 
 static_assert(EnableI2c ? (I2cSmallBuffer ? nv::i2c::I2cBufferSize < 512
                                           : nv::i2c::I2cBufferSize == 512)

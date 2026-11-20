@@ -17,7 +17,7 @@
 
 
 include etc/plugins/sign-request.mk
-ifeq ($(CHIP), mcxn556)
+ifneq (,$(filter mcxn556 mcxn557,$(CHIP)))
 SIGN_EXEC_PATH = libexec/tools/sma-mcxn556-signing-service/src/scripts
 else ifeq ($(CHIP), mcxn236)
 SIGN_EXEC_PATH = libexec/tools/sma-mcxn236-signing-service/src/scripts
@@ -25,7 +25,9 @@ else ifeq ($(CHIP), mcxn547)
 SIGN_EXEC_PATH = libexec/tools/sma-mcxn236-signing-service/src/scripts
 endif
 SIGN_EXEC = signing_script_service.py
-CHIP_CAP = $(shell echo $(CHIP) | tr '[:lower:]' '[:upper:]')
+# MCXN557 uses the MCXN556 key set and job types until it has its own signing policy.
+SIGN_CHIP = $(if $(filter mcxn557,$(CHIP)),mcxn556,$(CHIP))
+CHIP_CAP = $(shell echo $(SIGN_CHIP) | tr '[:lower:]' '[:upper:]')
 KEY_TYPE ?= DEBUG
 JOB_TYPE ?= SMA_$(CHIP_CAP)_$(KEY_TYPE)_S0
 UBS_COMMANDS_RESULT += local-sign

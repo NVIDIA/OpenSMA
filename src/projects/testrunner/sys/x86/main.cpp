@@ -31,22 +31,12 @@
 #include "nv/common/enum_ops.h"
 #include "nv/common/system.h"
 #include "nv/flash/task.h"
-#include "nv/i2c/lattice_driver.h"
 #include "nv/ipc/supervisor.h"
 #include "nv/logger/task.h"
 #include "nv/mctp/task.h"
 #include "nv/pldm/task.h"
 #include "nv/spdm/task.h"
 #include "nv/usb/task.h"
-
-// CPLD stub instance for testrunner (x86 test environment)
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables,cert-err58-cpp)
-nv::i2c::LatticeCpld cpld(CPLD_I2C_PORT_PRGM,
-                          CPLD_I2C_ADDR_PRGM,
-                          CPLD_I2C_PORT_USR,
-                          CPLD_I2C_ADDR_USR,
-                          CPLD_I2C_ADDR_DBG,
-                          CPLD_I2C_ADDR_DBG_INSTALL);
 
 using namespace nv;
 using namespace std::chrono_literals;

@@ -163,16 +163,17 @@ void Driver::target_callback(LPI2C_Type*             base,
     }
 }
 
-void Driver::bind(nv::i2c::Port port, void* task)
+void Driver::bind(nv::i2c::Port port, void* task, void* emul_task)
 {
     NV_ASSERT(task != nullptr);
     auto i2c_task = static_cast<nv::i2c::Task*>(task);
     nv::info("task %s binds to I2C port %d\n", i2c_task->name().data(), port);
     logger::info(logger::Event::I2CBind,
                  {static_cast<uint8_t>(i2c_task->id()), static_cast<uint8_t>(port)});
-    _base                    = get_base(port);
-    _controller_context.task = task;
-    _target_context.task     = task;
+    _base                     = get_base(port);
+    _controller_context.task  = task;
+    _target_context.task      = task;
+    _target_context.emul_task = emul_task;
 }
 
 void Driver::init()

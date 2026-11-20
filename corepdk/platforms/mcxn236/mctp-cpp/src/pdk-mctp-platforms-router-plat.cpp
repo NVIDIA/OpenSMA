@@ -17,6 +17,7 @@
  */
 #include "corepdk/modules/mctp-cpp/src/app/pdk-mctp-app-router-plat.h"
 #include "corepdk/platforms/mcxn236/mctp-cpp/src/pdk-mctp-platforms-config.h"
+#include "corepdk/platforms/mcxn236/mctp-cpp/src/pdk-mctp-platforms-enums.h"
 #include "nv/logger/log.h"
 namespace pdk::mctp::platforms {
 

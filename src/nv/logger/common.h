@@ -27,9 +27,11 @@ namespace nv::logger {
 constexpr auto EventDataSize = 8;
 using EventData              = std::array<uint8_t, EventDataSize>;
 
-constexpr nv::flash::Address LogMetadataStart = sys::flash::config::LoggerStartAddress;
-constexpr nv::flash::Address LogEntryStart    = LogMetadataStart + nv::flash::SectorSize;
-constexpr nv::flash::Address FaultEntryStart  = LogMetadataStart + 0xE000;  // TBD: refactor
+constexpr nv::flash::Address LogMetadataStart  = sys::flash::config::LoggerStartAddress;
+constexpr nv::flash::Address LogEntryStart     = LogMetadataStart + nv::flash::SectorSize;
+constexpr nv::flash::Address LogEntryFlashSize = sys::flash::config::LogEntryFlashSize;
+// Fault entries follow the log entry area directly.
+constexpr nv::flash::Address FaultEntryStart = LogEntryStart + LogEntryFlashSize;
 
 enum class Status : uint16_t  // Changed from uint32_t to save space
 {
@@ -92,6 +94,8 @@ struct Event
     static constexpr EventStructItem BootReasonOriginal     = {0x030e, Level::Unknown};
     static constexpr EventStructItem BootReachMaxSwitchTime = {0x030f, Level::Warning};
     static constexpr EventStructItem BootDieId              = {0x0310, Level::Info};
+    static constexpr EventStructItem BootPort5Persistence   = {0x0312, Level::Info};
+    static constexpr EventStructItem BootBoardStrap         = {0x0313, Level::Info};
     // USB
     static constexpr EventStructItem UsbConnectStatus              = {0x0400, Level::Unknown};
     static constexpr EventStructItem UsbCannotSend                 = {0x0401, Level::Unknown};
@@ -113,24 +117,37 @@ struct Event
     static constexpr EventStructItem UsbLstpRecvError              = {0x0411, Level::Unknown};
     static constexpr EventStructItem UsbHidQueueRecvError          = {0x0412, Level::Unknown};
     static constexpr EventStructItem UsbPortReset                  = {0x0413, Level::Info};
+    static constexpr EventStructItem UsbFsConnectStatus            = {0x0414, Level::Info};
+    static constexpr EventStructItem UsbFsDriverInitFailed         = {0x0415, Level::Error};
+    static constexpr EventStructItem UsbFsCannotSendToMctp         = {0x0416, Level::Error};
+    static constexpr EventStructItem UsbFsTxQueueRecvError         = {0x0417, Level::Error};
+    static constexpr EventStructItem UsbFsMctpWriteError           = {0x0418, Level::Error};
+    static constexpr EventStructItem UsbFsMctpRecvError            = {0x0419, Level::Error};
+    static constexpr EventStructItem UsbFsUpdateRoutingTableFailed = {0x041a, Level::Error};
     // I2C
-    static constexpr EventStructItem I2CBind              = {0x0500, Level::Info};
-    static constexpr EventStructItem I2CError             = {0x0501, Level::Error};
-    static constexpr EventStructItem I2CTempSensor        = {0x0502, Level::Info};
-    static constexpr EventStructItem I2CQueueFail         = {0x0503, Level::Error};
-    static constexpr EventStructItem I2CPktDrop           = {0x0504, Level::Error};
-    static constexpr EventStructItem I2CForwardFail       = {0x0505, Level::Error};
-    static constexpr EventStructItem I2CSetEventFail      = {0x0506, Level::Error};
-    static constexpr EventStructItem I2CApStatusUpdate    = {0x0507, Level::Info};
-    static constexpr EventStructItem I2CStateInvalid      = {0x0508, Level::Error};
-    static constexpr EventStructItem I2CAddressUpdate     = {0x0509, Level::Info};
-    static constexpr EventStructItem I2cLoopbackTest      = {0x050a, Level::Info};
-    static constexpr EventStructItem I2cLoopbackWdtUpdate = {0x050b, Level::Info};
-    static constexpr EventStructItem I2CCounts            = {0x050c, Level::Info};
-    static constexpr EventStructItem I2CRuntPacket        = {0x050d, Level::Info};
-    static constexpr EventStructItem I2CRecovery          = {0x050e, Level::Info};
-    static constexpr EventStructItem I2cHscInitFailed     = {0x050f, Level::Error};
-    static constexpr EventStructItem I2cClockPeriods      = {0x0510, Level::Info};
+    static constexpr EventStructItem I2CBind           = {0x0500, Level::Info};
+    static constexpr EventStructItem I2CError          = {0x0501, Level::Error};
+    static constexpr EventStructItem I2CTempSensor     = {0x0502, Level::Info};
+    static constexpr EventStructItem I2CQueueFail      = {0x0503, Level::Error};
+    static constexpr EventStructItem I2CPktDrop        = {0x0504, Level::Error};
+    static constexpr EventStructItem I2CForwardFail    = {0x0505, Level::Error};
+    static constexpr EventStructItem I2CSetEventFail   = {0x0506, Level::Error};
+    static constexpr EventStructItem I2CApStatusUpdate = {0x0507, Level::Info};
+    static constexpr EventStructItem I2CStateInvalid   = {0x0508, Level::Error};
+    static constexpr EventStructItem I2CAddressUpdate  = {0x0509, Level::Info};
+    // 0x050a and 0x050b belonged to the removed I2C loopback test; do not reuse them.
+    static constexpr EventStructItem I2CCounts        = {0x050c, Level::Info};
+    static constexpr EventStructItem I2CRuntPacket    = {0x050d, Level::Info};
+    static constexpr EventStructItem I2CRecovery      = {0x050e, Level::Info};
+    static constexpr EventStructItem I2cHscInitFailed = {0x050f, Level::Error};
+    static constexpr EventStructItem I2cClockPeriods  = {0x0510, Level::Info};
+    // 0x0511 is taken by I2cHsccProgramFailed on vr_sma.
+    static constexpr EventStructItem I2CCpuTempThresholds = {0x0512, Level::Unknown};
+    // 0x0513-0x0518 are reserved.
+    // 0x0519-0x051f are used on other development branches.
+    static constexpr EventStructItem I2cVrFaultInfo      = {0x0520, Level::Error};
+    static constexpr EventStructItem I2cVrFaultStatus    = {0x0521, Level::Error};
+    static constexpr EventStructItem I2cVrFaultCpuAbsent = {0x0522, Level::Warning};
     // I3C
     static constexpr EventStructItem I3CBind                  = {0x0600, Level::Info};
     static constexpr EventStructItem I3CFailedToResetDaaV1    = {0x0601, Level::Error};
@@ -182,38 +199,98 @@ struct Event
     static constexpr EventStructItem I3CBusRecovery           = {0x0630, Level::Info};
     static constexpr EventStructItem I3CBusRecoveryGiveUp     = {0x0631, Level::Info};
     static constexpr EventStructItem I3CI2CArbLostV2          = {0x0632, Level::Error};
+    static constexpr EventStructItem I3CManualIbiNack         = {0x0633, Level::Info};
+    // 0x0634-0x0637 belong to the GPU SMA line: I3CPowerOffStatus, its own
+    // I3CManualIbiNack, and the I3CPktDump pair. Reusing them would make the two
+    // lines' logs indistinguishable to the parser, so the bridge traces
+    // below start at 0x0638.
+    static constexpr EventStructItem I3CIbiReceivedV2 = {0x0638, Level::Info};
+    // Per-IBI private-read outcome: what the CPU actually returned when the MCU
+    // read after a pending-read IBI. Captures success/fail, length, and the MCTP
+    // header + message type, including empty/short reads that are otherwise
+    // dropped silently. Used to diagnose CPU IBI storms.
+    static constexpr EventStructItem I3CIbiReadV2 = {0x0639, Level::Info};
+    // A runaway I3C SLVSTART interrupt storm was detected in the ISR and broken
+    // by disabling the I3C IRQ; the task then recovered the controller. Records
+    // port and the MSTATUS at recovery time.
+    static constexpr EventStructItem I3CIrqStormV2 = {0x063a, Level::Info};
+    // One sample of the CPU-side bus pull-up, logged only when the level flips.
+    static constexpr EventStructItem I3CPullUpStatusV2 = {0x063b, Level::Info};
+    // Each CCC the controller put on the wire, to correlate with I3CCccErrorV2.
+    static constexpr EventStructItem I3CCccSentV2 = {0x063c, Level::Info};
+    // Controller snapshot taken at a CCC failure, before the ForceExit/STOP
+    // recovery clears the state that explains the stall. Emitted alongside the
+    // I3CCccErrorV2 carrying the status code. `part` identifies which segment
+    // of a multi-part CCC failed (ENEC: 1 = broadcast 0x7E+0x80 header,
+    // 2 = directed ENINT byte).
+    static constexpr EventStructItem I3CCccFailDetailV2 = {0x063d, Level::Error};
+    // An IBI whose payload matches no known form. `address` is the dynamic address
+    // of the device that raised it, which is what identifies an unexpected source.
+    // Supersedes I3CUnknownIBIV2 (0x0625), which carried the same fields minus
+    // `address`; that id stays retired so logs from older firmware remain readable.
+    static constexpr EventStructItem I3CUnknownIBIV3 = {0x063e, Level::Error};
+    // MCTP header + message type of every packet read back from the CPU.
+    static constexpr EventStructItem I3CRxFromCpuV2 = {0x063f, Level::Info};
+    // MSTATUS before and after each attempt to bring the bus back to idle, plus
+    // whether the attempt succeeded or fell through to the controller reset.
+    static constexpr EventStructItem I3CForceBusIdleV2 = {0x0640, Level::Info};
+    // A directed ENEC whose ENINT byte the target answered at once with an IBI
+    // request. The SDK times out waiting for an idle bus after STOP, but the byte
+    // was delivered, so bring-up accepts the frame instead of re-sending ENEC into
+    // the same request. Records port and the MSTATUS at that point.
+    static constexpr EventStructItem I3CEnecIbiRequestV2 = {0x0641, Level::Info};
     // MCTP
-    static constexpr EventStructItem MctpApPgoodEventTrigger           = {0x0700, Level::Info};
-    static constexpr EventStructItem MctpApPgoodGpioState              = {0x0701, Level::Info};
-    static constexpr EventStructItem MctpEndpointState                 = {0x0702, Level::Info};
-    static constexpr EventStructItem MctpEnumerateResult               = {0x0703, Level::Info};
-    static constexpr EventStructItem MctpDiscoveryNotify               = {0x0704, Level::Info};
-    static constexpr EventStructItem MctpEnumerated                    = {0x0705, Level::Info};
-    static constexpr EventStructItem MctpUuid                          = {0x0706, Level::Info};
-    static constexpr EventStructItem MctpBackgroundCopySetup           = {0x0707, Level::Info};
-    static constexpr EventStructItem MctpEnumerateSetEid               = {0x0708, Level::Info};
-    static constexpr EventStructItem MctpNsmEventNotEnable             = {0x0709, Level::Info};
-    static constexpr EventStructItem MctpSetEidReject                  = {0x070a, Level::Info};
-    static constexpr EventStructItem MctpMcuActAsBridgePacketDrop      = {0x070b, Level::Info};
-    static constexpr EventStructItem MctpMcuActAsBridgePacketNotify    = {0x070c, Level::Info};
-    static constexpr EventStructItem MctpNsmRevokeApKey                = {0x070d, Level::Info};
-    static constexpr EventStructItem MctpNsmRevokeApRollbackProtection = {0x070e, Level::Info};
-    static constexpr EventStructItem MctpNsmEventSettingNotMatch       = {0x0710, Level::Info};
-    static constexpr EventStructItem MctpNsmRevokeKey                  = {0x0711, Level::Info};
-    static constexpr EventStructItem MctpNsmRevokeRollbackProtection   = {0x0712, Level::Info};
-    static constexpr EventStructItem MctpDumpPacket                    = {0x0713, Level::Info};
-    static constexpr EventStructItem MctpRouterQueueFail               = {0x0714, Level::Error};
-    static constexpr EventStructItem MctpRecvSetEid                    = {0x0715, Level::Info};
-    static constexpr EventStructItem MctpInvalidInterface              = {0x0716, Level::Error};
-    static constexpr EventStructItem MctpRoutingEntryNotFound          = {0x0717, Level::Error};
-    static constexpr EventStructItem MctpInvalidEidDifference          = {0x0718, Level::Error};
-    static constexpr EventStructItem MctpProtocolResetStart            = {0x0719, Level::Info};
-    static constexpr EventStructItem MctpProtocolResetEnd              = {0x0720, Level::Info};
-    static constexpr EventStructItem MctpForwardFail                   = {0x0721, Level::Error};
-    static constexpr EventStructItem MctpInvalidInterfaceIndex         = {0x0722, Level::Error};
-    static constexpr EventStructItem MctpRoutingInfoUpdateRequester    = {0x0723, Level::Info};
-    static constexpr EventStructItem MctpEnumerateRetry                = {0x0723, Level::Info};
-    static constexpr EventStructItem MctpApProvision                   = {0x0724, Level::Info};
+    static constexpr EventStructItem MctpApPgoodEventTrigger        = {0x0700, Level::Info};
+    static constexpr EventStructItem MctpApPgoodGpioState           = {0x0701, Level::Info};
+    static constexpr EventStructItem MctpEndpointState              = {0x0702, Level::Info};
+    static constexpr EventStructItem MctpEnumerateResult            = {0x0703, Level::Info};
+    static constexpr EventStructItem MctpDiscoveryNotify            = {0x0704, Level::Info};
+    static constexpr EventStructItem MctpEnumerated                 = {0x0705, Level::Info};
+    static constexpr EventStructItem MctpUuid                       = {0x0706, Level::Info};
+    static constexpr EventStructItem MctpBackgroundCopySetup        = {0x0707, Level::Info};
+    static constexpr EventStructItem MctpEnumerateSetEid            = {0x0708, Level::Info};
+    static constexpr EventStructItem MctpNsmEventNotEnable          = {0x0709, Level::Info};
+    static constexpr EventStructItem MctpSetEidReject               = {0x070a, Level::Info};
+    static constexpr EventStructItem MctpMcuActAsBridgePacketDrop   = {0x070b, Level::Info};
+    static constexpr EventStructItem MctpMcuActAsBridgePacketNotify = {0x070c, Level::Info};
+    // 0x070d and 0x070e are reserved.
+    static constexpr EventStructItem MctpNsmEventSettingNotMatch     = {0x0710, Level::Info};
+    static constexpr EventStructItem MctpNsmRevokeKey                = {0x0711, Level::Info};
+    static constexpr EventStructItem MctpNsmRevokeRollbackProtection = {0x0712, Level::Info};
+    static constexpr EventStructItem MctpDumpPacket                  = {0x0713, Level::Info};
+    static constexpr EventStructItem MctpRouterQueueFail             = {0x0714, Level::Error};
+    static constexpr EventStructItem MctpRecvSetEid                  = {0x0715, Level::Info};
+    static constexpr EventStructItem MctpInvalidInterface            = {0x0716, Level::Error};
+    static constexpr EventStructItem MctpRoutingEntryNotFound        = {0x0717, Level::Error};
+    static constexpr EventStructItem MctpInvalidEidDifference        = {0x0718, Level::Error};
+    static constexpr EventStructItem MctpProtocolResetStart          = {0x0719, Level::Info};
+    static constexpr EventStructItem MctpProtocolResetEnd            = {0x0720, Level::Info};
+    static constexpr EventStructItem MctpForwardFail                 = {0x0721, Level::Error};
+    static constexpr EventStructItem MctpInvalidInterfaceIndex       = {0x0722, Level::Error};
+    static constexpr EventStructItem MctpRoutingInfoUpdateRequester  = {0x0723, Level::Info};
+    static constexpr EventStructItem MctpEnumerateRetry              = {0x0723, Level::Info};
+    // 0x0724 is reserved.
+    static constexpr EventStructItem MctpFwdToUsI3c = {0x0725, Level::Info};
+    // Diagnostic: a received packet failed validation (dropped). Records the
+    // client (interface) and the packet's dst/src EID + msg type/command, to see
+    // which dst EID (e.g. a CPU-used address the MCU did not register) is being
+    // dropped and thus makes the CPU retry.
+    static constexpr EventStructItem MctpValidateDropV2 = {0x0727, Level::Info};
+    // Diagnostic: snapshot of the bridge's key EIDs after a UsI3c Set Endpoint
+    // ID: cur_eid[UsI3c] (our CPU-facing EID), start_eid (BMC alias base),
+    // us_i3c_eid (CPU's EID), us_usb_eid (BMC's real EID).
+    static constexpr EventStructItem MctpUsI3cEidsV2 = {0x0728, Level::Info};
+    // These three supersede 0x0721 and 0x0723. The interface enum inserted
+    // UsUsbFs and UsI3c at 2 and 3, so every later member shifted; a decoder
+    // cannot tell from a 0x0721 or 0x0723 payload alone which numbering it
+    // used. The originals stay declared but unemitted so their ids remain
+    // reserved for decoding captures taken before this change.
+    static constexpr EventStructItem MctpForwardFailV2                = {0x0729, Level::Error};
+    static constexpr EventStructItem MctpRoutingInfoUpdateRequesterV2 = {0x072a, Level::Info};
+    // Vacating 0x0723 also settles its double claim by
+    // MctpRoutingInfoUpdateRequester and MctpEnumerateRetry, which disagree on
+    // payload length (3 vs 8 bytes) and so could not both be decoded.
+    static constexpr EventStructItem MctpEnumerateRetryV2 = {0x072b, Level::Info};
 
     // PLDM
     static constexpr EventStructItem PldmError                     = {0x0800, Level::Error};
@@ -235,24 +312,23 @@ struct Event
     static constexpr EventStructItem PldmProtocolResetStart        = {0x0810, Level::Info};
     static constexpr EventStructItem PldmProtocolResetEnd          = {0x0811, Level::Info};
     static constexpr EventStructItem PldmWriteFail                 = {0x0812, Level::Error};
-    static constexpr EventStructItem PldmWriteFailAp               = {0x0813, Level::Error};
+    // 0x0813 is reserved.
     // SPDM
-    static constexpr EventStructItem SpdmError                    = {0x0900, Level::Error};
-    static constexpr EventStructItem SpdmDevIkGenerateFail        = {0x0901, Level::Error};
-    static constexpr EventStructItem SpdmDevAkGenerateFail        = {0x0902, Level::Error};
-    static constexpr EventStructItem SpdmSendToMctpFail           = {0x0903, Level::Error};
-    static constexpr EventStructItem SpdmReceiveFromMctpFail      = {0x0904, Level::Error};
-    static constexpr EventStructItem SpdmL3CertGenerateFail       = {0x0905, Level::Error};
-    static constexpr EventStructItem SpdmLockFuseBlock            = {0x0906, Level::Unknown};
-    static constexpr EventStructItem SpdmCertReady                = {0x0907, Level::Error};
-    static constexpr EventStructItem SpdmCertDdaOtpValue          = {0x0908, Level::Info};
-    static constexpr EventStructItem SpdmCryptoApAuthResult       = {0x0909, Level::Info};
+    static constexpr EventStructItem SpdmError               = {0x0900, Level::Error};
+    static constexpr EventStructItem SpdmDevIkGenerateFail   = {0x0901, Level::Error};
+    static constexpr EventStructItem SpdmDevAkGenerateFail   = {0x0902, Level::Error};
+    static constexpr EventStructItem SpdmSendToMctpFail      = {0x0903, Level::Error};
+    static constexpr EventStructItem SpdmReceiveFromMctpFail = {0x0904, Level::Error};
+    static constexpr EventStructItem SpdmL3CertGenerateFail  = {0x0905, Level::Error};
+    static constexpr EventStructItem SpdmLockFuseBlock       = {0x0906, Level::Unknown};
+    static constexpr EventStructItem SpdmCertReady           = {0x0907, Level::Error};
+    static constexpr EventStructItem SpdmCertDdaOtpValue     = {0x0908, Level::Info};
+    // 0x0909 is reserved.
     static constexpr EventStructItem SpdmAdvanceOtpInfo           = {0x090A, Level::Info};
     static constexpr EventStructItem SpdmTemplateComparisonFailed = {0x090B, Level::Error};
-    static constexpr EventStructItem SpdmCryptoApRollbackProtectionActive = {0x090C,
-                                                                             Level::Error};
-    static constexpr EventStructItem SpdmCmpaEnfCnsa          = {0x090D, Level::Info};
-    static constexpr EventStructItem RuntimeConsistencyResult = {0x090E, Level::Info};
+    // 0x090C is reserved.
+    static constexpr EventStructItem SpdmCmpaEnfCnsa = {0x090D, Level::Info};
+    // 0x090E is reserved.
 
     // Flash
     static constexpr EventStructItem FlashReqError = {0x0a00, Level::Unknown};
@@ -265,6 +341,10 @@ struct Event
     static constexpr EventStructItem SpiCannotSendToUsb   = {0x0b05, Level::Error};
     static constexpr EventStructItem SpiCannotSendToMctp  = {0x0b06, Level::Error};
     static constexpr EventStructItem SpiFlashromQueueFail = {0x0b07, Level::Error};
+    static constexpr EventStructItem SpiBmError           = {0x0b08, Level::Error};
+    static constexpr EventStructItem SpiBmTimeout         = {0x0b09, Level::Error};
+    static constexpr EventStructItem SpiBindBm            = {0x0b0a, Level::Info};
+    static constexpr EventStructItem SpiBmTrace           = {0x0b0b, Level::Error};
 
     // DebugToken
     static constexpr EventStructItem DtInstallSuccess    = {0x0c00, Level::Info};
@@ -272,6 +352,7 @@ struct Event
     static constexpr EventStructItem DtVerifyStatus      = {0x0c02, Level::Unknown};
     static constexpr EventStructItem DtAuthTokenFail     = {0x0c03, Level::Error};
     static constexpr EventStructItem DtFeatureUpdateFail = {0x0c04, Level::Error};
+    // 0x0c05 is reserved.
 
     // Perf
     static constexpr EventStructItem PerfI3c            = {0x0d00, Level::Info};
@@ -280,12 +361,15 @@ struct Event
     static constexpr EventStructItem PerfInterfaceType  = {0x0d03, Level::Info};
     static constexpr EventStructItem PerfInterfaceRecv  = {0x0d04, Level::Info};
     static constexpr EventStructItem PerfInterfaceSend  = {0x0d05, Level::Info};
+    // Supersedes 0x0d03, for the same interface renumbering described above.
+    static constexpr EventStructItem PerfInterfaceTypeV2 = {0x0d06, Level::Info};
 
     // NSM Messages
     static constexpr EventStructItem NsmLogMessages = {0x0e00, Level::Info};
     // NSM T5 EI
     static constexpr EventStructItem T5ActivateMcuException    = {0x0e01, Level::Info};
     static constexpr EventStructItem T5ActivateWatchdogTimeout = {0x0e02, Level::Info};
+    static constexpr EventStructItem T5ActivateStackCheckFail  = {0x0e08, Level::Info};
     // NSM T3 cx8 sensor debug (default: disabled in nsm_type_3.cpp)
     static constexpr EventStructItem T3Cx8TemperatureDebug = {0x0e03, Level::Debug};
     static constexpr EventStructItem T3I2cSensorNotFound   = {0x0e04, Level::Error};
@@ -295,29 +379,31 @@ struct Event
     static constexpr EventStructItem NsmEventRequest        = {0x0e07, Level::Info};
 
     // NBU NVL topology
-    static constexpr EventStructItem FruSuccess          = {0x0F00, Level::Info};
-    static constexpr EventStructItem FruI2cBusy          = {0x0F01, Level::Error};
-    static constexpr EventStructItem FruI2cNack          = {0x0F02, Level::Error};
-    static constexpr EventStructItem FruI2cTimeout       = {0x0F03, Level::Error};
-    static constexpr EventStructItem FruI2cError         = {0x0F04, Level::Error};
-    static constexpr EventStructItem FruParseError       = {0x0F05, Level::Error};
-    static constexpr EventStructItem FruChecksumError    = {0x0F06, Level::Error};
-    static constexpr EventStructItem FruNoChassisArea    = {0x0F07, Level::Error};
-    static constexpr EventStructItem FruInvalidData      = {0x0F08, Level::Error};
-    static constexpr EventStructItem FruPartNumberError  = {0x0F09, Level::Error};
-    static constexpr EventStructItem FruSerialError      = {0x0F0A, Level::Error};
-    static constexpr EventStructItem FruCustomFieldError = {0x0F0B, Level::Error};
-    static constexpr EventStructItem FruTlvDecodeError   = {0x0F0C, Level::Error};
-    static constexpr EventStructItem FruGetTopologyFail  = {0x0F10, Level::Error};
-    static constexpr EventStructItem NvlInfo             = {0x0F11, Level::Info};
-    static constexpr EventStructItem NvlCms1Fail         = {0x0F12, Level::Error};
-    static constexpr EventStructItem NvlRaw              = {0x0F13, Level::Info};
-    static constexpr EventStructItem StrapVandModuleId   = {0x0F14, Level::Info};
-    static constexpr EventStructItem NvlNvsPresent       = {0x0F15, Level::Info};
-    static constexpr EventStructItem StrapVandPeerType   = {0x0F16, Level::Info};
-    static constexpr EventStructItem FruBoardSerial      = {0x0F17, Level::Info};
-    static constexpr EventStructItem NvlSnSync           = {0x0F18, Level::Info};
-    static constexpr EventStructItem NvlSnSyncBrake      = {0x0F19, Level::Info};
+    static constexpr EventStructItem FruSuccess              = {0x0F00, Level::Info};
+    static constexpr EventStructItem FruI2cBusy              = {0x0F01, Level::Error};
+    static constexpr EventStructItem FruI2cNack              = {0x0F02, Level::Error};
+    static constexpr EventStructItem FruI2cTimeout           = {0x0F03, Level::Error};
+    static constexpr EventStructItem FruI2cError             = {0x0F04, Level::Error};
+    static constexpr EventStructItem FruParseError           = {0x0F05, Level::Error};
+    static constexpr EventStructItem FruChecksumError        = {0x0F06, Level::Error};
+    static constexpr EventStructItem FruNoChassisArea        = {0x0F07, Level::Error};
+    static constexpr EventStructItem FruInvalidData          = {0x0F08, Level::Error};
+    static constexpr EventStructItem FruPartNumberError      = {0x0F09, Level::Error};
+    static constexpr EventStructItem FruSerialError          = {0x0F0A, Level::Error};
+    static constexpr EventStructItem FruCustomFieldError     = {0x0F0B, Level::Error};
+    static constexpr EventStructItem FruTlvDecodeError       = {0x0F0C, Level::Error};
+    static constexpr EventStructItem FruGetTopologyFail      = {0x0F10, Level::Error};
+    static constexpr EventStructItem NvlInfo                 = {0x0F11, Level::Info};
+    static constexpr EventStructItem NvlCms1Fail             = {0x0F12, Level::Error};
+    static constexpr EventStructItem NvlRaw                  = {0x0F13, Level::Info};
+    static constexpr EventStructItem StrapVandModuleId       = {0x0F14, Level::Info};
+    static constexpr EventStructItem NvlNvsPresent           = {0x0F15, Level::Info};
+    static constexpr EventStructItem StrapVandPeerType       = {0x0F16, Level::Info};
+    static constexpr EventStructItem FruBoardSerial          = {0x0F17, Level::Info};
+    static constexpr EventStructItem NvlSnSync               = {0x0F18, Level::Info};
+    static constexpr EventStructItem NvlSnSyncBrake          = {0x0F19, Level::Info};
+    static constexpr EventStructItem FpgaCableCartridgeStrap = {0x0F1A, Level::Info};
+    static constexpr EventStructItem FpgaCableCartridgeFail  = {0x0F1B, Level::Error};
 
     // Voltage Monitor / Leak Detection
     static constexpr EventStructItem LeakDetectIsrNoValidReading  = {0x1000, Level::Info};
@@ -388,37 +474,31 @@ struct Event
     static constexpr EventStructItem SsifTxUnexpectedReadMulti  = {0x1407, Level::Warning};
     static constexpr EventStructItem SsifTxQueueRecvFailed      = {0x1408, Level::Error};
     static constexpr EventStructItem SsifTargetTimeout          = {0x1409, Level::Error};
+    static constexpr EventStructItem SsifInvalidChannel         = {0x140A, Level::Error};
+    static constexpr EventStructItem SsifWdtNotifyFailed        = {0x140B, Level::Error};
 
-    // SecureBoot
-    static constexpr EventStructItem SecureBootStateTransition = {0x1500, Level::Info};
-    static constexpr EventStructItem SecureBootFlashWriteFail  = {0x1501, Level::Error};
-    static constexpr EventStructItem SecureBootEventSetFail    = {0x1502, Level::Error};
-    static constexpr EventStructItem SecureBootEventClearFail  = {0x1503, Level::Error};
-    static constexpr EventStructItem SecureBootQueueSendFail   = {0x1504, Level::Error};
-    static constexpr EventStructItem SecureBootQueueRecvFail   = {0x1505, Level::Error};
-    static constexpr EventStructItem SecureBootFatal           = {0x1506, Level::Error};
-    static constexpr EventStructItem SecureBootSlotRestoreFail = {0x1507, Level::Error};
-
-    // VROT/AP Boot
-    // FPGA Ctl
-    static constexpr EventStructItem FpgaCtlInfo  = {0x1600, Level::Info};
-    static constexpr EventStructItem FpgaCtlError = {0x1601, Level::Error};
-
-    // JTAG
-    static constexpr EventStructItem JtagIdcode        = {0x1900, Level::Info};
-    static constexpr EventStructItem JtagDsmVerifyFail = {0x1901, Level::Error};
+    // 0x1500-0x1507, 0x1600-0x1601 and 0x1900-0x1901 are reserved.
 
     // Ext Flash
     static constexpr EventStructItem ExtFlashSFPDInfo = {0x1700, Level::Info};
     static constexpr EventStructItem ExtFlashError    = {0x1701, Level::Error};
 
-    // Ap Target Management
-    static constexpr EventStructItem ApInfo  = {0x1800, Level::Info};
-    static constexpr EventStructItem ApError = {0x1801, Level::Error};
+    // 0x1800-0x1803 are reserved.
 
     // RTC
     static constexpr EventStructItem RtcPorDetected       = {0x1700, Level::Error};
     static constexpr EventStructItem RtcClockLossDetected = {0x1701, Level::Error};
+
+    // Thermal
+    static constexpr EventStructItem ThermOvertPowerOff = {0x1b00, Level::Error};
+
+    // GPIO (0x1a00 block is reserved for the LSTP GPIO IRQ traces)
+    // One sample of the CPU I3C readiness GPIO, emitted for every tick the
+    // debounce is unsettled plus the tick that settles it, so a bouncing pin shows
+    // up as the counter restarting. Silent once the level has settled. Records
+    // endpoint, sampled level, AP status, the debounce counter, and the resulting
+    // debounce state.
+    static constexpr EventStructItem GpioI3cReadyDebounce = {0x1a05, Level::Info};
 
     Event()                        = delete;
     Event(const Event&)            = delete;
@@ -569,7 +649,7 @@ constexpr Id filefunc12(const std::source_location& loc)
 
 }  // namespace footprint
 
-constexpr auto FlashSize = 0xC000;
+constexpr uint32_t FlashSize = LogEntryFlashSize;
 
 constexpr uint32_t PageSize         = nv::flash::BufferSize;
 constexpr uint32_t PhraseSize       = nv::flash::PhraseSize;

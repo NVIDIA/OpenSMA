@@ -20,9 +20,11 @@
 
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <cstddef>
 
 #include "ntc_table.h"
+#include "nv/gpio/common.h"
 
 namespace nv::volt_mon {
 
@@ -34,13 +36,16 @@ constexpr auto MaxOneShotConvTime = 10;  // uint: 50ms -> 500ms
 
 constexpr uint16_t inline to_adc_value(uint16_t threshhold)
 {
+    // Round to nearest so that to_vol_value(to_adc_value(mV)) == mV (truncation loses 1 mV).
     // coverity[cert_int31_c_violation] -- safe: no data loss
-    return threshhold * AdcFullScale / AdcVolVref;
+    return (static_cast<uint32_t>(threshhold) * AdcFullScale + AdcVolVref / 2) / AdcVolVref;
 }
 
 constexpr uint16_t inline to_vol_value(uint16_t adcreading)
 {
-    return static_cast<uint32_t>(adcreading) * static_cast<uint32_t>(AdcVolVref)
+    // Round to nearest (see to_adc_value).
+    return (static_cast<uint32_t>(adcreading) * static_cast<uint32_t>(AdcVolVref)
+            + AdcFullScale / 2)
          / static_cast<uint32_t>(AdcFullScale);
 }
 
@@ -168,6 +173,18 @@ enum class AdcScanMode : uint8_t
     Invalid
 };
 
+struct AdcTrigger
+{
+    AdcTriggerSrc triggerSrc;  // ADC trigger source number (0 ~ 3)
+    AdcCommand    targetCmd;   // First ADC command of the chain started by this trigger
+    uint32_t      divider;     // Sampling frequency in volt_mon timer ticks (must be >= 1)
+};
+
+constexpr uint32_t to_divider(std::chrono::microseconds period, uint32_t timerUs)
+{
+    return static_cast<uint32_t>(period / std::chrono::microseconds{timerUs});
+}
+
 constexpr uint32_t Fifo0WatermarkInterruptEnable = 0x01;
 
 /******************************************************************************************
@@ -227,6 +244,8 @@ enum class Sensor : uint8_t
     BusBarVolt,
     McuInternalTemp,
     PgoodVolt,
+    Imon,
+    Vbat,
     Invalid
 };
 
@@ -255,6 +274,16 @@ struct VoltMon
     AdcCommand    cmdOneShot;   // ADC command number for one shot sampling mode
     AdcTriggerSrc cmdTriggerSrc;  // ADC trigger source number (0 ~ 3)
     Reading       reading;        // Current ADC reading
+};
+
+/******************************************************************************************
+ *                      IMON Sensor Structure                                             *
+ ******************************************************************************************/
+struct ImonSensor : VoltMon
+{
+    Sensor   sensor;  // Sensor type (Sensor::Imon)
+    SensorId id;      // Product-defined rail identifier
+    bool     valid;   // True after the first ADC result is received
 };
 
 /******************************************************************************************
@@ -336,6 +365,17 @@ struct McuInternalTempSensor : VoltMon
     float  tempCelsius;  // Current temperature in Celsius
 };
 
+/******************************************************************************************
+ *                      VBAT Sensor Structure                                             *
+ ******************************************************************************************/
+struct VbatSensor : VoltMon
+{
+    Sensor             sensor;       // Sensor type (Sensor::Vbat)
+    bool               valid;        // True after the first ADC result is received
+    nv::gpio::GpioPort senseEnPort;  // VBAT_SENSE_EN port, asserted while sampling
+    nv::gpio::GpioPin  senseEnPin;   // VBAT_SENSE_EN pin, asserted while sampling
+};
+
 enum class AdcMode : uint8_t
 {
     Scanning,
@@ -390,6 +430,9 @@ enum class NsmEventType : uint8_t
 constexpr AdcTriggerSrc AdcCmdTriggerSrc      = AdcTriggerSrc::_0;
 constexpr AdcTriggerSrc AdcSamplingTriggerSrc = AdcTriggerSrc::_0;
 constexpr AdcCommand    AdcCmdScanAllSensors  = AdcCommand::_1;
+
+// Timer-driven sampling: Trigger 0 → CMD 1 chain on every volt_mon timer tick
+constexpr AdcTrigger DefaultSamplingTrigger{AdcSamplingTriggerSrc, AdcCmdScanAllSensors, 1};
 
 // Temperature sensor: Independent trigger configuration
 // - Trigger 1 → CMD 15 → END → FIFO 1 (on-demand, does not participate in cmd chain)
@@ -517,10 +560,43 @@ static_assert(static_cast<uint8_t>(VrGpioState::Open) == static_cast<uint8_t>(St
     }
 
 /**
+ * @brief Disable VBAT voltage monitoring feature
+ *
+ * Use this macro in voltage_monitor_config namespace for projects that don't use
+ * VBAT voltage monitoring. It provides a stub configuration function.
+ *
+ * @example
+ * namespace voltage_monitor_config {
+ *     VOLTAGE_MONITOR_DISABLE_VBAT
+ *     // ... other config ...
+ * }
+ */
+#define VOLTAGE_MONITOR_DISABLE_VBAT                                                           \
+    constexpr nv::volt_mon::VbatSensor vbat_get_sensor_config()                                \
+    {                                                                                          \
+        return {                                                                               \
+            {   /* VoltMon base - all invalid/unused */                                        \
+                nv::volt_mon::AdcInstance::Invalid,   /* adcId */                              \
+                nv::volt_mon::AdcChannel::Invalid,    /* channel */                            \
+                nv::volt_mon::AdcScanMode::Invalid,   /* scanMode */                           \
+                nv::volt_mon::AdcCommand::None,       /* cmdScanning */                        \
+                nv::volt_mon::AdcCommand::None,       /* cmdNext */                            \
+                nv::volt_mon::AdcCommand::None,       /* cmdOneShot */                         \
+                nv::volt_mon::AdcTriggerSrc::Invalid, /* cmdTriggerSrc */                      \
+                0,                                    /* reading (not used) */                 \
+            },                                                                                 \
+            nv::volt_mon::Sensor::Invalid,            /* sensor */                             \
+            false,                                    /* valid */                              \
+            nv::gpio::InvalidGpioPort,                /* senseEnPort */                        \
+            nv::gpio::InvalidGpioPin                  /* senseEnPin */                         \
+        };                                                                                     \
+    }
+
+/**
  * @brief Enable only MCU internal temperature monitoring
  *
  * Use this macro for projects that only need MCU internal temperature monitoring.
- * It disables leak detection and busbar temperature, and provides default MCU
+ * It disables leak detection, busbar temperature and VBAT, and provides default MCU
  * internal temperature sensor configuration (ADC0, CH26, Differential, CMD15, Trigger 1).
  *
  * @example
@@ -535,6 +611,7 @@ static_assert(static_cast<uint8_t>(VrGpioState::Open) == static_cast<uint8_t>(St
     constexpr bool SensorOnAdc1  = false;                                                      \
     VOLTAGE_MONITOR_DISABLE_LEAK_DETECT                                                        \
     VOLTAGE_MONITOR_DISABLE_BUSBAR_TEMP                                                        \
+    VOLTAGE_MONITOR_DISABLE_VBAT                                                               \
     inline constexpr nv::volt_mon::McuInternalTempSensor                                       \
     mcu_internal_temp_get_sensor_config()                                                      \
     {                                                                                          \
@@ -559,7 +636,7 @@ static_assert(static_cast<uint8_t>(VrGpioState::Open) == static_cast<uint8_t>(St
  *
  * Use this macro for projects that need MCU internal temperature monitoring
  * but use the legacy sys::sensor::Driver instead of the volt_mon module.
- * It disables leak detection, busbar temperature, and provides an invalid
+ * It disables leak detection, busbar temperature, VBAT, and provides an invalid
  * MCU temp sensor config so that shared code falls back to the legacy API
  * via if constexpr.
  *
@@ -575,14 +652,15 @@ static_assert(static_cast<uint8_t>(VrGpioState::Open) == static_cast<uint8_t>(St
     constexpr bool SensorOnAdc1  = false;                                                      \
     VOLTAGE_MONITOR_DISABLE_LEAK_DETECT                                                        \
     VOLTAGE_MONITOR_DISABLE_BUSBAR_TEMP                                                        \
-    VOLTAGE_MONITOR_DISABLE_MCU_INTERNAL_TEMP
+    VOLTAGE_MONITOR_DISABLE_MCU_INTERNAL_TEMP                                                  \
+    VOLTAGE_MONITOR_DISABLE_VBAT
 
 /**
  * @brief Completely disable all voltage monitor features
  *
  * Use this macro for projects that don't need any voltage monitoring at all,
  * including MCU internal temperature. It disables leak detection, busbar
- * temperature, and MCU internal temperature.
+ * temperature, MCU internal temperature and VBAT.
  *
  * @example
  * namespace voltage_monitor_config {
@@ -596,5 +674,6 @@ static_assert(static_cast<uint8_t>(VrGpioState::Open) == static_cast<uint8_t>(St
     constexpr bool SensorOnAdc1  = false;                                                      \
     VOLTAGE_MONITOR_DISABLE_LEAK_DETECT                                                        \
     VOLTAGE_MONITOR_DISABLE_BUSBAR_TEMP                                                        \
-    VOLTAGE_MONITOR_DISABLE_MCU_INTERNAL_TEMP
+    VOLTAGE_MONITOR_DISABLE_MCU_INTERNAL_TEMP                                                  \
+    VOLTAGE_MONITOR_DISABLE_VBAT
 // clang-format on

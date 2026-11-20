@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -38,6 +39,9 @@
 #include "nv/volt_mon/ntc_table.h"
 #include "nv/volt_mon/leak_detect.h"
 #include "nv/volt_mon/mcu_internal_temp.h"
+#if defined(NV_VOLT_MON_IMON_ENABLE)
+#include "nv/volt_mon/imon.h"
+#endif
 #include "sys/sensor/sensor.h"
 using namespace nv;
 using namespace mctp;
@@ -277,6 +281,65 @@ TelemetryValue get_internal_sensor_temperature()
     }
     return temperature;
 }
+
+#if defined(NV_VOLT_MON_IMON_ENABLE)
+TelemetryValue get_imon_voltage_microvolts(uint8_t sensorId)
+{
+    uint8_t imonSensorIndex = nv::ipc::voltage_monitor_config::ImonSensorNum;
+    switch (sensorId) {
+        case T3Voltage::PorImon0:
+            imonSensorIndex = nv::ipc::voltage_monitor_config::Imon0;
+            break;
+        case T3Voltage::PorImon1:
+            imonSensorIndex = nv::ipc::voltage_monitor_config::Imon1;
+            break;
+        case T3Voltage::PorImon2:
+            imonSensorIndex = nv::ipc::voltage_monitor_config::Imon2;
+            break;
+        case T3Voltage::PorImon3:
+            imonSensorIndex = nv::ipc::voltage_monitor_config::Imon3;
+            break;
+        default: return TelemetryInvalid;
+    }
+
+    std::array<nv::volt_mon::ImonSensor, nv::ipc::voltage_monitor_config::ImonSensorNum>
+        sensors{};
+    if (nv::imon::Imon::inst().get_sensor_info(sensors) != nv::volt_mon::Status::Ok
+        || imonSensorIndex >= sensors.size() || !sensors.at(imonSensorIndex).valid) {
+        return TelemetryInvalid;
+    }
+
+    constexpr uint32_t MicrovoltsPerMillivolt = 1000U;
+    return static_cast<TelemetryValue>(
+        nv::volt_mon::to_vol_value(sensors.at(imonSensorIndex).reading)
+        * MicrovoltsPerMillivolt);
+}
+
+TelemetryValue get_imon_current_milliamps(uint8_t sensorId)
+{
+    std::array<nv::volt_mon::ImonSensor, nv::ipc::voltage_monitor_config::ImonSensorNum>
+        sensors{};
+    if (nv::imon::Imon::inst().get_sensor_info(sensors) != nv::volt_mon::Status::Ok) {
+        return TelemetryInvalid;
+    }
+
+    for (const auto& sensor : sensors) {
+        if (sensor.id != sensorId) {
+            continue;
+        }
+        if (!sensor.valid) {
+            return TelemetryInvalid;
+        }
+        // The IMON pin reports load current as a sense voltage, so the mV -> mA ratio is
+        // board specific and comes from the product IMON configuration.
+        return static_cast<TelemetryValue>(
+            static_cast<uint32_t>(nv::volt_mon::to_vol_value(sensor.reading))
+            * nv::ipc::voltage_monitor_config::ImonMilliampsPerMillivoltNum
+            / nv::ipc::voltage_monitor_config::ImonMilliampsPerMillivoltDen);
+    }
+    return TelemetryInvalid;
+}
+#endif
 
 TelemetryValue get_cx8_sensor_temperature(uint8_t sensorId)
 {
@@ -686,6 +749,22 @@ TelemetryValue getVoltageTelemetry(const uint8_t sensorId)
     return telemetry_value;
 }
 
+TelemetryValue getCurrentTelemetry(const uint8_t sensorId)
+{
+#if defined(NV_VOLT_MON_IMON_ENABLE)
+    return get_imon_current_milliamps(sensorId);
+#else
+    (void)sensorId;
+    return TelemetryInvalid;
+#endif
+}
+
+// The strong function is defined in product code.
+__attribute__((weak)) std::span<const T3Current> currentSensors()
+{
+    return {};  // default: product has no current sensors
+}
+
 // The strong function is defined in product code. For pg558_hpm, in main.cpp
 __attribute__((weak)) bool is_busbar_available()
 {
@@ -727,6 +806,16 @@ bool is_voltage_sensor_available(uint8_t sensorId)
     }
 
     for (const auto& validSensorId : mcuVoltageSensors) {
+        if (validSensorId == sensorId) {
+            return true;  // Found the sensor
+        }
+    }
+    return false;  // Sensor not found.
+}
+
+bool is_current_sensor_available(uint8_t sensorId)
+{
+    for (const auto& validSensorId : currentSensors()) {
         if (validSensorId == sensorId) {
             return true;  // Found the sensor
         }
@@ -778,6 +867,17 @@ Ccode createVoltageResponse(const uint8_t tagId, NsmPktResp& ntx)
     const uint32_t voltage_value = getVoltageTelemetry(tagId);
     ntx.data_size                = sizeof(uint32_t);
     std::memcpy(&ntx.data[0], &voltage_value, sizeof(uint32_t));
+    return Ccode::Success;
+}
+
+Ccode createCurrentResponse(const uint8_t tagId, NsmPktResp& ntx)
+{
+    if (false == is_current_sensor_available(tagId)) {
+        return Ccode::ErrorInvalidData;
+    }
+    const uint32_t current_value = getCurrentTelemetry(tagId);
+    ntx.data_size                = sizeof(uint32_t);
+    std::memcpy(&ntx.data[0], &current_value, sizeof(uint32_t));
     return Ccode::Success;
 }
 
@@ -835,6 +935,27 @@ Ccode createVoltageAggregateResponse(NsmPktBulkResp& ntx_bulk, uint16_t& size_re
         voltageValue     = getVoltageTelemetry(tagId);
         const bool valid = (voltageValue != TelemetryInvalid) ? true : false;
         if (false == appendTelemetryRecord(tagId, voltageValue, aggregateArray, valid)) {
+            return Ccode::ErrorInvalidLength;
+        }
+    }
+    size_response            = aggregateArray.arraySize();
+    ntx_bulk.telemetry_count = aggregateArray.elements();
+    return Ccode::Success;
+}
+
+Ccode createCurrentAggregateResponse(NsmPktBulkResp& ntx_bulk, uint16_t& size_response)
+{
+    // aggregateArray fills ntx_bulk->data[0] ... ntx_bulk->data[N]
+    TelemetryRecordArray aggregateArray(&ntx_bulk.data[0],
+                                        TelemetryRecordArray::DefaultMctpDataSize);
+    if (false == aggregateArray.addTimestampRecord(NsmPlatEnvTempAggregate)) {
+        return Ccode::ErrorInvalidLength;
+    }
+
+    for (const auto tagId : currentSensors()) {
+        const uint32_t currentValue = getCurrentTelemetry(tagId);
+        const bool     valid        = (currentValue != TelemetryInvalid) ? true : false;
+        if (false == appendTelemetryRecord(tagId, currentValue, aggregateArray, valid)) {
             return Ccode::ErrorInvalidLength;
         }
     }
@@ -937,6 +1058,13 @@ bool Nsm::process_platform_enviromentals(const Packet& rx, Packet& tx)
         case cmd::GetVoltage:
             if constexpr (is_cmd_set(NsmMsgType::PlatformEnviromentals, cmd::GetVoltage)) {
                 on_plat_env_getVoltage(rx, tx);
+                break;
+            }
+            return unsupported_command();
+
+        case cmd::GetCurrent:
+            if constexpr (is_cmd_set(NsmMsgType::PlatformEnviromentals, cmd::GetCurrent)) {
+                on_plat_env_getCurrent(rx, tx);
                 break;
             }
             return unsupported_command();
@@ -1071,6 +1199,50 @@ void Nsm::on_plat_env_getVoltage(const Packet& rx, Packet& tx)
         auto&    ntx_bulk      = NsmPktBulkResp::from(tx);
         uint16_t size_response = 0;
         auto     rcCode = nsm_type3::createVoltageAggregateResponse(ntx_bulk, size_response);
+        if (rcCode != Ccode::Success) {
+            fill_error_packet(rcCode, rx, tx);
+            return;
+        }
+        tx.priv.packet_length = sizeof(Header) + AggregateHeaderResponseSize;
+        if ((tx.priv.packet_length + size_response) < std::numeric_limits<uint16_t>::max()) {
+            tx.priv.packet_length += size_response;
+        }
+    }
+}
+
+void Nsm::on_plat_env_getCurrent(const Packet& rx, Packet& tx)
+{
+    constexpr uint8_t RequestSize = 1;
+    if (!is_input_length_valid(rx, RequestSize)) {
+        fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+        return;
+    }
+
+    if (nsm_type3::currentSensors().empty()) {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+        return;
+    }
+
+    fill_packet_header(rx, tx);
+    fill_nsm_msg_header(rx, tx);
+
+    auto& nrx           = NsmPktReq::from(rx);
+    auto& ntx           = NsmPktResp::from(tx);
+    ntx.data_size       = 0;
+    ntx.completion_code = Ccode::Success;
+    auto tagId          = nrx.data[0];
+    if (tagId < NsmPlatEnvTempAggregate) {
+        auto rcCode = nsm_type3::createCurrentResponse(tagId, ntx);
+        if (rcCode != Ccode::Success) {
+            fill_error_packet(rcCode, rx, tx);
+            return;
+        }
+        tx.priv.packet_length = sizeof(Header) + HeaderResponseSize + ntx.data_size;
+    }
+    else {
+        auto&    ntx_bulk      = NsmPktBulkResp::from(tx);
+        uint16_t size_response = 0;
+        auto     rcCode = nsm_type3::createCurrentAggregateResponse(ntx_bulk, size_response);
         if (rcCode != Ccode::Success) {
             fill_error_packet(rcCode, rx, tx);
             return;

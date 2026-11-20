@@ -39,7 +39,7 @@ MEMORY
 {
   m_interrupts          (RX)  : ORIGIN = 0x10000000, LENGTH = 0x000002B0 // 688
   m_header              (RW)  : ORIGIN = 0x100002B0, LENGTH = 0x00000150 // 336
-  m_text                (RX)  : ORIGIN = 0x10000400, LENGTH = 0x00060000
+  m_text                (RX)  : ORIGIN = 0x10000400, LENGTH = 0x0005BC00
   m_FMC                 (RW)  : ORIGIN = 0x30000000, LENGTH = 0x00002300 // 8960
   m_MailBox             (RW)  : ORIGIN = 0x30002300, LENGTH = 0x00000100 // 256
   m_data                (RW)  : ORIGIN = 0x30002400, LENGTH = 0x0005DC00

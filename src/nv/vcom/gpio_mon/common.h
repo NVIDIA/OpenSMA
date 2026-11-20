@@ -25,7 +25,7 @@ namespace nv::gpio_mon {
 // 5 banks (GPIO0..4) is the protocol contract. See SW requirement spec:
 // https://nvidia.atlassian.net/wiki/spaces/SSGSystem/pages/2637607020/Software+requirement+and+validation+state
 constexpr uint8_t  BankCount    = 5;
-constexpr uint32_t ScanPeriodMs = 100;
+constexpr uint32_t ScanPeriodMs = 5;
 
 enum class PacketHeader : uint32_t
 {
@@ -49,6 +49,9 @@ constexpr size_t InitMaskCmdSize = 4 + BankCount * 4;
 // Header (4B) + Timestamp (4B) + Bank PDIRs (BankCount * 4B)
 constexpr size_t FullIoDumpRecordSize = 4 + 4 + BankCount * 4;
 // Header (4B) + Timestamp (4B) + Bank PDIR (4B)
+// On any bank interrupt we emit BankCount of these records (one per bank, headers
+// Bank0..Bank4InterruptDump) sharing one timestamp, so the host gets every bank's I/O
+// state per interrupt while keeping the original per-bank record layout.
 constexpr size_t BankInterruptDumpRecordSize = 4 + 4 + 4;
 
 }  // namespace nv::gpio_mon

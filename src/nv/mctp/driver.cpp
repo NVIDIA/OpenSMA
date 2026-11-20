@@ -21,12 +21,14 @@
 #include <cstring>
 #include <variant>
 
+#include "corepdk/modules/mctp-cpp/src/app/pdk-mctp-app-control-plat.h"
 #include "nv/common/system.h"
 #include "nv/gpio/common.h"
 #include "nv/gpio/driver.h"
 #include "nv/i2c/task.h"
 #include "nv/i3c/task.h"
 #include "nv/ipc/event.h"
+#include "nv/ipc/mctp_bridge_config.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
 #include "nv/ipc/timer.h"
@@ -46,6 +48,7 @@
 #include "nv/spdm/task.h"
 #include "nv/spi/task.h"
 #include "nv/usb/task.h"
+#include "nv/usb/fs_task.h"
 #include "nv/watchdog/runtime.h"
 #include "nv/i2c/smb_direct.h"
 #include "sys/ipc/driver.h"
@@ -161,6 +164,10 @@ void Driver::init()
                 case static_cast<uint16_t>(CmdCode::WdtEvent): on_wdt_event(); break;
                 case static_cast<uint16_t>(Client::UsI2c):
                 case static_cast<uint16_t>(Client::UsUsb):
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+                case static_cast<uint16_t>(Client::UsUsbFs):
+#endif
+                case static_cast<uint16_t>(Client::UsI3c):
                 case static_cast<uint16_t>(Client::DsI2c0):
                 case static_cast<uint16_t>(Client::DsI2c1):
                 case static_cast<uint16_t>(Client::DsI2c2):
@@ -193,7 +200,7 @@ void Driver::init()
                 case static_cast<uint16_t>(CmdCode::Enumerate)    : on_enumerate(); break;
                 case static_cast<uint16_t>(CmdCode::EnumerateDone): on_enumerate_done(); break;
                 case static_cast<uint16_t>(CmdCode::DiscoveryNotify):
-                    on_discovery_notify();
+                    on_discovery_notify(Cmd.data1 != 0);
                     break;
                 case static_cast<uint16_t>(CmdCode::RotStateInfoChange):
                     on_type6_event(NsmFwEvent::RotStateInformationChangeEvent);
@@ -282,6 +289,15 @@ void Driver::on_receive(Client client)
 
     if (_validator.validate(rx, client) == false) {
         // dump_packet(rx, mctp_buf_size);
+        if constexpr (nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+            const auto& drx = Control::PktReq::from(rx);
+            logger::info(logger::Event::MctpValidateDropV2,
+                         {static_cast<uint8_t>(client),
+                          drx.dst_eid,
+                          drx.src_eid,
+                          static_cast<uint8_t>(drx.msg_type),
+                          static_cast<uint8_t>(drx.command_code)});
+        }
         return;
     }
 
@@ -329,10 +345,24 @@ void Driver::on_receive(Client client)
                 break;
             }
             memset(_mctp_tx_buf.data(), 0, _mctp_tx_buf.size());
+            bool trigger_us_i3c_discovery_notify = false;
+            if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+                // UsI3c (DSP0233 endpoint-as-controller, Figure 7): the CPU bus
+                // owner starts the handshake with Get MCTP Version. Once we have
+                // replied, MCU must send the pre-enumeration DiscoveryNotify to
+                // ask the CPU to assign an EID.
+                const auto& crx                 = Control::PktReq::from(mctp_rx);
+                trigger_us_i3c_discovery_notify = client == Client::UsI3c && crx.rq
+                                               && crx.command_code
+                                                      == pdk::mctp::app::Cmd::GetMctpVerSupport;
+            }
             _control.process(mctp_rx, tx);
             if (tx.priv.packet_length != 0) {
                 nv::ipc::Queue::Item control_item{_mctp_tx_buf};
                 on_forward_message(control_item);
+            }
+            if (trigger_us_i3c_discovery_notify && tx.priv.packet_length != 0) {
+                on_discovery_notify(true);
             }
             break;
         }
@@ -383,6 +413,51 @@ void Driver::forward([[maybe_unused]] Client client, const Packet& tx)
     // dump_packet(tx, Constants::BufferSize);
     bool is_forwarded = true;
 
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (client == Client::UsI3c) {
+            // Rewriting the destination EID is the only reason this function ever
+            // needs a mutable packet, so the copy belongs on this hop rather than
+            // costing every other client a full-packet memcpy.
+            Packet routed_tx = tx;
+            // Resolve CPU alias -> real EID and check whether the alias is
+            // backed by a completed I3C DAA before touching the bus.
+            bool    alias_ready = true;
+            uint8_t real_eid    = routed_tx.hdr.dst_eid;
+            for (uint8_t i = 0; i < nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum; i++) {
+                const auto& alias = _control.routing_map().at(
+                    nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase + i);
+                if (alias.client == Client::UsI3c
+                    && alias.assigned_eid == routed_tx.hdr.dst_eid) {
+                    alias_ready = alias.is_enumerated && alias.bridge_real_eid != 0;
+                    real_eid    = alias_ready ? alias.bridge_real_eid : 0;
+                    break;
+                }
+            }
+            // Trace every MCTP packet routed toward the CPU so BMC/MCU -> CPU
+            // traffic can be correlated with the I3C bus bring-up state.
+            if constexpr (nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+                nv::logger::info(nv::logger::Event::MctpFwdToUsI3c,
+                                 {routed_tx.hdr.dst_eid,
+                                  real_eid,
+                                  routed_tx.hdr.src_eid,
+                                  routed_tx.msg[0],
+                                  routed_tx.msg[1],
+                                  routed_tx.msg[2],
+                                  static_cast<uint8_t>(alias_ready ? 1U : 0U),
+                                  0});
+            }
+            if (!alias_ready) {
+                return;
+            }
+            routed_tx.hdr.dst_eid = real_eid;
+            if (nv::i3c::Task::tx(routed_tx) != nv::i3c::Task::Status::Ok) {
+                nv::logger::info(nv::logger::Event::MctpForwardFailV2,
+                                 {static_cast<uint8_t>(client)});
+            }
+            return;
+        }
+    }
+
     if (client == Client::UsI2c || client == Client::DsI2c0 || client == Client::DsI2c1
         || client == Client::DsI2c2 || client == Client::DsI2c3 || client == Client::DsI2c4
         || client == Client::DsI2c5 || client == Client::DsI2c6 || client == Client::DsI2c7) {
@@ -412,6 +487,15 @@ void Driver::forward([[maybe_unused]] Client client, const Packet& tx)
             is_forwarded = false;
         }
     }
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    else if (client == Client::UsUsbFs) {
+        auto item   = ipc::Queue::Item(std::bit_cast<uint8_t*>(&tx), Constants::BufferSize);
+        auto status = usb::FsTask::usb_tx(item);
+        if (status != usb::Status::Ok) {
+            is_forwarded = false;
+        }
+    }
+#endif
     else if (client == Client::Pldm) {
         // Drop PLDM Type 5 (Firmware Update) when hang is detected
         if (tx.msg[2] == NV_PLDM_TYPE_FIRMWARE_UPDATE && get_task().pldm_t5_hang_detected()) {
@@ -435,7 +519,7 @@ void Driver::forward([[maybe_unused]] Client client, const Packet& tx)
         return;
     }
     if (!is_forwarded) {
-        nv::logger::info(nv::logger::Event::MctpForwardFail, {static_cast<uint8_t>(client)});
+        nv::logger::info(nv::logger::Event::MctpForwardFailV2, {static_cast<uint8_t>(client)});
         return;
     }
 }
@@ -495,8 +579,28 @@ void Driver::on_enumerate()
 
     Packet tx{};
 
-    auto index = 0;
-    if (!ipc::DownStreamInfos.empty()) {
+    uint8_t index = 0;
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        // The CPU domain only owns the BMC alias slot. Refresh it and keep going: the
+        // downstream endpoints belong to the BMC pool and must still be (re-)enumerated
+        // even when the CPU was the most recent bus owner to allocate.
+        if (_control.get_allocate_eid_bus() == static_cast<uint8_t>(Client::UsI3c)) {
+            auto&         map          = _control.routing_map();
+            const uint8_t alias_eid    = _control.get_start_eid();
+            const uint8_t bmc_real_eid = _control.get_us_usb_eid();
+            auto&         entry        = map.at(nv::ipc::MctpBridgeConfig<>::BmcAliasSlotIndex);
+            entry.assigned_eid         = alias_eid;
+            entry.bridge_real_eid      = bmc_real_eid;
+            entry.client               = Client::UsUsb;
+            entry.is_enumerated        = true;
+            entry.is_need_enumerate    = false;
+            logger::info(logger::Event::MctpEnumerateSetEid,
+                         {static_cast<uint8_t>(Client::UsUsb), alias_eid});
+            _enum_done_timer.start();
+        }
+    }
+
+    if (!ipc::DownStreamInfos.empty() && _control.is_ds_pool_allocated()) {
         auto& map = _control.routing_map();
         for (auto& info : ipc::DownStreamInfos) {
             // prepare packets, gen mctp header
@@ -512,21 +616,80 @@ void Driver::on_enumerate()
                     MsgTag,   // msg_tag
                     HdrVer);  // hdr_ver
 
-                // gen set eid pkt
-                _control.on_gen_set_endpoint_id(
-                    tx,
-                    static_cast<uint8_t>((_control.get_start_eid() + index) & UINT8_MAX),
-                    SetEndpoint::SetEidForced);
+                const uint8_t ds_eid = pdk::mctp::platforms::get_downstream_pool_eid(
+                    _control.get_ds_pool_start_eid(), index);
 
+                // gen set eid pkt
+                _control.on_gen_set_endpoint_id(tx, ds_eid, SetEndpoint::SetEidForced);
+
+                map.at(index).assigned_eid = ds_eid;
                 forward(info.client, tx);
                 map.at(index).is_set_eid_sent = true;
                 logger::info(
                     logger::Event::MctpEnumerateSetEid,
                     {static_cast<uint8_t>(static_cast<uint16_t>(info.client) & UINT8_MAX),
-                     static_cast<uint8_t>((_control.get_start_eid() + index) & UINT8_MAX)});
+                     ds_eid});
             }
             index++;
         }
+
+        if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+            if (_control.get_allocate_eid_bus() == static_cast<uint8_t>(Client::UsUsb)) {
+                uint8_t alias_index = 0;
+                if constexpr (nv::ipc::MctpBridgeConfig<>::BridgeEndpointNum > 0) {
+                    for (const auto& bridge_endpoint :
+                         nv::ipc::MctpBridgeConfig<>::BridgeEndpointInfos) {
+                        if (bridge_endpoint.type != nv::ipc::MctpBridgeEndpointType::CpuAlias) {
+                            continue;
+                        }
+                        if (alias_index >= nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum) {
+                            break;
+                        }
+                        const auto cpu_alias_eid = static_cast<uint8_t>(
+                            (_control.get_start_eid() + bridge_endpoint.eid_offset)
+                            & UINT8_MAX);
+                        auto& entry = map.at(nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase
+                                             + alias_index);
+                        entry.assigned_eid      = cpu_alias_eid;
+                        entry.bridge_real_eid   = 0;
+                        entry.client            = static_cast<Client>(bridge_endpoint.client);
+                        entry.is_enumerated     = false;
+                        entry.is_need_enumerate = false;
+                        entry.is_set_eid_sent   = false;
+                        logger::info(logger::Event::MctpEnumerateSetEid,
+                                     {bridge_endpoint.client, cpu_alias_eid});
+                        alias_index++;
+                    }
+                }
+                else {
+                    for (uint8_t i = 0; i < nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum;
+                         i++) {
+                        const auto cpu_alias_eid = static_cast<uint8_t>(
+                            (_control.get_start_eid()
+                             + nv::ipc::MctpBridgeConfig<>::DownStreamStartOffset
+                             + ipc::DownStreamNum + i)
+                            & UINT8_MAX);
+                        auto& entry = map.at(nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase + i);
+                        entry.assigned_eid      = cpu_alias_eid;
+                        entry.bridge_real_eid   = 0;
+                        entry.client            = Client::UsI3c;
+                        entry.is_enumerated     = false;
+                        entry.is_need_enumerate = false;
+                        entry.is_set_eid_sent   = false;
+                        logger::info(logger::Event::MctpEnumerateSetEid,
+                                     {static_cast<uint8_t>(Client::UsI3c), cpu_alias_eid});
+                    }
+                }
+
+                // The CPU alias EIDs just became routable, but this path is
+                // driven by the BMC's own Allocate Endpoint IDs rather than by
+                // an endpoint status change, so nothing else arms the notify.
+                // Without it the BMC keeps the routing table snapshot it took
+                // before the aliases existed and never learns them.
+                _is_send_notify = true;
+            }
+        }
+
         _enum_done_timer.start();
     }
 }
@@ -534,6 +697,59 @@ void Driver::on_enumerate()
 void Driver::on_enumerate_done()
 {
     auto& map = _control.routing_map();
+
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        const auto assign_cpu_alias = [this, &map](uint8_t real_eid) {
+            if (real_eid == 0) {
+                return;
+            }
+            for (uint8_t i = 0; i < nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum; i++) {
+                if (map.at(nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase + i).bridge_real_eid
+                    == real_eid) {
+                    return;
+                }
+            }
+            for (uint8_t i = 0; i < nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum; i++) {
+                auto& slot = map.at(nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase + i);
+                if (slot.client == Client::UsI3c && slot.assigned_eid != 0
+                    && slot.bridge_real_eid == 0) {
+                    slot.bridge_real_eid   = real_eid;
+                    slot.is_enumerated     = true;
+                    slot.is_need_enumerate = false;
+                    slot.is_set_eid_sent   = false;
+                    // This is the first point at which Get Routing Table Entry
+                    // reports the alias, so it is the first point at which a
+                    // re-read by the BMC is worth anything. The notify at the end
+                    // of this function runs after the map has been updated.
+                    _is_send_notify = true;
+                    return;
+                }
+            }
+        };
+
+        constexpr uint8_t UsI3cRoutingSlot = ipc::DownStreamNum + 2U;
+        // A discarded if constexpr arm is still fully analysed outside a
+        // template, so the assert has to hold for non-bridge products as well.
+        static_assert(!nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode
+                          || UsI3cRoutingSlot < ipc::RoutingTableSize,
+                      "RoutingTableSize too small for UsI3c upstream slot");
+        if (map.at(UsI3cRoutingSlot).is_enumerated) {
+            assign_cpu_alias(_control.get_us_i3c_eid());
+        }
+        for (uint8_t i = 0; i < nv::ipc::RoutingInfoUpdateSize; i++) {
+            const auto& add = map.at(nv::ipc::DefaultRoutingTableSize + i);
+            if (add.is_enumerated && add.client == Client::UsI3c) {
+                assign_cpu_alias(add.assigned_eid);
+            }
+        }
+
+        // The CPU can allocate before the BMC has, which binds the BMC alias to an
+        // EID that is not known yet; keep it in step with the BMC's current EID.
+        auto& bmc_alias = map.at(nv::ipc::MctpBridgeConfig<>::BmcAliasSlotIndex);
+        if (bmc_alias.is_enumerated && bmc_alias.client == Client::UsUsb) {
+            bmc_alias.bridge_real_eid = _control.get_us_usb_eid();
+        }
+    }
 
     for (auto& entry : map) {
         if (entry.is_enumerated == true) {
@@ -566,7 +782,7 @@ void Driver::on_enumerate_done()
             _enumerate_retry_count++;
             retry_log.at(0) = _enumerate_retry_count;
             retry_log.at(1) = pending_count;
-            logger::info(logger::Event::MctpEnumerateRetry, retry_log);
+            logger::info(logger::Event::MctpEnumerateRetryV2, retry_log);
             on_enumerate();
             return;
         }
@@ -593,6 +809,19 @@ void Driver::on_enumerate_done()
     }
     usb::Task::set_update_routing_table_event();
 
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    auto& fs_router_queue = ipc::Queue::make(ipc::QueueId::UsbFsRoutingTable);
+    while (fs_router_queue.recv(item_tmp, 0s) == ipc::Queue::Status::Ok) {}
+    queue_status = fs_router_queue.send(
+        item, 100ms, sys::ipc::task::Driver::get_core_from_client(Client::UsUsbFs));
+    if (queue_status != ipc::Queue::Status::Ok) {
+        logger::error(
+            logger::Event::MctpRouterQueueFail,
+            {static_cast<uint8_t>(queue_status), static_cast<uint8_t>(Client::UsUsbFs)});
+    }
+    usb::FsTask::set_update_routing_table_event();
+#endif
+
     for (uint8_t upstream_index = 0; upstream_index < ipc::UpStreamNum; upstream_index++) {
         auto entry = map.at(upstream_index + ipc::DownStreamNum);
         if (entry.is_enumerated && entry.client == mctp::Client::UsI2c) {
@@ -604,6 +833,16 @@ void Driver::on_enumerate_done()
                                static_cast<uint8_t>(mctp::Client::UsI2c)});
             }
             i2c::Task::update_routing_table(mctp::Client::UsI2c);
+        }
+        else if (entry.is_enumerated && entry.client == mctp::Client::UsI3c) {
+            auto queue_status = _router_queue.send(
+                item, 100ms, sys::ipc::task::Driver::get_core_from_client(mctp::Client::UsI3c));
+            if (queue_status != ipc::Queue::Status::Ok) {
+                logger::error(logger::Event::MctpRouterQueueFail,
+                              {static_cast<uint8_t>(queue_status),
+                               static_cast<uint8_t>(mctp::Client::UsI3c)});
+            }
+            i3c::Task::update_routing_table(mctp::Client::UsI3c);
         }
     }
 
@@ -668,37 +907,95 @@ void Driver::on_enumerate_done()
     }
 }
 
-void Driver::on_discovery_notify()
+void Driver::on_discovery_notify(bool allow_unenumerated_notify)
 {
-    auto is_enumeate = _control.is_enumerated();
-    if (!is_enumeate) {
+    // A caller that only wants the post-enumeration "re-discovery" hint has to
+    // leave the request pending until this endpoint owns an EID: clearing
+    // _is_send_notify below would drop it for good, because nothing re-arms the
+    // flag and every routing entry is still un-enumerated at this point anyway.
+    // UsI3c opts out because DSP0233 Figure 7 has the CPU bus owner probe first,
+    // so that path legitimately notifies with NULL_EID before enumeration.
+    if (!_control.is_enumerated() && !allow_unenumerated_notify) {
         return;
     }
 
-    // Clear flag only after confirming we can send
-    _is_send_notify = false;
+    // Since the loop below skips every non-UsI3c upstream on this path, it reaches
+    // the CPU only and must not consume a request raised for an upstream bus owner.
+    // on_endpoint_status_change() arms the flag and leaves it for the deferred
+    // on_enumerate_done(), and nothing re-arms it, so clearing it here would drop
+    // that notify for good.
+    if (!allow_unenumerated_notify) {
+        _is_send_notify = false;
+    }
 
     constexpr static uint8_t IsRespnse = false;
     constexpr static uint8_t MsgTag    = 0;
     constexpr static uint8_t HdrVer    = 1;
+    constexpr static uint8_t NullEid   = 0;
+    // Ordinal within the upstream block, not an index into the routing map.
+    constexpr static uint8_t UsI3cUpstreamOrdinal = 2;
 
     auto& map = _control.routing_map();
     for (uint8_t upstream_index = 0; upstream_index < ipc::UpStreamNum; upstream_index++) {
         auto entry = map.at(upstream_index + ipc::DownStreamNum);
-        if (!entry.is_enumerated) {
-            continue;
-        }
+
         uint8_t dst_eid{};
         Client  client{};
         Packet  tx{};
 
-        if (entry.client == mctp::Client::UsI2c) {
+        // Only the bridge owns a UsI3c upstream, and that slot is identified by
+        // position rather than by entry.client: the client is filled in only once
+        // the CPU bus owner has sent SetEndpointID, so keying off it would
+        // suppress the very first DiscoveryNotify.
+        const bool is_us_i3c_slot = nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode
+                                 && upstream_index == UsI3cUpstreamOrdinal;
+        // allow_unenumerated_notify marks the UsI3c bring-up handshake, whose
+        // only purpose is to prod the CPU into (re-)enumerating. The CPU
+        // aliases cannot be bound yet at that point, so telling the BMC to
+        // re-read here makes it observe a routing table without aliases and
+        // drop the ones it already has.
+        if (allow_unenumerated_notify && !is_us_i3c_slot) {
+            continue;
+        }
+        // Every other notify keeps the original "must be enumerated first"
+        // semantic; only the bring-up handshake may reach a CPU that has not
+        // enumerated this endpoint yet.
+        if (!entry.is_enumerated && !allow_unenumerated_notify) {
+            continue;
+        }
+        // The re-discovery hint is for bus owners that route to the CPU aliases.
+        // The CPU owns those endpoints and needs only the bring-up handshake;
+        // telling it to re-discover makes it rerun Allocate Endpoint IDs and
+        // Routing Info Update on every alias bind.
+        if (is_us_i3c_slot && !allow_unenumerated_notify) {
+            continue;
+        }
+
+        if (is_us_i3c_slot) {
+            // UsI3c: use the bus owner EID if we already learned it from a
+            // previous SetEndpointID round. The first DiscoveryNotify is sent
+            // with NULL_EID only after the CPU's Get MCTP Version request.
+            client  = mctp::Client::UsI3c;
+            dst_eid = entry.is_enumerated ? _control.get_us_i3c_eid() : NullEid;
+        }
+        else if (entry.client == mctp::Client::UsI2c) {
             dst_eid = _control.get_us_i2c_eid();
             client  = mctp::Client::UsI2c;
         }
-        else if (entry.client == mctp::Client::UsUsb) {
-            dst_eid = _control.get_allocate_src_eid();
-            client  = mctp::Client::UsUsb;
+        else if (entry.client == mctp::Client::UsUsb
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+                 || entry.client == mctp::Client::UsUsbFs
+#endif
+        ) {
+            // DiscoveryNotify has to reach the bus owner of this medium, which
+            // is the one that allocated over USB rather than whichever upstream
+            // allocated most recently.
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+            dst_eid = _control.get_upstream_src_eid(entry.client);
+#else
+            dst_eid = _control.get_us_usb_eid();
+#endif
+            client = entry.client;
         }
         else {
             continue;
@@ -713,6 +1010,13 @@ void Driver::on_discovery_notify()
                                         HdrVer);  // hdr_ver
 
         _control.on_gen_notify_discovery(tx);
+        // UsI3c (DSP0233 endpoint-as-controller): DiscoveryNotify is a genuine
+        // request that expects the CPU bus owner to respond and continue
+        // enumeration, so it must be sent as a Request (D=0). Legacy
+        // UsI2c/UsUsb keep the datagram (D=1) re-discovery semantics untouched.
+        if (is_us_i3c_slot) {
+            mctp::Control::PktReq::from(tx).d = 0;
+        }
         _control.update_eid(tx, static_cast<uint8_t>(client));
 
         forward(client, tx);
@@ -767,6 +1071,14 @@ void Driver::on_endpoint_timer_done(uint8_t endpoint_index)
 
 void Driver::on_endpoint_status_change_handler(uint8_t endpoint_index, uint8_t status)
 {
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        constexpr uint8_t UsI3cRoutingSlot = ipc::DownStreamNum + 2U;
+        if (endpoint_index == UsI3cRoutingSlot) {
+            on_us_i3c_status_change(status);
+            return;
+        }
+    }
+
     if (endpoint_index >= EndpointCount) {
         return;
     }
@@ -795,6 +1107,33 @@ void Driver::on_endpoint_status_change_handler(uint8_t endpoint_index, uint8_t s
     else {
         on_endpoint_status_change(endpoint_index, status);
     }
+}
+
+void Driver::on_us_i3c_status_change(uint8_t status)
+{
+    constexpr uint8_t UsI3cRoutingSlot = ipc::DownStreamNum + 2U;
+    logger::info(logger::Event::MctpEndpointState, {UsI3cRoutingSlot, status});
+
+    if (status != 0U) {
+        return;
+    }
+
+    // UsI3c is an upstream bridge domain, not a normal downstream entry. Clear
+    // every real and alias entry associated with it so the BMC never retains
+    // CPU aliases after the CPU link is declared down.
+    auto& map = _control.routing_map();
+    for (auto& entry : map) {
+        if (entry.client != Client::UsI3c) {
+            continue;
+        }
+        entry.bridge_real_eid   = 0;
+        entry.is_enumerated     = false;
+        entry.is_need_enumerate = false;
+        entry.is_set_eid_sent   = false;
+    }
+
+    _is_send_notify = true;
+    on_enumerate_done();
 }
 
 void Driver::on_endpoint_status_change(uint8_t endpoint_index, uint8_t status)
@@ -953,21 +1292,25 @@ void Driver::on_protocol_reset()
         if (cmd_status == ipc::Queue::Status::Ok) {
             switch (Cmd.cmd) {
                 case static_cast<uint16_t>(CmdCode::WdtEvent): on_wdt_event(); break;
-                case static_cast<uint16_t>(Client::UsI2c)    :
-                case static_cast<uint16_t>(Client::UsUsb)    :
-                case static_cast<uint16_t>(Client::DsI2c0)   :
-                case static_cast<uint16_t>(Client::DsI2c1)   :
-                case static_cast<uint16_t>(Client::DsI2c2)   :
-                case static_cast<uint16_t>(Client::DsI2c3)   :
-                case static_cast<uint16_t>(Client::DsI2c4)   :
-                case static_cast<uint16_t>(Client::DsI2c5)   :
-                case static_cast<uint16_t>(Client::DsI2c6)   :
-                case static_cast<uint16_t>(Client::DsI2c7)   :
-                case static_cast<uint16_t>(Client::DsI3c0)   :
-                case static_cast<uint16_t>(Client::DsI3c1)   :
-                case static_cast<uint16_t>(Client::Spi0)     :
-                case static_cast<uint16_t>(Client::Spi1)     :
-                case static_cast<uint16_t>(Client::Spi2)     : {
+                case static_cast<uint16_t>(Client::UsI2c):
+                case static_cast<uint16_t>(Client::UsUsb):
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+                case static_cast<uint16_t>(Client::UsUsbFs):
+#endif
+                case static_cast<uint16_t>(Client::UsI3c):
+                case static_cast<uint16_t>(Client::DsI2c0):
+                case static_cast<uint16_t>(Client::DsI2c1):
+                case static_cast<uint16_t>(Client::DsI2c2):
+                case static_cast<uint16_t>(Client::DsI2c3):
+                case static_cast<uint16_t>(Client::DsI2c4):
+                case static_cast<uint16_t>(Client::DsI2c5):
+                case static_cast<uint16_t>(Client::DsI2c6):
+                case static_cast<uint16_t>(Client::DsI2c7):
+                case static_cast<uint16_t>(Client::DsI3c0):
+                case static_cast<uint16_t>(Client::DsI3c1):
+                case static_cast<uint16_t>(Client::Spi0):
+                case static_cast<uint16_t>(Client::Spi1):
+                case static_cast<uint16_t>(Client::Spi2)  : {
                     (void)on_receive_queue(_mctp_data_queue, mctp_data_item, 0s);
                     break;
                 }
@@ -1057,6 +1400,31 @@ mctp::Status Driver::mctp_send_cmd(
         return Status::QueueSendFail;
     }
 
+    return Status::Ok;
+}
+
+mctp::Status Driver::try_mctp_send(ipc::Queue::Item& item, Client client)
+{
+    auto&                       queue     = ipc::Queue::make(ipc::QueueId::MctpDataRequest);
+    auto&                       cmd_queue = ipc::Queue::make(ipc::QueueId::MctpCmd);
+    const Command               cmd{.cmd = static_cast<uint16_t>(client)};
+    const ipc::Queue::ConstItem cmd_item(std::bit_cast<const uint8_t*>(&cmd), sizeof(cmd));
+    if (item.size() != queue.item_size() || cmd_item.size() != cmd_queue.item_size()) {
+        return Status::QueueSendFail;
+    }
+
+    // Both queues must be local. available() returns zero for remote queues.
+    // Prevent another local producer/consumer or ISR from changing capacity
+    // between the check and the two nonblocking sends. Never leave an orphaned
+    // data packet behind when the command queue is full.
+    const nv::common::ScopedCritical critical;
+    if (queue.available() == 0U || cmd_queue.available() == 0U) {
+        return Status::QueueSendFail;
+    }
+    const auto data_status = queue.send(item, 0ms);
+    const auto cmd_status  = cmd_queue.send(cmd_item, 0ms);
+    NV_ALWAYS_ASSERT_NO_LOG(data_status == ipc::Queue::Status::Ok
+                            && cmd_status == ipc::Queue::Status::Ok);
     return Status::Ok;
 }
 

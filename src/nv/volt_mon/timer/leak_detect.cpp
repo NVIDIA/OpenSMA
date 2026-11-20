@@ -65,11 +65,9 @@ LeakDetect& LeakDetect::inst()
 }
 
 /*
- * The `enabled` parameter is preserved for legacy compatibility: legacy
- * volt_mon::init(bool init_mcu_temp, bool init_leak_detect, ...) propagates the
- * `init_leak_detect` flag here so projects could opt out at runtime. Timer-driven
- * init always calls this with the default `true` because per-module enable/disable
- * is now expressed at compile time via `LeakDetectSensorNum` in the project config.
+ * LeakDetectSensorNum controls compile-time presence. The `enabled` parameter
+ * additionally supports runtime board variants that share one firmware image
+ * but do not all enable leak detection.
  */
 void LeakDetect::init(bool enabled)
 {
@@ -85,6 +83,10 @@ void LeakDetect::init(bool enabled)
     // Virtual GPIO is initialized by the iox module; LeakDetect only caches its state.
 
     initialize_hardware_gpio();
+
+    // Strap overrides the init-time flag. Later changes are picked up in
+    // process_reading(), which runs from the volt_mon drain path.
+    handle_runtime_strap();
 }
 
 namespace {
@@ -200,8 +202,60 @@ void LeakDetect::initialize_hardware_gpio()
         AlertGpioPort, AlertGpioPin, nv::gpio::Direction::Output, nv::gpio::GpioState::High);
 }
 
+/**
+ * @brief Weak default: this project does not follow a runtime strap.
+ *
+ * Do not write @p enabled. handle_runtime_strap() passes enabled_ directly, and a
+ * false return must leave it unchanged.
+ *
+ * @param[out] enabled Unused. Must not be written.
+ * @return false This project does not follow a runtime strap.
+ */
+__attribute__((weak)) bool read_runtime_strap(bool& enabled)
+{
+    (void)enabled;
+    return false;
+}
+
+/**
+ * @brief Apply the runtime strap to leak-detect outputs.
+ *
+ * Called from init() and process_reading(). read_runtime_strap() writes enabled_.
+ * A false return leaves enabled_ unchanged.
+ *
+ * On the falling edge, vGPIO is published as Open (0b11) and each sensor state is
+ * set to Invalid. The next armed sample then follows the normal state-transition path.
+ */
+void LeakDetect::handle_runtime_strap()
+{
+    const bool was_enabled = enabled_;
+    // A false return leaves enabled_ unchanged.
+    if (!read_runtime_strap(enabled_)) {
+        return;
+    }
+
+    // Falling edge only. State::Open is a real reading, so mark Invalid instead.
+    // The next armed sample then follows the normal transition path.
+    if (!was_enabled || enabled_) {
+        return;
+    }
+
+    for (uint8_t sensor_id = 0; sensor_id < LeakDetectSensorNum; ++sensor_id) {
+        // Invalid must not be cast to VrGpioState. Publish Open explicitly.
+        sensor.at(sensor_id).state = State::Invalid;
+        update_virtual_gpio(sensor_id, VrGpioState::Open);
+    }
+
+    if constexpr (AlertGpioPort != nv::gpio::InvalidGpioPort) {
+        update_hardware_gpio(HwGpioState::High);
+        alertActive = false;
+    }
+}
+
 Status LeakDetect::process_reading(uint8_t sensorId, Reading adcReading)
 {
+    handle_runtime_strap();
+
     if (!enabled_) {
         return Status::Ok;
     }

@@ -20,6 +20,7 @@
 #include <array>
 #include <climits>
 #include <cstdint>
+#include <span>
 
 #include "nv/mctp/constants.h"
 #include "nv/mctp/enums.h"
@@ -131,6 +132,19 @@ TelemetryValue getPowerTelemetry(const uint8_t sensorId);
  * @param sensorId - the sensor id
  */
 TelemetryValue getVoltageTelemetry(const uint8_t sensorId);
+
+/**
+ * @brief Gets Current telemetry (mA)
+ * @param sensorId - the sensor id
+ */
+TelemetryValue getCurrentTelemetry(const uint8_t sensorId);
+
+/**
+ * @brief List of active MCU sensors for NSM type 3 Get Current
+ * The weak default is empty. Products supporting Get Current define the strong function and
+ * set NsmPlatEnvCmdCode::GetCurrent in config_nsm_type3_cmd().
+ */
+std::span<const T3Current> currentSensors();
 
 /**
  * @brief Find temperature sensor index in I2cTempSensorList by sensor ID

@@ -30,25 +30,10 @@ enum class CryptoStatus : uint8_t
     FailEfuseAccess,
     FailSendToSpdm,
     FailParsingFirmware,
-    FailApMetadataRead,
-    FailApImageRead,
-    FailApImageHashMismatch,
-    FailApPublicKeyMismatch,
-    FailApRollbackProtection,
-    FailApImageSigningKeyRevoke,
-    FailUnknown,
-    ApAuthInProgress,  // full authentication is in progress
-    FailApNotFound,
-    FailPufFail,
-    FailAesGcmInvalidInput,
-    FailAesGcmSetKey,
-    FailAesGcmEncrypt,
-    FailAesGcmDecrypt,
-    FailEcdhKeyGeneration,
-    FailEcdhInvalidPublicKey,
-    FailEcdhKeyAgreement,
-    FailHkdf,
-    End,
+    // 19-24 are reserved.
+    FailUnknown = 25,
+    // 26-36 are reserved.
+    End = 37,
 };
 
 }  // namespace nv::spdm::crypto

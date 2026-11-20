@@ -21,6 +21,15 @@
 
 namespace nv::lstp {
 
+// Weak default for the runtime LSTP channel table. Single-product images use the
+// compile-time envelope table; a multi-product image provides a strong override
+// (Core0: product_config.cpp, Core1: product_bm_config.cpp). Defined here because
+// lstp_parser.cpp is compiled on both Core0 and Core1.
+__attribute__((weak)) std::span<const LstpChannelEntry> project_lstp_channels()
+{
+    return LstpChannels;
+}
+
 LstpStatus LstpParser::validate_request(std::span<uint8_t>& req_buffer, size_t req_size)
 {
     if (req_size > LstpMsgSize) {
@@ -43,7 +52,7 @@ LstpStatus LstpParser::validate_request(std::span<uint8_t>& req_buffer, size_t r
         return LstpStatus::Error;
     }
 
-    if (hdr.channel_id >= LstpNumChannels) {
+    if (hdr.channel_id >= project_lstp_channels().size()) {
         return LstpStatus::SilentDrop;
     }
 
@@ -56,7 +65,7 @@ LstpChannelType LstpParser::parse_channel_type(std::span<uint8_t>& req_buffer)
 
     // Flashrom (NV_SMA_SPI) may use channel ID = 0 in the request packet.
     // Preserve that alias before routing by configured channel type.
-    auto channel_type = LstpChannels.at(hdr.channel_id).info.type;
+    auto channel_type = project_lstp_channels()[hdr.channel_id].info.type;
     if constexpr (EnableSpi) {
         static_assert(static_cast<uint8_t>(LstpManagementCommand::Start)
                       > static_cast<uint8_t>(LstpSpiCommand::End));

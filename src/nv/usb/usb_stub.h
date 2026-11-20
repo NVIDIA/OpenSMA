@@ -20,7 +20,7 @@
 #pragma once
 
 #include "nv/ipc/queue.h"
-#include "nv/ipc/event.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/ipchandler/ipchandler.h"
 #include "nv/i2c/common.h"
 #include <span>
@@ -121,8 +121,7 @@ public:
     {
         if constexpr (nv::ipc::EnableNcsi) {
             // Notify usb_proxy::Task to feed watchdog
-            auto event = nv::ipc::Event::make(nv::ipc::EventId::UsbTask);
-            (void)event.set(usb_proxy::Task::WdtBit);
+            (void)nv::ipc::TaskNotify::send(nv::ipc::TaskId::Usb, usb_proxy::Task::WdtBit);
         }
     }
 };

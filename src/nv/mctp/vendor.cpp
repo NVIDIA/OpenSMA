@@ -27,8 +27,9 @@
 #include "nv/flash/driver.h"
 #include "nv/flash/flash.h"
 #include "nv/gpio/driver.h"
+#include "nv/gpio/project_gpio.h"
+#include "nv/i3c/task.h"
 #include "nv/logger/log.h"
-#include "nv/mctp/ap_provision.h"
 #include "nv/mctp/constants.h"
 #include "nv/mctp/driver.h"
 #include "nv/mctp/interface.h"
@@ -37,7 +38,6 @@
 #include "nv/pldm/task.h"
 #include "nv/spdm/cert_library.h"
 #include "nv/spdm/spdm_cert_chain.h"
-#include "nv/vrot/interface/interface.h"
 #include "sys/i2c/utils.h"
 #ifdef NV_COVERAGE
 #include "nv/coverage/coverage.h"
@@ -68,17 +68,15 @@ bool Vendor::process(const Packet& rx, Packet& tx)
                 on_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus            : on_get_gpio_status(rx, tx); break;
-        case VdmCmd::ReadDevIkCsr             : on_read_devik_csr(rx, tx); break;
-        case VdmCmd::ProgramCertificate       : on_program_certificate(rx, tx); break;
-        case VdmCmd::RegTableAccess           : result = on_register_table_access(rx, tx); break;
-        case VdmCmd::AddExtTimestamp          : on_add_ext_timestamp(rx, tx); break;
-        case VdmCmd::ApProvision              : on_ap_provision(rx, tx); break;
-        case VdmCmd::QueryApProvisionStatus   : on_query_ap_provision_status(rx, tx); break;
-        case VdmCmd::GetModelWeightKeyWrapInfo: on_get_key_exchange_info(rx, tx); break;
-        case VdmCmd::InstallModelWeightKey    : on_install_exchanged_key(rx, tx); break;
-        case VdmCmd::ScanI2c:
-            on_scan_i2c(rx, tx);
+        case VdmCmd::GetGpioStatus     : on_get_gpio_status(rx, tx); break;
+        case VdmCmd::ReadDevIkCsr      : on_read_devik_csr(rx, tx); break;
+        case VdmCmd::ProgramCertificate: on_program_certificate(rx, tx); break;
+        case VdmCmd::RegTableAccess    : result = on_register_table_access(rx, tx); break;
+        case VdmCmd::AddExtTimestamp   : on_add_ext_timestamp(rx, tx); break;
+        case VdmCmd::ScanI2c           : on_scan_i2c(rx, tx); break;
+        case VdmCmd::I2cFreqControl    : on_i2c_freq_control(rx, tx); break;
+        case VdmCmd::BusModeControl:
+            on_bus_mode_control(rx, tx);
             break;
 // only accept coverage command when coverage is enabled
 #ifdef NV_COVERAGE
@@ -104,16 +102,14 @@ bool Vendor::action(const Packet& rx, Packet& tx) const
                 action_background_copy(rx, tx);
             }
             break;
-        case VdmCmd::GetGpioStatus            : break;
-        case VdmCmd::DownloadLog              : break;
-        case VdmCmd::ReadDevIkCsr             : break;
-        case VdmCmd::ProgramCertificate       : break;
-        case VdmCmd::AddExtTimestamp          : break;
-        case VdmCmd::ApProvision              : break;
-        case VdmCmd::QueryApProvisionStatus   : break;
-        case VdmCmd::GetModelWeightKeyWrapInfo:
-        case VdmCmd::InstallModelWeightKey    : break;
-        case VdmCmd::ScanI2c                  : break;
+        case VdmCmd::GetGpioStatus     : break;
+        case VdmCmd::DownloadLog       : break;
+        case VdmCmd::ReadDevIkCsr      : break;
+        case VdmCmd::ProgramCertificate: break;
+        case VdmCmd::AddExtTimestamp   : break;
+        case VdmCmd::ScanI2c           : break;
+        case VdmCmd::I2cFreqControl    : break;
+        case VdmCmd::BusModeControl    : break;
 #if ENABLE_FANCONTROL
         case VdmCmd::FanControl: break;
 #endif
@@ -424,93 +420,6 @@ void Vendor::on_read_devik_csr(const Packet& rx, Packet& tx) const
     }
 }
 
-void Vendor::on_get_key_exchange_info(const Packet& rx, Packet& tx) const
-{
-    if constexpr (!has_key_exchange(vrot::ApList)) {
-        unsupported_command(rx, tx);
-        return;
-    }
-
-    fill_packet_header(rx, tx);
-    fill_vendor_msg_header(rx, tx);
-    auto& vtx = VendorPktRes::from(tx);
-    auto& vrx = VendorPktReq::from(rx);
-
-    vtx.completion_code   = Ccode::Success;
-    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
-
-    if (vrx.msg_version != 0x01) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    const uint32_t rx_data_length = rx.priv.packet_length >= VendorRequestHeaderSize
-                                      ? rx.priv.packet_length - VendorRequestHeaderSize
-                                      : 0U;
-    auto           tenant_nonce   = std::span<const uint8_t>(&vrx.data[0], rx_data_length);
-    auto&          response       = *std::bit_cast<
-                       std::array<uint8_t,
-                                  nv::mctp::Constants::MctpTxBufSize - sizeof(Header) - HeaderSizeResponse>*>(
-        &vtx.data[0]);
-
-    size_t     response_length{};
-    const auto status = nv::vrot::get_key_exchange_info(
-        tenant_nonce, response, response_length);
-    if (status == nv::vrot::ApOpErrCode::NotSupported) {
-        unsupported_command(rx, tx);
-        return;
-    }
-    if (status != nv::vrot::ApOpErrCode::Success || response_length > response.size()) {
-        vtx.completion_code = Ccode::ErrorGeneral;
-        return;
-    }
-
-    tx.priv.packet_length += response_length;
-}
-
-void Vendor::on_install_exchanged_key(const Packet& rx, Packet& tx) const
-{
-    if constexpr (!has_key_exchange(vrot::ApList)) {
-        unsupported_command(rx, tx);
-        return;
-    }
-
-    fill_packet_header(rx, tx);
-    fill_vendor_msg_header(rx, tx);
-    auto& vtx = VendorPktRes::from(tx);
-    auto& vrx = VendorPktReq::from(rx);
-
-    vtx.completion_code   = Ccode::Success;
-    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
-
-    if (vrx.msg_version != 0x01) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    const uint32_t rx_data_length = rx.priv.packet_length >= VendorRequestHeaderSize
-                                      ? rx.priv.packet_length - VendorRequestHeaderSize
-                                      : 0U;
-    auto           wrapped_key    = std::span<const uint8_t>(&vrx.data[0], rx_data_length);
-    auto&          response       = *std::bit_cast<
-                       std::array<uint8_t,
-                                  nv::mctp::Constants::MctpTxBufSize - sizeof(Header) - HeaderSizeResponse>*>(
-        &vtx.data[0]);
-
-    size_t     response_length{};
-    const auto status = nv::vrot::install_exchanged_key(wrapped_key, response, response_length);
-    if (status == nv::vrot::ApOpErrCode::NotSupported) {
-        unsupported_command(rx, tx);
-        return;
-    }
-    if (status != nv::vrot::ApOpErrCode::Success || response_length > response.size()) {
-        vtx.completion_code = Ccode::ErrorGeneral;
-        return;
-    }
-
-    tx.priv.packet_length += response_length;
-}
-
 void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
 {
     using namespace nv::spdm::certlib;
@@ -610,7 +519,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                 }
 
                 // all check pass, let l3 cert insatll in internal flash
-                const nv::flash::Address L3CertPhyAddr = 0xEC000;
+                const nv::flash::Address L3CertPhyAddr = nv::spdm::cert::L3CertPhyAddr;
                 auto get_virtual_address = [](nv::flash::Address phy_cert_location) {
                     const nv::flash::Address
                         VirCertLocation = nv::flash::Flash::get_flash_address(
@@ -707,7 +616,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     vtx.data[1] = NpdsDdaOrdinalReadFail;
                     break;
                 }
-                const auto certificate_profile = nv::spdm::ik::certificate_profile_from_dda(
+                const auto dda_profile = nv::spdm::ik::certificate_profile_from_dda(
                     provisioned_dda_ordinal);
                 nv::flash::Data fmc_numeric_version{};
                 if (nv::flash::Flash::get_data(nv::flash::Key::NpdsFmcNumericVersion,
@@ -716,9 +625,16 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     vtx.data[1] = NpdsFmcNumericVersionReadFail;
                     break;
                 }
-                const bool  isFmcV3 = fmc_numeric_version < nv::spdm::ik::FmcV4NumericThreshold;
+                const auto
+                    fmc_profile = nv::spdm::cert::certificate_profile_from_fmc_numeric_ordinal(
+                        fmc_numeric_version);
+                if (!nv::spdm::ik::is_supported_template_combination(dda_profile,
+                                                                     fmc_profile)) {
+                    vtx.data[1] = InvalidTemplate;
+                    break;
+                }
                 const auto& template_layout = nv::spdm::ik::get_dev_ik_template_layout(
-                    certificate_profile, isFmcV3);
+                    dda_profile, fmc_profile);
 
                 // check otp of signature is not programed
                 auto check_efuse_programed =
@@ -743,7 +659,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     || !check_efuse_programed(SignatureEfuseAddrS)) {
                     break;
                 }
-                if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+                if (dda_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
                     auto check_serial_number_efuse_programed = [&]() {
                         for (const auto EfuseAddr : SerialNumberEfuseAddr) {
                             uint32_t data = 0;
@@ -837,6 +753,10 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     static_assert(
                         sizeof(nv::spdm::ik::EdgeLock2GoDevIkTemplateV3) <= sizeof(CertArray),
                         "CertArray is not large enough for the EdgeLock2Go V3 template");
+                    static_assert(
+                        sizeof(nv::spdm::ik::OpenSmaEdgeLock2GoDevIkTemplate)
+                            <= sizeof(CertArray),
+                        "CertArray is not large enough for the EdgeLock2Go OpenSMA template");
                     nv::spdm::ik::DevIkRequest expected_request{};
                     {
                         CertArray l3_cert_array{};
@@ -857,10 +777,10 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                         public_key_with_token.data(),
                         public_key_with_token.size());
 
-                    nv::spdm::ik::DevIkHelper expected_helper(expected_request,
-                                                              certificate_profile);
-                    CertArray                 l4_cert_array{};
-                    auto l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
+                    nv::spdm::ik::DevIkHelper expected_helper(
+                        expected_request, dda_profile, fmc_profile);
+                    CertArray l4_cert_array{};
+                    auto      l4_cert_array_span = std::span<uint8_t>(l4_cert_array);
                     expected_helper.construct_cert(l4_cert_array_span);
 
                     nv::info("fmc_numeric_version: %d\n", fmc_numeric_version);
@@ -957,7 +877,7 @@ void Vendor::on_program_certificate(const Packet& rx, Packet& tx) const
                     break;
                 }
 
-                if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+                if (dda_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
                     std::array<uint8_t, 16> serial_number{};
                     std::copy_n(input_cert_span.begin()
                                     + template_layout.serial_number_value_offset,
@@ -1022,11 +942,10 @@ void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
         auto gpio_pin  = vrx.data[1];
 
         bool is_found = false;
-        if (!ipc::GpioSetup.empty()) {
-            for (auto& [port, pin] : ipc::GpioSetup) {
-                if (gpio_port == port && gpio_pin == pin) {
-                    is_found = true;
-                }
+        for (uint16_t i = 0; i < ipc::gpio_count(); ++i) {
+            const auto& [port, pin] = ipc::gpio_at(i);
+            if (gpio_port == port && gpio_pin == pin) {
+                is_found = true;
             }
         }
 
@@ -1060,8 +979,9 @@ void Vendor::on_get_gpio_status(const Packet& rx, Packet& tx) const
         if (operation == OperationReadForce) {
             is_found = true;
         }
-        else if (!ipc::GpioSetup.empty()) {
-            for (auto& [port, pin] : ipc::GpioSetup) {
+        else {
+            for (uint16_t i = 0; i < ipc::gpio_count(); ++i) {
+                const auto& [port, pin] = ipc::gpio_at(i);
                 if (gpio_port == port && gpio_pin == pin) {
                     is_found = true;
                 }
@@ -1174,112 +1094,6 @@ bool Vendor::on_register_table_access(const Packet& rx, Packet& tx)
         return false;
     }
     return true;
-}
-
-void Vendor::on_ap_provision(const Packet& rx, Packet& tx) const
-{
-    fill_packet_header(rx, tx);
-    fill_vendor_msg_header(rx, tx);
-    auto& vrx           = VendorPktReq::from(rx);
-    auto& vtx           = VendorPktRes::from(tx);
-    vtx.completion_code = Ccode::Success;
-
-    if constexpr (!has_ap_provision(vrot::ApList)) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    if (vtx.msg_version != ap_provision::MsgVersion) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    constexpr auto HeaderSize = sizeof(ap_provision::ProvisionRequestHeader);
-    if (rx.priv.packet_length < VendorRequestHeaderSize + HeaderSize) {
-        vtx.completion_code = Ccode::ErrorInvalidLength;
-        return;
-    }
-
-    const auto ap_id       = static_cast<vrot::ApId>(vrx.data[0]);
-    const auto sub_command = vrx.data[1];
-
-    const auto ap = vrot::find_ap(ap_id, vrot::ApList);
-    if (!ap) {
-        vtx.completion_code = Ccode::ErrorInvalidData;
-        return;
-    }
-    if (!vrot::supports_ap_provision(ap->type)) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    const auto payload_size = rx.priv.packet_length - VendorRequestHeaderSize - HeaderSize;
-    auto       data         = std::span<const uint8_t>(&vrx.data[HeaderSize], payload_size);
-    uint8_t    ap_completion_code{};
-    const auto status = vrot::ap_provision(*ap, sub_command, data, ap_completion_code);
-
-    if (status != vrot::ApOpErrCode::Success) {
-        vtx.completion_code = Ccode::ErrorGeneral;
-    }
-
-    vtx.data[0] = vrx.data[0];
-    vtx.data[1] = vrx.data[1];
-    vtx.data[2] = ap_completion_code;
-    nv::logger::info(nv::logger::Event::MctpApProvision,
-                     {static_cast<uint8_t>(ap_id), sub_command, ap_completion_code});
-    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse
-                          + sizeof(ap_provision::ProvisionResponse);
-}
-
-void Vendor::on_query_ap_provision_status(const Packet& rx, Packet& tx) const
-{
-    fill_packet_header(rx, tx);
-    fill_vendor_msg_header(rx, tx);
-    auto& vrx           = VendorPktReq::from(rx);
-    auto& vtx           = VendorPktRes::from(tx);
-    vtx.completion_code = Ccode::Success;
-
-    if constexpr (!has_ap_provision(vrot::ApList)) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    if (vtx.msg_version != ap_provision::MsgVersion) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    constexpr auto RequestSize = VendorRequestHeaderSize
-                               + sizeof(ap_provision::QueryStatusRequest);
-    if (rx.priv.packet_length != RequestSize) {
-        vtx.completion_code = Ccode::ErrorInvalidLength;
-        return;
-    }
-
-    const auto ap_id       = static_cast<vrot::ApId>(vrx.data[0]);
-    const auto sub_command = vrx.data[1];
-    const auto ap          = vrot::find_ap(ap_id, vrot::ApList);
-    if (!ap) {
-        vtx.completion_code = Ccode::ErrorInvalidData;
-        return;
-    }
-    if (!vrot::supports_ap_provision(ap->type)) {
-        vtx.completion_code = Ccode::ErrorUnsupportedCmd;
-        return;
-    }
-
-    uint8_t    provision_info{};
-    const auto status = vrot::query_ap_provision_status(*ap, sub_command, provision_info);
-    if (status != vrot::ApOpErrCode::Success) {
-        vtx.completion_code = Ccode::ErrorGeneral;
-        return;
-    }
-
-    vtx.data[0]           = vrx.data[0];
-    vtx.data[1]           = vrx.data[1];
-    vtx.data[2]           = provision_info;
-    tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse
-                          + sizeof(ap_provision::QueryStatusResponse);
 }
 
 /**
@@ -1438,6 +1252,171 @@ void Vendor::on_scan_i2c(const Packet& rx, Packet& tx) const
     }
 }
 
+void Vendor::on_i2c_freq_control(const Packet& rx, Packet& tx) const
+{
+    if constexpr (nv::ipc::EnableI2cFreqVdm) {
+        fill_packet_header(rx, tx);
+        fill_vendor_msg_header(rx, tx);
+        auto& vtx           = VendorPktRes::from(tx);
+        auto& vrx           = VendorPktReq::from(rx);
+        vtx.completion_code = Ccode::Success;
+
+        // Request format:
+        // Byte 0: operation (1: get, 2: set)
+        // Byte 1: I2C port (FlexComm number)
+        // Byte 2: frequency code, set only (1: 100 kHz, 2: 400 kHz, 3: 1 MHz)
+
+        // Check version
+        if (vrx.msg_version != 0x01) {
+            vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+            return;
+        }
+
+        // check port boundary
+        const uint8_t port_num = vrx.data[1];
+        if (port_num >= static_cast<uint8_t>(nv::i2c::Port::End)) {
+            vtx.completion_code = Ccode::ErrorInvalidData;
+            return;
+        }
+        const auto port = static_cast<nv::i2c::Port>(port_num);
+
+        // verify master is enabled
+        if (!sys::i2c::is_master_enabled(port)) {
+            vtx.completion_code = Ccode::ErrorGeneral;
+            return;
+        }
+
+        const auto op = static_cast<I2cFreqOp>(vrx.data[0]);
+        if (op == I2cFreqOp::Set) {
+            const uint32_t hz = i2c_freq_code_to_hz(static_cast<I2cFreqCode>(vrx.data[2]));
+            if (hz == 0U) {
+                vtx.completion_code = Ccode::ErrorInvalidData;
+                return;
+            }
+            if (sys::i2c::set_master_frequency(port, hz) != nv::i2c::I2cStatus::Ok) {
+                vtx.completion_code = Ccode::ErrorGeneral;
+                return;
+            }
+        }
+        else if (op != I2cFreqOp::Get) {
+            vtx.completion_code = Ccode::ErrorInvalidData;
+            return;
+        }
+
+        // Response format:
+        // Bytes 0-3: actual master baud rate in Hz (little-endian), read back
+        // from the divider registers. May differ slightly from the requested
+        // frequency because the hardware divider is integer-only.
+        constexpr uint8_t Shift8  = 8;
+        constexpr uint8_t Shift16 = 16;
+        constexpr uint8_t Shift24 = 24;
+
+        const uint32_t freq_hz = sys::i2c::get_master_frequency_hz(port);
+        vtx.data[0]            = static_cast<uint8_t>(freq_hz & UINT8_MAX);
+        vtx.data[1]            = static_cast<uint8_t>((freq_hz >> Shift8) & UINT8_MAX);
+        vtx.data[2]            = static_cast<uint8_t>((freq_hz >> Shift16) & UINT8_MAX);
+        vtx.data[3]            = static_cast<uint8_t>((freq_hz >> Shift24) & UINT8_MAX);
+        tx.priv.packet_length  = sizeof(Header) + HeaderSizeResponse + 4;
+    }
+    else {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+    }
+}
+
+void Vendor::on_bus_mode_control(const Packet& rx, Packet& tx) const
+{
+    if constexpr (nv::ipc::EnableBusModeVdm) {
+        fill_packet_header(rx, tx);
+        fill_vendor_msg_header(rx, tx);
+        auto& vtx           = VendorPktRes::from(tx);
+        auto& vrx           = VendorPktReq::from(rx);
+        vtx.completion_code = Ccode::Success;
+
+        // Request format:
+        // Byte 0: operation (1: get, 2: set)
+        // Byte 1: bus (set only) (0: MCU I2C master, 1: MCU I3C master)
+        // Byte 2: i3c client (set + bus=I3c only): nv::mctp::Client value of the
+        //         downstream I3C bus to re-init (e.g. DsI3c0); see
+        //         pdk-mctp-platforms-enums.h. Validated by Task::init_bus().
+
+        // Check version
+        if (vrx.msg_version != 0x01) {
+            vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+            return;
+        }
+
+        // data[0] required (min 1 byte); data[1] required only for BusModeOp::Set;
+        // data[2] required only when BusModeOp::Set selects BusType::I3c.
+        const uint32_t rx_data_length = rx.priv.packet_length >= VendorRequestHeaderSize
+                                          ? rx.priv.packet_length - VendorRequestHeaderSize
+                                          : 0U;
+        if (rx_data_length < 1) {
+            vtx.completion_code = Ccode::ErrorInvalidLength;
+            return;
+        }
+
+        const auto op = static_cast<BusModeOp>(vrx.data[0]);
+        if (op == BusModeOp::Set) {
+            if (rx_data_length < 2) {
+                vtx.completion_code = Ccode::ErrorInvalidLength;
+                return;
+            }
+            const auto bus = static_cast<BusType>(vrx.data[1]);
+            if (bus != BusType::I2c && bus != BusType::I3c) {
+                vtx.completion_code = Ccode::ErrorInvalidData;
+                return;
+            }
+            if (set_i2cs_bus_mode(bus == BusType::I3c) != nv::i2c::I2cStatus::Ok) {
+                vtx.completion_code = Ccode::ErrorGeneral;
+                return;
+            }
+            if (bus == BusType::I3c) {
+                if (rx_data_length < 3) {
+                    vtx.completion_code = Ccode::ErrorInvalidLength;
+                    return;
+                }
+                // Boot-time RSTDAA/ENTDAA ran while the mux was still on the I2C route
+                // and timed out; queue a fresh I3C bus init now that I3C is routed.
+                // Caller-supplied client, not hardcoded: Task::init_bus() already
+                // rejects anything that isn't a valid I3C client.
+                const auto client = static_cast<nv::mctp::Client>(vrx.data[2]);
+                if (nv::i3c::Task::init_bus(client, true) != nv::i3c::Task::Status::Ok) {
+                    vtx.completion_code = Ccode::ErrorGeneral;
+                    return;
+                }
+            }
+        }
+        else if (op != BusModeOp::Get) {
+            vtx.completion_code = Ccode::ErrorInvalidData;
+            return;
+        }
+
+        // Response format:
+        // Byte 0: current I2CS master bus (0: MCU I2C, 1: MCU I3C)
+        vtx.data[0]           = get_i2cs_bus_mode();
+        tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
+    }
+    else {
+        fill_error_packet(Ccode::ErrorUnsupportedCmd, rx, tx);
+    }
+}
+
+// I2CS master bus (I2C/I3C) mux control (bus mode VDM, bug 6478775).
+// Shared weak default: no I2CS master mux on this board. A board that has
+// one provides a strong override in nv::mctp (see vendor.h and e.g.
+// e4188/core0/i2cs_bus_mode.cpp).
+// NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
+__attribute__((weak)) nv::i2c::I2cStatus nv::mctp::set_i2cs_bus_mode(bool /*use_i3c*/)
+{
+    return nv::i2c::I2cStatus::Error;
+}
+
+// NOLINTNEXTLINE(cert-dcl37-c,cert-dcl51-cpp)
+__attribute__((weak)) uint8_t nv::mctp::get_i2cs_bus_mode()
+{
+    return 0U;
+}
+
 #ifdef NV_COVERAGE
 void Vendor::on_download_coverage(const Packet& rx, Packet& tx) const
 {
@@ -1534,20 +1513,26 @@ void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
         // Default: no response payload (Set / error / unsupported -> completion code only).
         tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse;
 
-        // Request payload: data[0] = operation, data[1] = index (min 2 bytes).
+        // Request payload: data[0] = operation (min 1 byte); most operations
+        // also take data[1] (fan index, or the mode for SetFanMode) - each
+        // case validates the length it needs.
         const uint32_t rx_data_length = rx.priv.packet_length
                                       - (sizeof(VendorPktReq) - sizeof(VendorPktReq::data));
-        if (rx_data_length < 2) {
+        if (rx_data_length < 1) {
             vtx.completion_code = Ccode::ErrorInvalidLength;
             return;
         }
 
         const auto    operation = static_cast<FanControlOp>(vrx.data[0]);
-        const uint8_t index     = vrx.data[1];
+        const uint8_t index     = (rx_data_length >= 2) ? vrx.data[1] : uint8_t{0};
         const size_t  fans      = nv::fancontrol::Driver::fan_count();
 
         switch (operation) {
             case FanControlOp::GetPwm: {
+                if (rx_data_length < 2) {
+                    vtx.completion_code = Ccode::ErrorInvalidLength;
+                    return;
+                }
                 // Response: data[0] = count, data[1..] = duty per fan (1 byte each).
                 uint8_t count = 0;
                 if (index == AllChannels) {
@@ -1594,12 +1579,65 @@ void Vendor::on_fan_control(const Packet& rx, Packet& tx) const
                 break;
             }
 
-            case FanControlOp::GetTach:
-            case FanControlOp::GetFanMode:
-            case FanControlOp::SetFanMode:
-                // Reserved for phase 2 (tach measurement + fan-curve mode).
-                vtx.completion_code = Ccode::ErrorUnsupportedCmd;
+            case FanControlOp::GetTach: {
+                if (rx_data_length < 2) {
+                    vtx.completion_code = Ccode::ErrorInvalidLength;
+                    return;
+                }
+                // Response: data[0] = count, data[1..] = RPM per fan
+                // (16-bit big-endian each). Measurement blocks up to ~200 ms
+                // per stopped fan (see Driver::get_fan_tach).
+                const size_t tachs = nv::fancontrol::Driver::tach_count();
+                if (tachs == 0) {
+                    vtx.completion_code = Ccode::ErrorUnsupportedCmd;  // no tach on this board
+                    return;
+                }
+                uint8_t count = 0;
+                if (index == AllChannels) {
+                    for (size_t i = 0; i < tachs; ++i) {
+                        const uint16_t rpm        = nv::fancontrol::Driver::get_fan_tach(i);
+                        vtx.data[1 + (count * 2)] = static_cast<uint8_t>(rpm >> 8);
+                        vtx.data[2 + (count * 2)] = static_cast<uint8_t>(rpm & 0xFF);
+                        ++count;
+                    }
+                }
+                else if (index < tachs) {
+                    const uint16_t rpm = nv::fancontrol::Driver::get_fan_tach(index);
+                    vtx.data[1]        = static_cast<uint8_t>(rpm >> 8);
+                    vtx.data[2]        = static_cast<uint8_t>(rpm & 0xFF);
+                    count              = 1;
+                }
+                else {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                    return;
+                }
+                vtx.data[0]           = count;
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1 + (2 * count);
                 break;
+            }
+
+            case FanControlOp::GetFanMode: {
+                // Response: data[0] = mode (0 = auto/curve, 1 = manual).
+                vtx.data[0] = static_cast<uint8_t>(nv::fancontrol::Driver::get_fan_mode());
+                tx.priv.packet_length = sizeof(Header) + HeaderSizeResponse + 1;
+                break;
+            }
+
+            case FanControlOp::SetFanMode: {
+                // Request: data[1] = mode (0 = auto/curve, 1 = manual).
+                if (rx_data_length < 2) {
+                    vtx.completion_code = Ccode::ErrorInvalidLength;
+                    return;
+                }
+                const uint8_t mode = vrx.data[1];
+                if (mode > static_cast<uint8_t>(nv::fancontrol::FanMode::Manual)) {
+                    vtx.completion_code = Ccode::ErrorInvalidData;
+                    return;
+                }
+                nv::fancontrol::Driver::set_fan_mode(
+                    static_cast<nv::fancontrol::FanMode>(mode));
+                break;
+            }
 
             default: vtx.completion_code = Ccode::ErrorInvalidData; return;
         }

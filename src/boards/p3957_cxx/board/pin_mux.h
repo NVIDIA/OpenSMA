@@ -32,8 +32,11 @@ extern "C" {
 void BOARD_InitBootPins(void);
 
 #define ICR_IRQS_irqs0 0x00u      /*!<@brief Interrupt Select: Interrupt, trigger output, or DMA request 0 */
+#define PCR_DSE_dse0 0x00u        /*!<@brief Drive Strength Enable: Low */
 #define PCR_IBE_ibe0 0x00u        /*!<@brief Input Buffer Enable: Disables */
 #define PCR_IBE_ibe1 0x01u        /*!<@brief Input Buffer Enable: Enables */
+#define PCR_ODE_ode1 0x01u        /*!<@brief Open Drain Enable: Enables */
+#define PCR_PE_pe0 0x00u          /*!<@brief Pull Enable: Disables */
 #define PORT5_PCR_MUX_mux00 0x00u /*!<@brief Pin Multiplex Control: Alternative 0 (GPIO) */
 
 /*! @name PORT0_14 (coord E11), SSD0_PERST_L
@@ -1210,6 +1213,53 @@ void BOARD_InitBootPins(void);
 #define BOARD_INITPINS_SMB_SSD7_SCL_PIN 5U                   /*!<@brief PORT pin number */
 #define BOARD_INITPINS_SMB_SSD7_SCL_PIN_MASK (1U << 5U)      /*!<@brief PORT pin mask */
                                                              /* @} */
+
+/*! @name PORT0_2 (coord B16), L_MCU_P0_2
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_L_MCU_P0_2_GPIO GPIO0               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_L_MCU_P0_2_GPIO_PIN 2U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_L_MCU_P0_2_GPIO_PIN_MASK (1U << 2U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_L_MCU_P0_2_PORT PORT0               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_L_MCU_P0_2_PIN 2U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_L_MCU_P0_2_PIN_MASK (1U << 2U)      /*!<@brief PORT pin mask */
+                                                           /* @} */
+
+/*! @name PORT0_3 (coord B15), S_MCU_READY_STATUS
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_GPIO GPIO0               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_INIT_GPIO_VALUE 0U       /*!<@brief GPIO output initial state */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_GPIO_PIN 3U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_GPIO_PIN_MASK (1U << 3U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_PORT PORT0               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_PIN 3U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_S_MCU_READY_STATUS_PIN_MASK (1U << 3U)      /*!<@brief PORT pin mask */
+                                                                   /* @} */
+
+/*! @name PORT0_9 (coord A12), GLOBAL_WP_MCU
+  @{ */
+
+/* Symbols to be used with GPIO driver */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_GPIO GPIO0               /*!<@brief GPIO peripheral base pointer */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_GPIO_PIN 9U              /*!<@brief GPIO pin number */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_GPIO_PIN_MASK (1U << 9U) /*!<@brief GPIO pin mask */
+
+/* Symbols to be used with PORT driver */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_PORT PORT0               /*!<@brief PORT peripheral base pointer */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_PIN 9U                   /*!<@brief PORT pin number */
+#define BOARD_INITPINS_GLOBAL_WP_MCU_PIN_MASK (1U << 9U)      /*!<@brief PORT pin mask */
+                                                              /* @} */
+
+/*! @name ADC0_A3 (coord U2), S_LEAK_SNS_IN1_R
+  @{ */
+/* @} */
 
 /*!
  * @brief Configures pin routing and optionally pin electrical features.

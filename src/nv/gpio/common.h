@@ -16,6 +16,7 @@
  * limitations under the License.
  */
 #pragma once
+#include <array>
 #include <cstdint>
 #include <variant>
 
@@ -34,6 +35,66 @@ using VirtualGpioNotificationTarget = std::variant<nv::ipc::EventId, nv::ipc::Ta
 
 constexpr static GpioPin  InvalidGpioPin  = UINT32_MAX;
 constexpr static GpioPort InvalidGpioPort = UINT32_MAX;
+
+enum class GpioSpoofingOutputInterface : uint32_t
+{
+    Nsm,
+    Iox,
+    LstpGpio,
+    GpioEvent,
+};
+
+template<typename = void>
+struct GpioSpoofingOutputConfig
+{
+    static constexpr std::array<GpioSpoofingOutputInterface, 2> Interfaces{
+        GpioSpoofingOutputInterface::Nsm,
+        GpioSpoofingOutputInterface::Iox,
+    };
+};
+
+template<typename Config = GpioSpoofingOutputConfig<>>
+constexpr bool is_gpio_spoofing_output_enabled(GpioSpoofingOutputInterface output_interface)
+{
+    for (const auto configured_interface : Config::Interfaces) {
+        if (configured_interface == output_interface) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Project hook describing how GPIO spoofing treats a pin. Both queries report whether the
+/// project has an opinion about the pin; when they return false the driver applies its own
+/// fallback (hardware direction, and a default value of zero).
+template<typename = void>
+struct GpioSpoofingPinPolicy
+{
+    static bool is_spoofable(GpioPort port, GpioPin pin, bool& spoofable)
+    {
+        (void)port;
+        (void)pin;
+        (void)spoofable;
+        return false;
+    }
+
+    static bool get_default_value(GpioPort port, GpioPin pin, uint8_t& data)
+    {
+        (void)port;
+        (void)pin;
+        (void)data;
+        return false;
+    }
+};
+
+constexpr uint8_t MaxGpioSpoofingEntries = 16;
+
+struct GpioSpoofingEntryState
+{
+    uint16_t gpioIndex;
+    uint8_t  activated;
+    uint8_t  polarity;
+};
 
 enum class Direction : uint8_t
 {

@@ -129,41 +129,6 @@ is
 
    end Populate_Stamp;
 
-   procedure Populate_Ap_Stamp (Major    : NvU16;
-                                Minor    : NvU8;
-                                Patch    : NvU16;
-                                Build    : NvU16;
-                                Stamp    : out NvU32)
-   is
-      type Stamp_Rec is record
-         Build : NvU8;
-         Patch : NvU8;
-         Minor : NvU8;
-         Major : NvU8;
-      end record;
-
-      for Stamp_Rec use record
-         Build at 0 range 0 .. 7;
-         Patch at 0 range 8 .. 15;
-         Minor at 0 range 16 .. 23;
-         Major at 0 range 24 .. 31;
-      end record;
-
-      Stamp_Record : Stamp_Rec;
-
-      function Uc_Stamp_Rec_To_U32 is new
-         Ada.Unchecked_Conversion (Source => Stamp_Rec,
-                                   Target => NvU32);
-   begin
-      Stamp_Record.Major := NvU8 (Major and 16#ff#);
-      Stamp_Record.Minor := Minor;
-      Stamp_Record.Patch := NvU8 (Patch and 16#ff#);
-      Stamp_Record.Build := NvU8 (Build and 16#ff#);
-
-      Stamp := Uc_Stamp_Rec_To_U32 (Stamp_Record);
-
-   end Populate_Ap_Stamp;
-
    procedure Populate_Version_String (Major          : NvU16;
                                       Minor          : NvU8;
                                       Patch          : NvU16;
@@ -294,69 +259,6 @@ is
                                Length         => Length);
 
    end Get_Pending_Version_String;
-
-   procedure Get_Ap_Active_Stamp (Stamp : in out NvU32) is
-      Major    : NvU16  := 0;
-      Minor    : NvU8  := 0;
-      Patch    : NvU16 := 0;
-      Build    : NvU16 := 0;
-   begin
-
-      Pldm_Get_Ap_Active_Version (Major  => Major,
-                                  Minor  => Minor,
-                                  Patch  => Patch,
-                                  Build  => Build);
-
-      Populate_Ap_Stamp ( Major  => Major,
-                          Minor  => Minor,
-                          Patch  => Patch,
-                          Build  => Build,
-                          Stamp  => Stamp);
-
-   end Get_Ap_Active_Stamp;
-
-   procedure Get_Ap_Active_Version_String (Version_String : out Array_Version_String;
-                                           Length         : out NvU8)
-   is
-   begin
-
-      Pldm_Get_Ap_Active_Comp_Version_String
-        (Version_String => Version_String,
-         Length         => Length);
-
-   end Get_Ap_Active_Version_String;
-
-   procedure Get_Ap_Pending_Stamp (Stamp : in out NvU32) is
-      Major    : NvU16  := 0;
-      Minor    : NvU8  := 0;
-      Patch    : NvU16 := 0;
-      Build    : NvU16 := 0;
-   begin
-
-      Pldm_Get_Ap_Pending_Version (Major  => Major,
-                                   Minor  => Minor,
-                                   Patch  => Patch,
-                                   Build  => Build);
-
-      Populate_Ap_Stamp ( Major  => Major,
-                          Minor  => Minor,
-                          Patch  => Patch,
-                          Build  => Build,
-                          Stamp  => Stamp);
-
-   end Get_Ap_Pending_Stamp;
-
-   procedure Get_Ap_Pending_Version_String (Version_String : out Array_Version_String;
-                                            Length         : out NvU8)
-   is
-   begin
-
-      Pldm_Get_Ap_Pending_Comp_Version_String
-        (Version_String => Version_String,
-         Length         => Length);
-
-   end Get_Ap_Pending_Version_String;
-
    --  @todo should remove this
    function Pldm_Get_Device_Identity (ArrAddress   : in System.Address) return NvU32
    is

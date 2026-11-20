@@ -37,7 +37,7 @@ using I2cBuffer             = std::array<uint8_t, BufferSize>;
 class Driver
 {
 public:
-    void    bind(nv::i2c::Port port, void* task);
+    void    bind(nv::i2c::Port port, void* task, void* emul_task);
     void    init();
     void    start(bool enable_target);
     void    peripheral_recovery(bool enable_target);
@@ -79,6 +79,7 @@ private:
     {
         I2cBuffer buffer;
         void*     task;
+        void*     emul_task;
         bool      transmit;
     };
 

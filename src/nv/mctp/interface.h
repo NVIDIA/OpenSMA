@@ -17,8 +17,10 @@
  */
 #pragma once
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
+#include <tuple>
 
 #include "nv/nv.h"
 #include "corepdk/modules/mctp-cpp/src/app/pdk-mctp-app-packet.h"
@@ -31,15 +33,34 @@ using Header        = pdk::mctp::app::TransportHeader;
 using Packet        = pdk::mctp::app::Packet;
 using Client        = pdk::mctp::platforms::Interface;
 
+// Products hand-write ClientInfos and the lookups index it by the Client enum
+// value, so an entry sitting at the wrong slot silently resolves to another
+// client's task. Unlisted slots used to be value-initialised, which reads back
+// as TaskId::Mctp rather than TaskId::Invalid, so the mistake stays invisible
+// at runtime. Every config asserts on this to turn it into a build error.
+template<typename Infos>
+constexpr bool client_infos_in_enum_order(const Infos& infos)
+{
+    for (std::size_t i = 0; i < infos.size(); ++i) {
+        if (std::get<0>(infos[i]) != static_cast<Client>(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 using pdk::mctp::app::PktBufDataLen;
 
 constexpr auto NsmPktBufDataLen = 256;
 
 enum EventBit : uint32_t
 {
-    None          = 0,
-    UpI2cReceive  = common::bit(Client::UsI2c),
-    UpUsbReceive  = common::bit(Client::UsUsb),
+    None         = 0,
+    UpI2cReceive = common::bit(Client::UsI2c),
+    UpUsbReceive = common::bit(Client::UsUsb),
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    UpUsbFsReceive = common::bit(Client::UsUsbFs),
+#endif
     DwI2c0Receive = common::bit(Client::DsI2c0),
     DwI2c1Receive = common::bit(Client::DsI2c1),
     DwI2c2Receive = common::bit(Client::DsI2c2),
@@ -56,6 +77,7 @@ enum EventBit : uint32_t
     DwI2c5Receive = common::bit(Client::DsI2c5),
     DwI2c6Receive = common::bit(Client::DsI2c6),
     DwI2c7Receive = common::bit(Client::DsI2c7),
+    UpI3cReceive  = common::bit(Client::UsI3c),
 };
 
 struct [[gnu::packed]] NsmPacket
@@ -71,7 +93,7 @@ struct [[gnu::packed]] NsmPacket
 
     static auto& from(std::span<uint8_t> data)
     {
-        nv::always_assert(data.size() >= sizeof(Packet));
+        NV_ALWAYS_ASSERT(data.size() >= sizeof(Packet));
         return *std::bit_cast<Packet*>(data.data());
     };
 };

@@ -26,6 +26,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
+
+#include "nv/fancontrol/common.h"
 
 namespace nv::fancontrol {
 
@@ -75,6 +78,54 @@ public:
      * @brief Number of PWM fan channels, from the project config.h.
      */
     static size_t fan_count();
+
+    /**
+     * @brief Drive the fans along the project fan curve for the given
+     *        temperatures.
+     *
+     * Push-model entry point for the thermal poll loop: call it after each
+     * temperature read. temps[i] drives fan i through the config.h FanCurve[i]
+     * (linear interpolation between breakpoints, clamped at both ends); the
+     * project config.h documents which temperature belongs to which fan.
+     * A temps[i] of InvalidTemp (no valid reading) fails safe to the fan's
+     * config.h FanDefaultDuty.
+     *
+     * Does nothing in FanMode::Manual (a VDM client owns the fans). Fans with
+     * an empty curve, or without a matching temps entry, keep their current
+     * duty. A project that never calls update() keeps fully manual control.
+     *
+     * @param temps one temperature (degrees Celsius) per fan, index-aligned
+     *              with the config.h fan indexes
+     */
+    static void update(std::span<const int8_t> temps);
+
+    /**
+     * @brief Current fan control mode (Auto = curves, Manual = VDM).
+     */
+    static FanMode get_fan_mode();
+
+    /**
+     * @brief Select the fan control mode.
+     *
+     * Auto hands the fans back to the curves on the next update(). Manual is
+     * also entered implicitly by any set_fan_pwm() / stop_fan_pwm() call.
+     */
+    static void set_fan_mode(FanMode mode);
+
+    /**
+     * @brief Measure a fan's tach speed (blocking: up to ~200 ms for a
+     *        stopped fan).
+     *
+     * @param tach_index tach input index (0-based, config.h TachInputs order)
+     * @return fan speed in RPM, 0 when the fan is stopped or the index has
+     *         no tach input
+     */
+    static uint16_t get_fan_tach(size_t tach_index);
+
+    /**
+     * @brief Number of fan tach inputs, from the project config.h.
+     */
+    static size_t tach_count();
 
 private:
     /**

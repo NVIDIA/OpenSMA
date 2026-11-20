@@ -45,6 +45,9 @@ constexpr Address FmcFwSize    = 0x8000;
 
 constexpr Address PdsAddressStart = 0xF0000;
 
+constexpr Address LogEntryFlashSize = 0xC000;
+constexpr Address L3CertAddress     = 0xEC000;
+
 // Debug token SPI offset
 constexpr Address DebugTokenSpiOffset = 0xEE000;
 

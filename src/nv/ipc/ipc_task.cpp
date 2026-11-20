@@ -41,9 +41,21 @@
 using namespace std::chrono_literals;
 using namespace nv::ipc;
 namespace nv::ipc::task {
+namespace {
+template<typename QueueId>
+constexpr bool is_core1_log_queue(QueueId queue_id)
+{
+    if constexpr (requires { QueueId::Core1Log; }) {
+        return queue_id == QueueId::Core1Log;
+    }
+    return false;
+}
+}  // namespace
+
 void Task::make(Config config)
 {
-    constexpr auto StackSize = std::max(640, int(configMINIMAL_STACK_SIZE));
+    // leave ~304 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(320, int(configMINIMAL_STACK_SIZE));
 
     NV_TASK_DATA static Task                       task(config);
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
@@ -124,6 +136,25 @@ Status Task::handle_data_read(uint32_t read_size)
         // Check if queue_id is valid
         if (!nv::common::is_in_range(_queue_request.queue_id)) {
             return task::Status::InvalidParameter;
+        }
+
+        if (is_core1_log_queue(_queue_request.queue_id)) {
+            if (_queue_request.length != sizeof(nv::ipc_bm::CoreLogWire)) {
+                return task::Status::InvalidParameter;
+            }
+
+            nv::ipc_bm::CoreLogWire item{};
+            std::memcpy(&item, _buffer.data(), sizeof(item));
+            if (item.level < static_cast<uint8_t>(nv::logger::Level::Debug)
+                || item.level > static_cast<uint8_t>(nv::logger::Level::Critical)) {
+                return task::Status::InvalidParameter;
+            }
+
+            nv::logger::EventData data{};
+            std::memcpy(data.data(), static_cast<const void*>(&item.data), data.size());
+            (void)nv::logger::Logger::add_from_core(
+                item.event, static_cast<nv::logger::Level>(item.level), data, item.footprint);
+            return task::Status::Ok;
         }
 
 #if NCSI_ENABLE

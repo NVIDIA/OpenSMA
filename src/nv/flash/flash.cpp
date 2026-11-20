@@ -35,6 +35,47 @@ bool log_status_error(Status status)
          > 0;
 }
 
+// Translate a flash offset for an image booted from Slot 1. The flash remap swaps the two
+// windows [0, window) and [slot1, slot1 + window); every other offset in the flash array is
+// bank-fixed. Offsets at or beyond the end of the flash array (e.g. the FMC in IFR) are not
+// remapped and are returned unchanged, so read/write/erase still reject them.
+constexpr Address remap_address(Address address, Address slot1, Address window, Address max)
+{
+    if (address >= max) {
+        return address;
+    }
+    if (address < window) {
+        return address + slot1;
+    }
+    if ((address >= slot1) && ((address - slot1) < window)) {
+        return address - slot1;
+    }
+    return address;
+}
+
+// Both windows must lie inside the flash array so a translated offset never leaves it.
+static_assert(RemapSize <= Slot1Address, "remap windows must not overlap");
+static_assert(Slot1Address + RemapSize <= MaxAddress, "Slot 1 window must fit in flash");
+
+// The cases below use literal flash offsets so each can be checked against its layout.
+// NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers)
+// 1 MB layout: 512 KB windows, the whole array is swapped.
+static_assert(remap_address(0x00000, 0x80000, 0x80000, 0x100000) == 0x80000);
+static_assert(remap_address(0x70000, 0x80000, 0x80000, 0x100000) == 0xF0000);
+static_assert(remap_address(0xF0000, 0x80000, 0x80000, 0x100000) == 0x70000);
+static_assert(remap_address(0x100000, 0x80000, 0x80000, 0x100000) == 0x100000);
+// 2 MB layout: 768 KB windows, Slot 1 at the bank 1 base, the rest is bank-fixed.
+static_assert(remap_address(0x00000, 0x100000, 0xC0000, 0x200000) == 0x100000);
+static_assert(remap_address(0xBF000, 0x100000, 0xC0000, 0x200000) == 0x1BF000);
+static_assert(remap_address(0xC0000, 0x100000, 0xC0000, 0x200000) == 0xC0000);
+static_assert(remap_address(0xFE000, 0x100000, 0xC0000, 0x200000) == 0xFE000);
+static_assert(remap_address(0x100000, 0x100000, 0xC0000, 0x200000) == 0x00000);
+static_assert(remap_address(0x1BF000, 0x100000, 0xC0000, 0x200000) == 0xBF000);
+static_assert(remap_address(0x1C0000, 0x100000, 0xC0000, 0x200000) == 0x1C0000);
+static_assert(remap_address(0x200000, 0x100000, 0xC0000, 0x200000) == 0x200000);
+static_assert(remap_address(0x1008000, 0x100000, 0xC0000, 0x200000) == 0x1008000);
+// NOLINTEND(cppcoreguidelines-avoid-magic-numbers)
+
 }  // namespace
 
 Status
@@ -180,86 +221,6 @@ Status Flash::get_data(Key key, Data& data, nv::ipc::Queue::Usecs timeout)
     return status;
 }
 
-Status Flash::get_ap_fw_authenticate_data(nv::secure_boot::AuthenticateData& authenticate_data,
-                                          Key                                key,
-                                          nv::ipc::Queue::Usecs              timeout)
-{
-    if (!Npds::has_ap_auth_data_record(key)) {
-        return Status::InvalidParam;
-    }
-
-    auto authenticate_data_buffer = std::span<uint8_t>(
-        std::bit_cast<uint8_t*>(&authenticate_data), sizeof(nv::secure_boot::AuthenticateData));
-    size_t needed_size  = authenticate_data_buffer.size();
-    size_t start_offset = 0;
-    Status status       = Status::Ok;
-
-    while (needed_size != 0) {
-        const size_t ReadSize = std::min(needed_size, static_cast<size_t>(BufferSize));
-        Request      req      = {};
-        req.header            = RequestHeader(RequestType::GetApFwAuthenticateData);
-        req.offset            = start_offset;
-        req.key               = key;
-        req.length            = ReadSize;
-
-        nv::flash::Response response{};
-        status = Task::request(req, response, timeout);
-
-        if (status != Status::Ok) {
-            break;
-        }
-
-        std::copy(response.buffer.begin(),
-                  response.buffer.begin() + response.length,
-                  authenticate_data_buffer.begin() + static_cast<std::ptrdiff_t>(start_offset));
-        start_offset += response.length;
-        needed_size  -= response.length;
-    }
-
-    return status;
-}
-
-Status
-Flash::set_ap_fw_authenticate_data(const nv::secure_boot::AuthenticateData& authenticate_data,
-                                   Key                                      key,
-                                   nv::ipc::Queue::Usecs                    timeout)
-{
-    if (!Npds::has_ap_auth_data_record(key)) {
-        return Status::InvalidParam;
-    }
-
-    auto authenticate_data_buffer = std::span<const uint8_t>(
-        std::bit_cast<const uint8_t*>(&authenticate_data),
-        sizeof(nv::secure_boot::AuthenticateData));
-    size_t needed_size  = authenticate_data_buffer.size();
-    size_t start_offset = 0;
-    Status status       = Status::Ok;
-
-    while (needed_size != 0) {
-        const size_t WriteSize = std::min(needed_size, static_cast<size_t>(BufferSize));
-        Request      req       = {};
-        req.header             = RequestHeader(RequestType::SetApFwAuthenticateData);
-        req.offset             = start_offset;
-        req.key                = key;
-        req.length             = WriteSize;
-        std::copy(authenticate_data_buffer.begin() + static_cast<std::ptrdiff_t>(start_offset),
-                  authenticate_data_buffer.begin()
-                      + static_cast<std::ptrdiff_t>(start_offset + WriteSize),
-                  req.buffer.begin());
-
-        nv::flash::Response response{};
-        status = Task::request(req, response, timeout);
-
-        if (status != Status::Ok) {
-            break;
-        }
-        start_offset += WriteSize;
-        needed_size  -= WriteSize;
-    }
-
-    return status;
-}
-
 Status Flash::set_data(Key key, const Data& data, nv::ipc::Queue::Usecs timeout)
 {
     const Request       Req = {.header = RequestHeader(RequestType::DataStoreSet), .key = key};
@@ -302,12 +263,7 @@ Address Flash::get_flash_address(Address address, nv::bootloader::Driver::ImageI
     if (boot_index == nv::bootloader::Driver::ImageIndex::Image0) {
         return address;
     }
-    if (address < RemapSize) {
-        return address + RemapSize;
-    }
-    else {
-        return address - RemapSize;
-    }
+    return remap_address(address, Slot1Address, RemapSize, MaxAddress);
 };
 
 Status Flash::write_phrase(Address address, const std::span<uint8_t>& buffer)
@@ -442,13 +398,13 @@ Status Flash::read_secure_fw_version(uint32_t&             sec_version,
 {
     uint32_t           CfpaSecurityVersionOffset    = 0;
     constexpr uint32_t McuCfpaSecurityVersionOffset = 0x008;
-    constexpr uint32_t Ap0CfpaSecurityVersionOffset = 0x090;
+    constexpr uint32_t ReservedCfpaCounterOffset    = 0x090;
     switch (key_rollback_select) {
         case KeyRollbackSelect::Mcu:
             CfpaSecurityVersionOffset = McuCfpaSecurityVersionOffset;
             break;
-        case KeyRollbackSelect::Ap0:
-            CfpaSecurityVersionOffset = Ap0CfpaSecurityVersionOffset;
+        case KeyRollbackSelect::Reserved:
+            CfpaSecurityVersionOffset = ReservedCfpaCounterOffset;
             break;
         default: return Status::InvalidParam;
     }
@@ -479,14 +435,16 @@ Status Flash::read_key_revoke(uint32_t&             key_revoke,
                               KeyRollbackSelect     key_rollback_select,
                               nv::ipc::Queue::Usecs timeout)
 {
-    constexpr uint32_t McuCfpaKeyRevokeOffset = 0x018;
-    constexpr uint32_t Ap0CfpaKeyRevokeOffset = 0x080;
+    constexpr uint32_t McuCfpaKeyRevokeOffset    = 0x018;
+    constexpr uint32_t ReservedCfpaCounterOffset = 0x080;
     // read from cmpa
     uint32_t CfpaKeyRevokeOffset = 0;
     switch (key_rollback_select) {
         case KeyRollbackSelect::Mcu: CfpaKeyRevokeOffset = McuCfpaKeyRevokeOffset; break;
-        case KeyRollbackSelect::Ap0: CfpaKeyRevokeOffset = Ap0CfpaKeyRevokeOffset; break;
-        default                    : return Status::InvalidParam;
+        case KeyRollbackSelect::Reserved:
+            CfpaKeyRevokeOffset = ReservedCfpaCounterOffset;
+            break;
+        default: return Status::InvalidParam;
     }
     const Request       ReqCmpa = {.header = RequestHeader(RequestType::CfpaRead),
                                    .offset = CfpaKeyRevokeOffset,

@@ -70,8 +70,19 @@ void init(bool init_mcu_temp,
  * ADC FIFOs, dispatches each sample to the owning sensor family, and re-arms the
  * next sampling round.
  *
+ * @param timerId IPC timer allocated to voltage monitoring
+ * @param period Sampling period
+ * @param init_leak_detect Initialize and enable LeakDetect when true
+ *
+ * @note LeakDetect presence is normally determined at compile time by
+ *       `LeakDetectSensorNum` in config.h. @p init_leak_detect is only for
+ *       products whose runtime board identity determines whether the configured
+ *       LeakDetect sensor is enabled.
+ *
  * @note Used by the timer-driven implementation only.
  */
-void init(nv::ipc::TimerId timerId, std::chrono::microseconds period);
+void init(nv::ipc::TimerId          timerId,
+          std::chrono::microseconds period,
+          bool                      init_leak_detect = true);
 
 }  // namespace nv::volt_mon

@@ -27,8 +27,6 @@
 #include "nv/bootloader.h"
 #include "nv/mctp/interface.h"
 #include "nv/nv.h"
-#include "nv/i2c/lattice_driver.h"
-#include "nv/vrot/interface/interface.h"
 #include "library/spdm_lib_config.h"
 using namespace std::chrono_literals;
 using namespace nv::ipc;
@@ -36,9 +34,6 @@ using namespace nv;
 
 namespace nv::spdm {
 namespace {
-constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
-constexpr bool HasLpu    = nv::vrot::has_ap_type(nv::vrot::ApType::Lpu, nv::vrot::ApList);
-
 void handle_mcu_auth_request(
     const nv::spdm::crypto::AuthenticateMcuFirmwareRequestParameter& request,
     nv::ipc::CoreId&                                                 request_core_id,
@@ -54,47 +49,6 @@ void handle_mcu_auth_request(
     };
 }
 
-bool handle_ap_auth_request(
-    const nv::spdm::crypto::AuthenticateApFirmwareRequestParameter& request,
-    nv::ipc::CoreId&                                                request_core_id,
-    nv::spdm::crypto::CryptoReqResParameters&                       response_parameters)
-{
-    if constexpr (!HasVrotAp) {
-        return false;
-    }
-    else {
-        request_core_id  = request.request_core_id;
-        auto auth_result = nv::spdm::crypto::CryptoStatus::FailUnknown;
-        if (const auto ap = nv::vrot::find_ap(request.ap_id, nv::vrot::ApList); ap) {
-            auth_result = nv::spdm::crypto::authenticate_ap_firmware_with_request_id(
-                ap.value(),
-                request.input_parsing_fw_type,
-                request.request_task_id,
-                request.auth_request_id);
-        }
-        response_parameters = nv::spdm::crypto::AuthenticateApFirmwareResponseParameter{
-            .auth_result           = auth_result,
-            .input_parsing_fw_type = request.input_parsing_fw_type,
-            .ap_id                 = request.ap_id,
-            .auth_request_id       = request.auth_request_id,
-            .request_task_id       = request.request_task_id,
-        };
-        return true;
-    }
-}
-
-nv::vrot::ApOpErrCode handle_runtime_consistency_request()
-{
-    if constexpr (HasLpu) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (ap.type == nv::vrot::ApType::Lpu) {
-                return nv::vrot::check_runtime_consistency(ap);
-            }
-        }
-    }
-    return nv::vrot::ApOpErrCode::NotSupported;
-}
-
 bool handle_auth_request(const nv::spdm::crypto::CryptoReqResParameters& request_parameters,
                          nv::ipc::CoreId&                                request_core_id,
                          nv::spdm::crypto::CryptoReqResParameters&       response_parameters)
@@ -106,12 +60,6 @@ bool handle_auth_request(const nv::spdm::crypto::CryptoReqResParameters& request
         return true;
     }
 
-    if (const auto*
-            request = std::get_if<nv::spdm::crypto::AuthenticateApFirmwareRequestParameter>(
-                &request_parameters)) {
-        return handle_ap_auth_request(*request, request_core_id, response_parameters);
-    }
-
     return false;
 }
 
@@ -120,18 +68,6 @@ void set_authenticate_task_idle(nv::ipc::Event& event, nv::ipc::CoreId core_id)
     if (nv::ipc::Event::Status::Ok
         != event.set(nv::spdm::Task::EventBits::AuthenticateTaskIdle, core_id)) {
         nv::info("set AuthenticateTaskIdle fail for core %d\n", core_id);
-    }
-}
-
-void refresh_ap_provision_status()
-{
-    if constexpr (HasVrotAp) {
-        for (const auto& ap : nv::vrot::ApList) {
-            if (!nv::vrot::supports_ap_provision(ap.type)) {
-                continue;
-            }
-            nv::vrot::set_ap_provision_status(ap);
-        }
     }
 }
 }  // namespace
@@ -248,9 +184,8 @@ nv::spdm::Task& Task::get_task()
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    // Minimum stack plus future overhead plus increase to support additional APs.
-    constexpr auto StackSize = std::max(2880 + 512 + (HasVrotAp ? 384 : 0),
-                                        int(configMINIMAL_STACK_SIZE));
+    // leave ~200/~216 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(3072, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -272,16 +207,22 @@ nv::spdm::Status Task::spdm_tx(const nv::mctp::Packet& packet)
     nv::ipc::Queue& queue           = nv::ipc::Queue::make(nv::ipc::QueueId::SpdmRx);
     const size_t    ItemSize        = queue.item_size();
     const auto      PacketInterface = static_cast<mctp::Client>(packet.priv.packet_interface);
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    const bool is_usb_responder = PacketInterface == mctp::Client::UsUsb
+                               || PacketInterface == mctp::Client::UsUsbFs;
+#else
+    const bool is_usb_responder = PacketInterface == mctp::Client::UsUsb;
+#endif
 
     // drop the packet from incorrect interface
     // support only usb / i2c(need to open configuration in config.h)
     if constexpr (nv::ipc::SpdmI2cResponder) {
-        if (PacketInterface != mctp::Client::UsUsb && PacketInterface != mctp::Client::UsI2c) {
+        if (!is_usb_responder && PacketInterface != mctp::Client::UsI2c) {
             return nv::spdm::Status::InvalidInterface;
         }
     }
     else {
-        if (PacketInterface != mctp::Client::UsUsb) {
+        if (!is_usb_responder) {
             return nv::spdm::Status::InvalidInterface;
         }
     }
@@ -297,6 +238,11 @@ nv::spdm::Status Task::spdm_tx(const nv::mctp::Packet& packet)
     if (PacketInterface == mctp::Client::UsUsb) {
         event_status = event.set(spdm::Task::EventBits::UsbRxBit);
     }
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    if (PacketInterface == mctp::Client::UsUsbFs) {
+        event_status = event.set(spdm::Task::EventBits::UsbFsRxBit);
+    }
+#endif
 
     if (PacketInterface == mctp::Client::UsI2c) {
         event_status = event.set(spdm::Task::EventBits::I2cRxBit);
@@ -315,6 +261,9 @@ Task::Task()
 , _tx(ipc::Queue::make(ipc::QueueId::MctpSpdmRequest))
 , _rx(ipc::Queue::make(ipc::QueueId::SpdmRx))
 {
+    // Receive bits identify the sole queued packet; the callback clears them before dequeue.
+    static_assert(std::get<1>(nv::ipc::QueueInfos[int(nv::ipc::QueueId::SpdmRx)]) == 1,
+                  "Event-based SPDM dispatch requires a one-slot receive queue");
     // Dual core project will need SpdmCryptoHelper max_items = 2
     // 1 for Core0, 1 for Core1
     static_assert(
@@ -423,37 +372,29 @@ Task::Task()
     (void)nv::debugtoken::check_debug_token_subtype_enabled(
         nv::debugtoken::Type::McuDebug, nv::debugtoken::DebugTokenSubtypePwrFailI2cDebug);
 
-    refresh_ap_provision_status();
-
     // coverity[no_escape] - no escape is expected
     while (true) {
         nv::ipc::Event& event = nv::ipc::Event::make(nv::ipc::EventId::SpdmTask);
         nv::ipc::Queue& queue = nv::ipc::Queue::make(nv::ipc::QueueId::SpdmCryptoHelper);
 
-        auto event_bits = event.wait(nv::spdm::Task::RxWaitEventBit, false, false, 1s).value();
+        auto event_bits = event.wait(RxWaitEventBit | CryptoRequestEventBit, false, false, 1s)
+                              .value();
 
         // check data is recive
         if (event_bits & nv::spdm::Task::EventBits::UsbRxBit) {
-            auto status = spdm_engine_context[0].process_message();
+            auto status = spdm_engine_context[SpdmUsbHsContext].process_message();
             if (status != LIBSPDM_STATUS_SUCCESS) {
                 nv::info("libspdm_responder_dispatch_message fail, status: %d\n", status);
             }
         }
-        if (event_bits & nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit) {
-            (void)event.clear(nv::spdm::Task::EventBits::CryptoPrimitiveRequestBit);
-            nv::spdm::crypto::process_primitive_request_queue();
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+        if (event_bits & nv::spdm::Task::EventBits::UsbFsRxBit) {
+            auto status = spdm_engine_context[SpdmUsbFsContext].process_message();
+            if (status != LIBSPDM_STATUS_SUCCESS) {
+                nv::info("libspdm_responder_dispatch_message fail, status: %d\n", status);
+            }
         }
-        if (event_bits & nv::spdm::Task::EventBits::RuntimeConsistencyBit) {
-            (void)event.clear(nv::spdm::Task::EventBits::RuntimeConsistencyBit);
-            const auto result = handle_runtime_consistency_request();
-            nv::logger::info(nv::logger::Event::RuntimeConsistencyResult,
-                             nv::logger::data_from_u32(static_cast<uint32_t>(result)));
-            const auto
-                response_bit = result == nv::vrot::ApOpErrCode::Success
-                                 ? nv::spdm::Task::EventBits::RuntimeConsistencySuccessBit
-                                 : nv::spdm::Task::EventBits::RuntimeConsistencyFailureBit;
-            (void)event.set(response_bit, nv::ipc::CoreId::Core0);
-        }
+#endif
         // need to auth fw
         if (event_bits & nv::spdm::Task::EventBits::AuthenticateRequestBit) {
             (void)event.clear(nv::spdm::Task::EventBits::AuthenticateRequestBit);
@@ -504,12 +445,13 @@ Task::Task()
         }
         if constexpr (nv::ipc::SpdmI2cResponder) {
             if (event_bits & nv::spdm::Task::EventBits::I2cRxBit) {
-                static_assert(!nv::ipc::SpdmI2cResponder
-                                  or std::tuple_size_v<decltype(spdm_engine_context)> >= 2,
-                              "spdm_engine_context size should larger than 1 when I2C "
-                              "responder is enabled");
+                static_assert(
+                    !nv::ipc::SpdmI2cResponder
+                        or std::tuple_size_v<decltype(spdm_engine_context)> > SpdmI2cContext,
+                    "spdm_engine_context size should larger than 1 when I2C "
+                    "responder is enabled");
                 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
-                auto status = spdm_engine_context[1].process_message();
+                auto status = spdm_engine_context[SpdmI2cContext].process_message();
                 // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
                 if (status != LIBSPDM_STATUS_SUCCESS) {
                     nv::info("libspdm_responder_dispatch_message fail, status: %d\n", status);

@@ -29,7 +29,7 @@ enum class VrI2cDeviceId : uint8_t
     At24c01,
     Pca9544a,
     Pca9555,
-    Nct3018yr,
+    I2cRtc,
 };
 
 /** @brief Compile-time device slot: type and 7-bit address (from project config.h). */
@@ -60,8 +60,8 @@ constexpr bool validate_vr_i2c_bus_slots(const std::array<VrI2cBusSlot, SlotCoun
             case VrI2cDeviceId::At24c01:
             case VrI2cDeviceId::Pca9544a:
             case VrI2cDeviceId::Pca9555:
-            case VrI2cDeviceId::Nct3018yr: break;
-            default                      : return false;
+            case VrI2cDeviceId::I2cRtc  : break;
+            default                     : return false;
         }
 
         for (size_t j = i + 1U; j < SlotCount; ++j) {

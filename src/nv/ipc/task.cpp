@@ -48,11 +48,21 @@ void Task::get_task_id_and_priority(TaskIdAndPriority& taskIdAndPriority)
     for (auto id = static_cast<uint8_t>(nv::ipc::TaskId::Begin);
          id < static_cast<uint8_t>(nv::ipc::TaskId::KernelEnd);
          id = id + 1) {
-        auto& task = nv::ipc::Supervisor::inst().task_pub(static_cast<nv::ipc::TaskId>(id));
-        // coverity[cert_int31_c_violation] safe to cast
-        auto priority            = (task.handle() != nullptr)
-                                     ? static_cast<Task::Priority>(uxTaskPriorityGet(task.handle()))
-                                     : Task::Priority::Invalid;
+        auto priority = Task::Priority::Invalid;
+        // Timer and Idle are kernel tasks outside the supervisor table
+        if (id < static_cast<uint8_t>(nv::ipc::TaskId::End)) {
+            auto& task = nv::ipc::Supervisor::inst().task_pub(static_cast<nv::ipc::TaskId>(id));
+            if (task.handle() != nullptr) {
+                // coverity[cert_int31_c_violation] safe to cast
+                priority = static_cast<Task::Priority>(uxTaskPriorityGet(task.handle()));
+            }
+        }
+        else if (id == static_cast<uint8_t>(nv::ipc::TaskId::Timer)) {
+            priority = Task::Priority::Timer;
+        }
+        else if (id == static_cast<uint8_t>(nv::ipc::TaskId::Idle)) {
+            priority = Task::Priority::Idle;
+        }
         taskIdAndPriority.at(id) = std::make_pair(static_cast<nv::ipc::TaskId>(id), priority);
     }
 }

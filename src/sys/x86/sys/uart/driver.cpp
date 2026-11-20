@@ -19,6 +19,21 @@
 
 using namespace nv::uart;
 
+namespace {
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+Port g_console_port = Port::Three;
+}  // namespace
+
+void nv::uart::set_console_port(Port port)
+{
+    g_console_port = port;
+}
+
+Port nv::uart::console_port()
+{
+    return g_console_port;
+}
+
 Driver::Driver([[maybe_unused]] Port port) : sys::uart::Driver()
 {
     // TODO implement

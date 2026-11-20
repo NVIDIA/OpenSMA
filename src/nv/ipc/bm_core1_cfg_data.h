@@ -40,13 +40,16 @@ extern StartupInfo g_core1_startup_data;
 struct [[gnu::packed]] Core1CfgData
 {
     uint32_t magic;            // magic number 0xC04E1CF6("CORE1CFG") to identify valid layout
-    uint32_t version;          // version of core1 config layout, ver=1
+    uint32_t version;          // version of core1 config layout, ver=2
     uint32_t init_data_valid;  // non-zero=core0 has written and validated init data.
     uint32_t reserved;
     uint32_t ncsi_mac_valid;   // non-zero=mac address below is valid and shall be used
     uint8_t  ncsi_mac[6];      // NSCI/CDC_ECM MAC address (big-endian)
     uint8_t  ncsi_padding[2];  // pad to 4-byte boundary
-    // uint8_t  unused[228];
+    // v2 additions (added in Step 3b of unified pt649+pn72f image)
+    uint8_t product_id;  // nv::product::ProductId cast to uint8_t (0=pt649, 1=pn72f)
+    uint8_t pad[3];      // align to 4-byte boundary; reserved, must be zero
+    // uint8_t  unused[224];
 };
 
 /** Core1CfgData magic value: 0xC04E1CF6 (big-endian in magic[4]) */

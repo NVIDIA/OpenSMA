@@ -198,7 +198,7 @@ void Driver::dump()
         // NOLINTEND(cppcoreguidelines-avoid-magic-numbers)
 
         for (auto client : dump_interface) {
-            nv::logger::info(nv::logger::Event::PerfInterfaceType,
+            nv::logger::info(nv::logger::Event::PerfInterfaceTypeV2,
                              nv::logger::data_from_u32(static_cast<uint32_t>(client)));
             nv::logger::info(nv::logger::Event::PerfInterfaceSend,
                              nv::logger::data_from_two_u32(
@@ -247,7 +247,8 @@ Mode Driver::get_current_mode()
 }
 
 /**
- * @brief Average CPU execution time (sum of all task execution time in us) per 1 second
+ * @brief Average CPU execution time (sum of the execution time of all tasks but Idle, in us)
+ *        per 1 second
  *        Record 20 entries of the most recent 20 seconds.
  * @note  from latest to oldest
  *
@@ -265,10 +266,13 @@ void Driver::get_cpu_utilization(CpuUtilization& utilization)
         // handle underflow
         isec = (isec >= size) ? (size - 1) : isec;
 
-        // accumulate execution time
+        // accumulate execution time of every task except Idle, Timer included
         for (auto itask = static_cast<uint32_t>(ipc::TaskId::Begin);
-             itask < static_cast<uint32_t>(ipc::TaskId::End);
+             itask < static_cast<uint32_t>(ipc::TaskId::KernelEnd);
              ++itask) {
+            if (itask == static_cast<uint32_t>(ipc::TaskId::Idle)) {
+                continue;
+            }
             // coverity[cert_int30_c_violation] overflow takes ~4300 seconds
             utilization.at(iutil) += buffer.at(isec).cpu.at(itask).execution_time;
         }

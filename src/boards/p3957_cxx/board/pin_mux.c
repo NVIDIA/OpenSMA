@@ -131,6 +131,10 @@ pin_labels:
 - {pin_num: C14, pin_signal: PIO0_6/ISPMODE_N/FC0_P2/FC1_P6/CT_INP2/PDM0_DATA1/TSI0_CH10, label: MCU_RECOVERY, identifier: MCU_RECOVERY}
 - {pin_num: B14, pin_signal: PIO0_4/WUU0_IN0/EWM0_IN/FC0_P0/FC1_P4/CT0_MAT2/UTICK_CAP2/HSCMP1_OUT/PDM0_CLK/TSI0_CH8, label: SMB_SSD7_SDA, identifier: SMB_SSD7_SDA}
 - {pin_num: A14, pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9, label: SMB_SSD7_SCL, identifier: SMB_SSD7_SCL}
+- {pin_num: B16, pin_signal: PIO0_2/TDO/SWO/FC1_P2/CT0_MAT0/UTICK_CAP0/I3C0_PUR, label: L_MCU_P0_2, identifier: L_MCU_P0_2}
+- {pin_num: B15, pin_signal: PIO0_3/TDI/FC1_P3/CT0_MAT1/UTICK_CAP1/HSCMP0_OUT/CMP1_IN1, label: S_MCU_READY_STATUS, identifier: S_MCU_READY_STATUS}
+- {pin_num: A12, pin_signal: PIO0_9/FC0_P5/CT_INP1/FLEXIO0_D1/ADC0_B9, label: GLOBAL_WP_MCU, identifier: GLOBAL_WP_MCU}
+- {pin_num: U2, pin_signal: ADC0_A3/ADC1_A3, label: S_LEAK_SNS_IN1_R, identifier: S_LEAK_SNS_IN1_R}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -280,6 +284,12 @@ BOARD_InitPins:
   - {pin_num: C14, peripheral: SYSCON0, signal: ISPMODE, pin_signal: PIO0_6/ISPMODE_N/FC0_P2/FC1_P6/CT_INP2/PDM0_DATA1/TSI0_CH10}
   - {pin_num: B14, peripheral: LP_FLEXCOMM0, signal: LPFLEXCOMM_P0, pin_signal: PIO0_4/WUU0_IN0/EWM0_IN/FC0_P0/FC1_P4/CT0_MAT2/UTICK_CAP2/HSCMP1_OUT/PDM0_CLK/TSI0_CH8}
   - {pin_num: A14, peripheral: LP_FLEXCOMM0, signal: LPFLEXCOMM_P1, pin_signal: PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9}
+  - {pin_num: B16, peripheral: GPIO0, signal: 'GPIO, 2', pin_signal: PIO0_2/TDO/SWO/FC1_P2/CT0_MAT0/UTICK_CAP0/I3C0_PUR, direction: INPUT,
+    drive_strength: low}
+  - {pin_num: B15, peripheral: GPIO0, signal: 'GPIO, 3', pin_signal: PIO0_3/TDI/FC1_P3/CT0_MAT1/UTICK_CAP1/HSCMP0_OUT/CMP1_IN1, direction: OUTPUT, gpio_init_state: 'false',
+    open_drain: enable, pull_enable: disable}
+  - {pin_num: A12, peripheral: GPIO0, signal: 'GPIO, 9', pin_signal: PIO0_9/FC0_P5/CT_INP1/FLEXIO0_D1/ADC0_B9, direction: INPUT}
+  - {pin_num: U2, peripheral: ADC0, signal: 'A, 3', pin_signal: ADC0_A3/ADC1_A3}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -353,6 +363,19 @@ void BOARD_InitPins(void)
                       /* Input Buffer Enable: Enables. */
                       | PORT_PCR_IBE(PCR_IBE_ibe1));
 
+    /* PORT0_2 (pin B16) is configured as PIO0_2 */
+    PORT_SetPinMux(BOARD_INITPINS_L_MCU_P0_2_PORT, BOARD_INITPINS_L_MCU_P0_2_PIN, kPORT_MuxAlt0);
+
+    PORT0->PCR[2] = ((PORT0->PCR[2] &
+                      /* Mask bits to zero which are setting */
+                      (~(PORT_PCR_DSE_MASK | PORT_PCR_IBE_MASK)))
+
+                     /* Drive Strength Enable: Low. */
+                     | PORT_PCR_DSE(PCR_DSE_dse0)
+
+                     /* Input Buffer Enable: Enables. */
+                     | PORT_PCR_IBE(PCR_IBE_ibe1));
+
     /* PORT0_22 (pin B8) is configured as ADC0_A14 */
     PORT_SetPinMux(BOARD_INITPINS_VMON_12V_SSD0_DIV_PORT, BOARD_INITPINS_VMON_12V_SSD0_DIV_PIN, kPORT_MuxAlt0);
 
@@ -413,6 +436,22 @@ void BOARD_InitPins(void)
                       /* Input Buffer Enable: Enables. */
                       | PORT_PCR_IBE(PCR_IBE_ibe1));
 
+    /* PORT0_3 (pin B15) is configured as PIO0_3 */
+    PORT_SetPinMux(BOARD_INITPINS_S_MCU_READY_STATUS_PORT, BOARD_INITPINS_S_MCU_READY_STATUS_PIN, kPORT_MuxAlt0);
+
+    PORT0->PCR[3] = ((PORT0->PCR[3] &
+                      /* Mask bits to zero which are setting */
+                      (~(PORT_PCR_PE_MASK | PORT_PCR_ODE_MASK | PORT_PCR_IBE_MASK)))
+
+                     /* Pull Enable: Disables. */
+                     | PORT_PCR_PE(PCR_PE_pe0)
+
+                     /* Open Drain Enable: Enables. */
+                     | PORT_PCR_ODE(PCR_ODE_ode1)
+
+                     /* Input Buffer Enable: Enables. */
+                     | PORT_PCR_IBE(PCR_IBE_ibe1));
+
     /* PORT0_4 (pin B14) is configured as FC0_P0 */
     PORT_SetPinMux(BOARD_INITPINS_SMB_SSD7_SDA_PORT, BOARD_INITPINS_SMB_SSD7_SDA_PIN, kPORT_MuxAlt2);
 
@@ -437,6 +476,16 @@ void BOARD_InitPins(void)
     PORT_SetPinMux(BOARD_INITPINS_MCU_RECOVERY_PORT, BOARD_INITPINS_MCU_RECOVERY_PIN, kPORT_MuxAlt1);
 
     PORT0->PCR[6] = ((PORT0->PCR[6] &
+                      /* Mask bits to zero which are setting */
+                      (~(PORT_PCR_IBE_MASK)))
+
+                     /* Input Buffer Enable: Enables. */
+                     | PORT_PCR_IBE(PCR_IBE_ibe1));
+
+    /* PORT0_9 (pin A12) is configured as PIO0_9 */
+    PORT_SetPinMux(BOARD_INITPINS_GLOBAL_WP_MCU_PORT, BOARD_INITPINS_GLOBAL_WP_MCU_PIN, kPORT_MuxAlt0);
+
+    PORT0->PCR[9] = ((PORT0->PCR[9] &
                       /* Mask bits to zero which are setting */
                       (~(PORT_PCR_IBE_MASK)))
 
@@ -1323,6 +1372,13 @@ void BOARD_InitPins(void)
     /* Initialize GPIO functionality on pin PIO0_19 (pin C9)  */
     GPIO_PinInit(BOARD_INITPINS_SSD2_PERST_L_GPIO, BOARD_INITPINS_SSD2_PERST_L_PIN, &SSD2_PERST_L_config);
 
+    gpio_pin_config_t L_MCU_P0_2_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO0_2 (pin B16)  */
+    GPIO_PinInit(BOARD_INITPINS_L_MCU_P0_2_GPIO, BOARD_INITPINS_L_MCU_P0_2_PIN, &L_MCU_P0_2_config);
+
     gpio_pin_config_t SSD5_PERST_L_config = {
         .pinDirection = kGPIO_DigitalInput,
         .outputLogic = 0U
@@ -1343,6 +1399,20 @@ void BOARD_InitPins(void)
     };
     /* Initialize GPIO functionality on pin PIO0_29 (pin F8)  */
     GPIO_PinInit(BOARD_INITPINS_SSD6_PERST_L_GPIO, BOARD_INITPINS_SSD6_PERST_L_PIN, &SSD6_PERST_L_config);
+
+    gpio_pin_config_t S_MCU_READY_STATUS_config = {
+        .pinDirection = kGPIO_DigitalOutput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO0_3 (pin B15)  */
+    GPIO_PinInit(BOARD_INITPINS_S_MCU_READY_STATUS_GPIO, BOARD_INITPINS_S_MCU_READY_STATUS_PIN, &S_MCU_READY_STATUS_config);
+
+    gpio_pin_config_t GLOBAL_WP_MCU_config = {
+        .pinDirection = kGPIO_DigitalInput,
+        .outputLogic = 0U
+    };
+    /* Initialize GPIO functionality on pin PIO0_9 (pin A12)  */
+    GPIO_PinInit(BOARD_INITPINS_GLOBAL_WP_MCU_GPIO, BOARD_INITPINS_GLOBAL_WP_MCU_PIN, &GLOBAL_WP_MCU_config);
 
     gpio_pin_config_t SSD7_PERST_L_config = {
         .pinDirection = kGPIO_DigitalInput,

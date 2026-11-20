@@ -34,6 +34,7 @@ enum class SlaveFunction : uint8_t
     I2cForward,    ///< Generic target forward: writes relayed verbatim to a real
                    ///< device on another bus (forward_dst), reads served from a
                    ///< local shadow (see i2c_forward.h)
+    Emulation,     ///< Emulated device owned by associated VrI2cTask
     End
 };
 

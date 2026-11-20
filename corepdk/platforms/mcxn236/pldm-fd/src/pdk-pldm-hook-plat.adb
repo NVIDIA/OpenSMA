@@ -225,9 +225,6 @@ is
       Unused_Build_Mode : NvU8;
       Unused_Fw_State   : NvU8;
       Is_Valid          : NvU8 := 0;
-
-      ArrLen            : NvU32 := 0;
-      All_Comp_Id : Comp_Id_Array with Address => Get_Arr_Comp_Id_Address;
    begin
 
       Component_Length := 0;
@@ -256,34 +253,6 @@ is
 
       Component_Infos(Component_Length).Active_Method := DEFAULT_PLDMFW_ACTIVE_METHOD;
       Component_Length := Component_Length + 1;
-
-      Get_Arr_Comp_Id_Len (ArrLen => ArrLen);
-      if ArrLen > 0 then
-         for I in 0 .. ArrLen - 1 loop
-            Get_Fw_Info (Input_Component_Id => All_Comp_Id(I),
-                     Output_Component_Id => Component_Infos(Component_Length).Id,
-                     Fw_Size      => Component_Infos(Component_Length).Fw_Size,
-                     Fw_Offset    => Component_Infos(Component_Length).Fw_Offset,
-                     Ap_Sku_Id    => Component_Infos(Component_Length).Ap_Sku_Id,
-                     Build_Mode   => Unused_Build_Mode,
-                     Fw_State     => Unused_Fw_State,
-                     Is_Valid => Is_Valid);
-            if  Is_Valid = 1
-            then
-               -- get active/pending stamp and version string for ap
-               Get_Ap_Active_Stamp (Stamp => Component_Infos(Component_Length).Stamp);
-               Get_Ap_Pending_Stamp (Stamp => Component_Infos(Component_Length).Pending_Stamp);
-               Get_Ap_Active_Version_String
-                  (Version_String => Component_Infos(Component_Length).Version_String,
-                  Length         => Component_Infos(Component_Length).Version_String_Length);
-               Get_Ap_Pending_Version_String
-                  (Version_String => Component_Infos(Component_Length).Pending_Version_String,
-                  Length         => Component_Infos(Component_Length).Pending_Version_String_Length);
-               Component_Infos(Component_Length).Active_Method := DEFAULT_PLDMFW_ACTIVE_METHOD;
-               Component_Length := Component_Length + 1;
-            end if;
-         end loop;
-      end if;
 
    end Pldm_Hook_Get_Component_Info_List;
 
@@ -338,10 +307,6 @@ is
       function Uc_U16_To_Array is new
          Ada.Unchecked_Conversion (Source => NvU16,
                                    Target => Arr_Idx_2_Buffer);
-
-      ArrLen            : NvU32 := 0;
-      Unused_Comp_Id: NvU16 := 0;
-      All_Comp_Id : Comp_Id_Array with Address => Get_Arr_Comp_Id_Address;
    begin
 
       --  https://confluence.nvidia.com/display/GFWBC/MCU+SMA+PLDM+T5+Inventory
@@ -415,28 +380,6 @@ is
       Vendor_Descriptors(Vendor_Descriptors_Count).Data_Length     := 4;
       Vendor_Descriptors(Vendor_Descriptors_Count).Data (0 .. 3)   := Uc_U32_To_Array (Ap_Sku_Id);
       Vendor_Descriptors_Count                                     := Vendor_Descriptors_Count + 1;
-
-      Get_Arr_Comp_Id_Len (ArrLen => ArrLen);
-      if ArrLen > 0 then
-         for I in 0 .. ArrLen - 1 loop
-            Get_Fw_Info (Input_Component_Id => All_Comp_Id(I),
-                        Output_Component_Id => Unused_Comp_Id,
-                        Fw_Size      => Unused_Fw_Size,
-                        Fw_Offset    => Unused_Fw_Offset,
-                        Ap_Sku_Id    => Ap_Sku_Id,
-                        Build_Mode   => Unused_Build_Mode,
-                        Fw_State     => Unused_Fw_State,
-                        Is_Valid => Is_Valid);
-            Vendor_Descriptors(Vendor_Descriptors_Count).String_Type     := FW_STR_TYPE_ASCII;
-            Vendor_Descriptors(Vendor_Descriptors_Count).String_Length   := Pldm_Vendor_Defined_Descriptor_Title_String_Axsku'Length;
-            Vendor_Descriptors(Vendor_Descriptors_Count).String (0 .. (Pldm_Vendor_Defined_Descriptor_Title_String_Axsku'Length - 1))
-               := Pldm_Vendor_Defined_Descriptor_Title_String_Axsku
-                  (0 .. (Pldm_Vendor_Defined_Descriptor_Title_String_Axsku'Length - 1));
-            Vendor_Descriptors(Vendor_Descriptors_Count).Data_Length     := 4;
-            Vendor_Descriptors(Vendor_Descriptors_Count).Data (0 .. 3)   := Uc_U32_To_Array (Ap_Sku_Id);
-            Vendor_Descriptors_Count                                     := Vendor_Descriptors_Count + 1;
-         end loop;
-      end if;
    end Pldm_Hook_Populate_Descriptors;
 
 
@@ -498,7 +441,6 @@ is
       Local_Stamp      : NvU32 := 0;
 
       Inactive_Stamp   : NvU32 := 0;
-      Mcu_Component_Id : constant NvU16 := 16#FF02#;
    begin
 
       Ret := Pldmfw_Ret_Success;
@@ -527,20 +469,11 @@ is
                            Build    => Local_Build,
                            Stamp    => Local_Stamp);
 
-         if Component_Id = Mcu_Component_Id
-         then
-            --  get inactive stamp for mcu
-            Get_Pending_Stamp (Stamp => Inactive_Stamp);
-         else
-            --  get inactive stamp for ap
-            Get_Ap_Pending_Stamp (Stamp => Inactive_Stamp);
-         end if;
+         Get_Pending_Stamp (Stamp => Inactive_Stamp);
 
          --  check apsku id at rel build for mcu
-         --  check apsku id for other ap
          --  rel = 0, dev = 1, dbg = 2
-         if (Build_Mode = 0 or Component_Id /= Mcu_Component_Id) and then
-            Ap_Sku_Id /= 0
+         if Build_Mode = 0 and then Ap_Sku_Id /= 0
          then
             if Ap_Sku_Id /= Local_Ap_Sku_Id
             then
@@ -799,5 +732,11 @@ is
       return Get_Write_Fail_Retry (Comp_Id => Comp_Id);
    end Pldm_Hook_Get_Write_Fail_Retry;
 
-end Pdk.Pldm.Hook.Plat;
+   function Pldm_Hook_Update_Component_Busy
+     (Component_Id : NvU16) return Boolean
+   is
+   begin
+      return Update_Component_Busy (Component_Id => Component_Id) /= 0;
+   end Pldm_Hook_Update_Component_Busy;
 
+end Pdk.Pldm.Hook.Plat;

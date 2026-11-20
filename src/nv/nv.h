@@ -46,7 +46,6 @@
 
 // pull some really common stuff into nv namespace
 namespace nv {
-using common::always_assert;
 using common::assert;
 using common::debug;
 using common::error;

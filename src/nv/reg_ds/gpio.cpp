@@ -20,6 +20,7 @@
 
 #include "nv/logger/log.h"
 #include "nv/gpio/driver.h"
+#include "nv/gpio/project_gpio.h"
 
 using namespace nv;
 using namespace reg_table;
@@ -42,14 +43,14 @@ bool Gpio::read(Handle handle, DsData& data)
     auto& def = _gpio.at(index);
 
     // check if index exists in GPIO definition for driver
-    if (def >= ipc::GpioSetup.size()) {
+    if (def >= ipc::gpio_count()) {
         nv::error("GPIO read error is out of bounds of GPIO map\n");
         return false;
     }
 
     // read the value from the GPIO driver looking up port/pin from driver definition
-    uint8_t value     = 0;
-    auto& [port, pin] = ipc::GpioSetup.at(def);
+    uint8_t value           = 0;
+    const auto& [port, pin] = ipc::gpio_at(def);
     if (gpio::Driver::read(port, pin, value) != gpio::Status::Ok) {
         nv::error("GPIO read error for port %d and pin %d\n", port, pin);
         return false;

@@ -94,7 +94,7 @@
 #define configUSE_TIMERS             1
 #define configTIMER_TASK_PRIORITY    (configMAX_PRIORITIES - 1)
 #define configTIMER_QUEUE_LENGTH     40
-#define configTIMER_TASK_STACK_DEPTH (configMINIMAL_STACK_SIZE * 3)
+#define configTIMER_TASK_STACK_DEPTH (configMINIMAL_STACK_SIZE * 6)
 
 /* Define to trap errors during development. */
 #define configASSERT(x)                                                                        \

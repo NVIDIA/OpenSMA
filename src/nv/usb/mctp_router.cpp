@@ -22,6 +22,7 @@
 
 #include "nv/i2c/task.h"
 #include "nv/i3c/task.h"
+#include "nv/ipc/mctp_bridge_config.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/driver.h"
 #include "nv/perf_mon/perf_mon.h"
@@ -87,8 +88,71 @@ RouteResult route_mctp_to_downstream(mctp::Packet& pkt, const RoutingTable& rout
                     }
                 }
             }
+            else if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+                if (entry.client == mctp::Client::UsI3c) {
+                    // BMC traffic for the CPU bus owner crosses to the upstream I3C
+                    // channel in bridge mode. Two cases land here:
+                    //   (a) a BMC-originated REQUEST to the CPU, addressed to the CPU
+                    //       alias EID (matched entry is the CPU-alias, bridge_real_eid
+                    //       = CPU real EID), and
+                    //   (b) a BMC RESPONSE to a CPU request, addressed to the CPU's
+                    //       real EID (matched entry is the UsI3c upstream slot,
+                    //       bridge_real_eid = 0).
+                    //
+                    // Dual-bus-owner bridge EID translation:
+                    //  * dst: alias -> real, so the CPU receives it on its real EID
+                    //    (case (a): Ca -> CPU real; case (b): no-op, bridge_real_eid
+                    //    = 0).
+                    //  * src: real -> alias, so the CPU sees the BMC as the alias EID
+                    //    it knows (reverse-lookup the entry whose bridge_real_eid ==
+                    //    src).
+                    if (entry.bridge_real_eid != 0) {
+                        pkt.hdr.dst_eid = entry.bridge_real_eid;
+                    }
+                    for (auto& alias : routing_table) {
+                        if (alias.is_enumerated && alias.bridge_real_eid != 0
+                            && alias.bridge_real_eid == pkt.hdr.src_eid) {
+                            pkt.hdr.src_eid = alias.assigned_eid;
+                            break;
+                        }
+                    }
+                    perf_mon::Driver::log_pkt_latency(
+                        perf_mon::Driver::LatencyEvent::UsbSendTxPktToTask);
+                    auto status = i3c::Task::tx(pkt);
+                    if (status != i3c::Task::Status::Ok) {
+                        logger::error(logger::Event::UsbCannotSend,
+                                      {static_cast<uint8_t>(entry.client)});
+                        return RouteResult::Dropped;
+                    }
+                }
+            }
 
             return RouteResult::Forwarded;
+        }
+    }
+
+    // A CPU alias EID is present in the routing table from the moment the BMC
+    // allocates the pool, but stays unbacked until I3C DAA binds a real EID to
+    // it. DSP0236 8.7 requires a bridge to discard packets it cannot route, so
+    // falling through to the local control handler would answer on behalf of an
+    // endpoint that is not there and hand the BMC the MCU's own EID.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        for (uint8_t i = 0; i < nv::ipc::MctpBridgeConfig<>::BridgeCpuAliasNum; i++) {
+            const auto& alias = routing_table.at(nv::ipc::MctpBridgeConfig<>::CpuAliasSlotBase
+                                                 + i);
+            if (alias.client == mctp::Client::UsI3c && alias.assigned_eid != 0
+                && alias.assigned_eid == pkt.hdr.dst_eid
+                && !(alias.is_enumerated && alias.bridge_real_eid != 0)) {
+                logger::info(
+                    logger::Event::MctpMcuActAsBridgePacketDrop,
+                    {static_cast<uint8_t>(static_cast<uint16_t>(mctp::Client::UsUsb)
+                                          & UINT8_MAX),
+                     static_cast<uint8_t>(static_cast<uint16_t>(mctp::Client::UsUsb) >> 8U),
+                     static_cast<uint8_t>(mctp::Client::UsI3c),
+                     pkt.hdr.dst_eid,
+                     0});
+                return RouteResult::Dropped;
+            }
         }
     }
 

@@ -73,7 +73,9 @@ Task::Task() noexcept
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    constexpr auto           StackSize = std::max(2752, int(configMINIMAL_STACK_SIZE));
+    // CFPA writes run FFR_InfieldPageWrite() inside ROM, whose stack usage is invisible to
+    // the static stack analysis; shrinking this overflows the stack (STKOF) on key revoke.
+    constexpr auto StackSize = std::max(2752, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
@@ -161,9 +163,7 @@ Task::request(const Request& request, Response& response, nv::ipc::Queue::Usecs 
             }
         } break;
         case RequestType::DataStoreSet:
-        case RequestType::DataStoreGet:
-        case RequestType::GetApFwAuthenticateData:
-        case RequestType::SetApFwAuthenticateData: {
+        case RequestType::DataStoreGet: {
             auto status = event.set(EventBits::DataStoreEvent);
             if (status != ipc::Event::Status::Ok) {
                 nv::info("Set event 0x%x failed\n", EventBits::DataStoreEvent);
@@ -362,87 +362,8 @@ void Task::process(const Request& request, Response& response)
         case RequestType::EfuseRead         : efuse_read(request, response); break;
         case RequestType::CrcRead           : crc_read(response); break;
         case RequestType::EfuseLifeCycleRead: efuse_life_cycle_read(response); break;
-        case RequestType::GetApFwAuthenticateData:
-            get_ap_fw_authenticate_data(request, response);
-            break;
-        case RequestType::SetApFwAuthenticateData:
-            set_ap_fw_authenticate_data(request, response);
-            break;
-        default: break;
+        default                             : break;
     }
-}
-
-void Task::get_ap_fw_authenticate_data(const Request& request, Response& response)
-{
-    if constexpr (Npds::AuthDataSlots == 0) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-
-    if (!Npds::has_ap_auth_data_record(request.key)) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    const auto& auth_data = _npds.get_ap_fw_authenticate_data_index(request.key);
-
-    const auto auth_data_size = sizeof(auth_data.active_ap_fw_authenticate_data);
-    if (request.offset > auth_data_size || request.length > auth_data_size - request.offset) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    if (request.length > BufferSize) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    if (auth_data.is_on_set_data) {
-        response.status = nv::flash::Status::Busy;
-        return;
-    }
-    auto data_in_view = std::span<const uint8_t>(
-        std::bit_cast<const uint8_t*>(&auth_data.active_ap_fw_authenticate_data),
-        sizeof(auth_data.active_ap_fw_authenticate_data));
-    auto data_in_view_sub = data_in_view.subspan(request.offset, request.length);
-    response.length       = data_in_view_sub.size();
-    std::copy(data_in_view_sub.begin(), data_in_view_sub.end(), response.buffer.begin());
-    response.status = nv::flash::Status::Ok;
-    return;
-}
-
-void Task::set_ap_fw_authenticate_data(const Request& request, Response& response)
-{
-    if constexpr (Npds::AuthDataSlots == 0) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-
-    if (!Npds::has_ap_auth_data_record(request.key)) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    auto& auth_data = _npds.get_ap_fw_authenticate_data_index(request.key);
-
-    const auto auth_data_size = sizeof(auth_data.active_ap_fw_authenticate_data);
-    if (request.offset > auth_data_size || request.length > auth_data_size - request.offset) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    if (request.length > BufferSize) {
-        response.status = nv::flash::Status::InvalidParam;
-        return;
-    }
-    auth_data.is_on_set_data = true;
-
-    auto data_in_view = std::span<uint8_t>(
-        std::bit_cast<uint8_t*>(&auth_data.active_ap_fw_authenticate_data),
-        sizeof(auth_data.active_ap_fw_authenticate_data));
-    auto data_in_view_sub = data_in_view.subspan(request.offset, request.length);
-    std::copy_n(request.buffer.begin(), request.length, data_in_view_sub.begin());
-
-    if (request.offset + request.length == sizeof(auth_data.active_ap_fw_authenticate_data)) {
-        auth_data.is_on_set_data = false;
-    }
-    response.status = nv::flash::Status::Ok;
-    return;
 }
 
 void Task::efuse_program(const Request& request, Response& response)

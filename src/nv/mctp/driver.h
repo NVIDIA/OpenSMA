@@ -110,9 +110,10 @@ protected:
     void on_receive_application(nv::ipc::Queue& queue, ipc::Queue::Item& rx_item);
     void on_enumerate();
     void on_enumerate_done();
-    void on_discovery_notify();
+    void on_discovery_notify(bool allow_unenumerated_notify = false);
     void on_type6_event(NsmFwEvent event);
     void on_receive_event(uint8_t nsmType, uint8_t eventId, MctpCmdData3 eventInfo);
+    void on_us_i3c_status_change(uint8_t status);
     void on_endpoint_status_change_handler(uint8_t downstream_index, uint8_t status);
     void on_endpoint_status_change(uint8_t downstream_index, uint8_t status);
     void on_endpoint_timer_done(uint8_t endpoint_index);
@@ -156,6 +157,9 @@ protected:
 public:  // static api section
     static Status mctp_send(ipc::Queue::Item& item, ipc::QueueId id, Client client);
     static Status mctp_send(ipc::Queue::Item& item, Client client);
+    /// Nonblocking, all-or-nothing packet/command enqueue to local MCTP queues.
+    /// QueueSendFail leaves both queues unchanged when either queue is full.
+    static Status try_mctp_send(ipc::Queue::Item& item, Client client);
     static Status mctp_send_cmd(CmdCode             cmd,
                                 uint8_t             data1    = 0,
                                 uint8_t             data2    = 0,

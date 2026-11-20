@@ -21,27 +21,181 @@
 #include <chrono>
 #include <cstdint>
 #include <span>
+#include <utility>
 
 #include "nv/bootloader.h"
+#include "nv/gpio/driver.h"
 #include "nv/nv.h"
 #include "nv/watchdog/runtime.h"
+#include "sys/ipc/driver.h"
 #include "sys/ipc/task.h"
 #include "nv/logger/log.h"
 
 using namespace nv::ssif;
 using namespace std::chrono_literals;
 
-void Task::make(Config config)
+namespace {
+
+// Instance index to per-instance IPC identity. Instance N carries the N suffix, the same shape
+// as the TaskMonitorIndex::I2cN to QueueId::I2cN switch in i2c::Task::wdt_notify. Every project
+// that builds this module declares the full set and stubs the entries it does not use, as those
+// projects already do for QueueId::I2c6 through I2c9. Kept here rather than in the header
+// because these enumerators only exist in projects that build the SSIF module.
+constexpr nv::ipc::EventId instance_event(size_t instance)
 {
-    constexpr auto StackSize = std::max(128, int(configMINIMAL_STACK_SIZE));
-
-    NV_TASK_DATA static Task                       task(config);
-    NV_STACK static sys::ipc::TaskStack<StackSize> stack;
-
-    // NOLINTNEXTLINE(*-reinterpret-cast)
-    const std::span<uint8_t> priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
-    task.setup(stack.span(), priv, Priority::I2c, Task::entrypoint);
+    switch (instance) {
+        case 0 : return nv::ipc::EventId::Ssif0;
+        case 1 : return nv::ipc::EventId::Ssif1;
+        default: return nv::ipc::EventId::End;
+    }
 }
+
+constexpr nv::ipc::QueueId instance_queue(size_t instance)
+{
+    switch (instance) {
+        case 0 : return nv::ipc::QueueId::Ssif0;
+        case 1 : return nv::ipc::QueueId::Ssif1;
+        default: return nv::ipc::QueueId::End;
+    }
+}
+
+template<size_t Instance, typename TaskId>
+constexpr TaskId instance_task()
+{
+    if constexpr (Instance == 0) {
+        return TaskId::Ssif0;
+    }
+    else {
+        return TaskId::Ssif1;
+    }
+}
+
+template<size_t Instance, typename BootedEventBits>
+constexpr BootedEventBits instance_booted_bit()
+{
+    if constexpr (Instance == 0) {
+        return BootedEventBits::Ssif0;
+    }
+    else {
+        return BootedEventBits::Ssif1;
+    }
+}
+
+template<size_t Instance>
+constexpr nv::watchdog::TaskMonitorIndex instance_wdt_index()
+{
+    if constexpr (Instance == 0) {
+        return nv::watchdog::TaskMonitorIndex::Ssif0;
+    }
+    else {
+        return nv::watchdog::TaskMonitorIndex::Ssif1;
+    }
+}
+
+template<size_t Instance>
+constexpr std::string_view instance_name()
+{
+    if constexpr (Instance == 0) {
+        return "SSIF0";
+    }
+    else {
+        return "SSIF1";
+    }
+}
+
+// The Ssif* monitor indices form one contiguous run, which the static_assert in task.h keeps
+// true, so the instance is simple arithmetic rather than a search.
+constexpr size_t instance_for_wdt_index(nv::watchdog::TaskMonitorIndex index)
+{
+    constexpr auto First = static_cast<size_t>(nv::watchdog::TaskMonitorIndex::Ssif0);
+    const auto     raw   = static_cast<size_t>(index);
+    if ((raw < First) || (raw >= First + MaxInstances)) {
+        return InvalidInstance;
+    }
+    return raw - First;
+}
+
+template<size_t Channel>
+void make_configured_instance()
+{
+    constexpr auto& entry = nv::lstp::LstpChannels[Channel];
+    if constexpr (entry.info.type == nv::lstp::LstpChannelType::Ipmi) {
+        constexpr auto  instance = entry.info.id;
+        constexpr auto& config   = std::get<nv::lstp::LstpIpmiChannelConfig>(entry.config);
+
+        static_assert(instance < MaxInstances, "SSIF instance id exceeds MaxInstances");
+        static_assert(nv::lstp::GetChannelId(nv::lstp::LstpChannels,
+                                             nv::lstp::LstpChannelType::Ipmi,
+                                             config.i2c_port)
+                          == Channel,
+                      "SSIF I2C port does not map to a unique LSTP IPMI channel");
+
+        // Set SSIF alert pin to high (inactive)
+        nv::gpio::Driver::init_pin(config.alert_port,
+                                   config.alert_pin,
+                                   nv::gpio::Direction::Output,
+                                   nv::gpio::GpioState::High);
+
+        Task::Config task_config{instance_task<instance, nv::ipc::TaskId>(),
+                                 instance_name<instance>(),
+                                 instance_event(instance),
+                                 config.i2c_port,
+                                 config.alert_port,
+                                 config.alert_pin,
+                                 instance_queue(instance),
+                                 instance_booted_bit<instance, nv::ipc::BootedEventBits>(),
+                                 instance_wdt_index<instance>()};
+
+        if (sys::ipc::task::Driver::can_direct_access_on_current_core(task_config.task_id)) {
+            Task::make<instance>(task_config);
+        }
+    }
+}
+
+template<size_t... Channels>
+void make_configured_instances(std::index_sequence<Channels...> /*channels*/)
+{
+    (make_configured_instance<Channels>(), ...);
+}
+
+}  // namespace
+
+Task::Config::Config(nv::ipc::TaskId  task_id_,
+                     std::string_view task_name_,
+                     nv::ipc::EventId event_,
+                     nv::i2c::Port    i2c_bus_,
+                     gpio::GpioPort   alert_port_id_,
+                     gpio::GpioPin    alert_pin_id_)
+: Config(task_id_,
+         task_name_,
+         event_,
+         i2c_bus_,
+         alert_port_id_,
+         alert_pin_id_,
+         nv::ipc::QueueId::Ssif0,
+         nv::ipc::BootedEventBits::Ssif0,
+         watchdog::TaskMonitorIndex::Ssif0)
+{}
+
+Task::Config::Config(nv::ipc::TaskId            task_id_,
+                     std::string_view           task_name_,
+                     nv::ipc::EventId           event_,
+                     nv::i2c::Port              i2c_bus_,
+                     gpio::GpioPort             alert_port_id_,
+                     gpio::GpioPin              alert_pin_id_,
+                     nv::ipc::QueueId           queue_id_,
+                     nv::ipc::BootedEventBits   booted_bit_,
+                     watchdog::TaskMonitorIndex wdt_index_)
+: task_id(task_id_)
+, task_name(task_name_)
+, event(event_)
+, i2c_bus(i2c_bus_)
+, alert_port_id(alert_port_id_)
+, alert_pin_id(alert_pin_id_)
+, queue_id(queue_id_)
+, booted_bit(booted_bit_)
+, wdt_index(wdt_index_)
+{}
 
 void Task::entrypoint(void* params)
 {
@@ -53,20 +207,35 @@ void Task::entrypoint(void* params)
 
 Task::Task(Config config) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
+, _config(config)
 , _event(nv::ipc::Event::make(config.event))
 , _ssif(_event)
 {
-    _ssif.bind(config.i2c_bus, config.alert_port_id, config.alert_pin_id);
+    const auto channel_id = nv::lstp::GetChannelId(
+        nv::lstp::LstpChannels, nv::lstp::LstpChannelType::Ipmi, config.i2c_bus);
+    NV_ALWAYS_ASSERT(channel_id < nv::lstp::LstpChannels.size());
+    _ssif.bind(config.i2c_bus, config.alert_port_id, config.alert_pin_id, channel_id);
 }
 
-bool Task::to_ssif(std::span<uint8_t>& msg)
+void Task::make_all()
+{
+    make_configured_instances(std::make_index_sequence<nv::lstp::LstpChannels.size()>{});
+}
+
+bool Task::to_ssif(uint8_t lstp_channel_id, std::span<uint8_t>& msg)
 {
     if (msg.size() < sizeof(Ssif::Packet)) {
         return false;
     }
 
+    const auto instance = instance_for_channel(lstp_channel_id);
+    if (instance == InvalidInstance) {
+        nv::logger::error(nv::logger::Event::SsifInvalidChannel, {lstp_channel_id});
+        return false;
+    }
+
     std::array<uint8_t, sizeof(Ssif::Packet)> tmp_buffer{};
-    auto queue    = nv::ipc::Queue::make(nv::ipc::QueueId::Ssif);
+    auto queue    = nv::ipc::Queue::make(instance_queue(instance));
     auto tmp_item = nv::ipc::Queue::Item(tmp_buffer);
     auto status   = queue.recv(tmp_item, 0us);
     if (status == nv::ipc::Queue::Status::Ok) {
@@ -82,45 +251,92 @@ bool Task::to_ssif(std::span<uint8_t>& msg)
         return false;
     }
 
-    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    auto event = nv::ipc::Event::make(instance_event(instance));
     event.set(TxReady);
 
     return true;
 }
 
-bool Task::is_default_enabled()
+bool Task::is_default_enabled(uint8_t lstp_channel_id)
 {
-    // SSIF is disabled by default
-    return false;
+    const auto channels = nv::lstp::project_lstp_channels();
+    if (lstp_channel_id >= channels.size()) {
+        return false;
+    }
+
+    const auto& entry = channels[lstp_channel_id];
+    if (entry.info.type != nv::lstp::LstpChannelType::Ipmi
+        || !std::holds_alternative<nv::lstp::LstpIpmiChannelConfig>(entry.config)) {
+        return false;
+    }
+
+    return std::get<nv::lstp::LstpIpmiChannelConfig>(entry.config).default_enabled;
 }
 
-void Task::enable()
+void Task::enable(uint8_t lstp_channel_id)
 {
-    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    const auto instance = instance_for_channel(lstp_channel_id);
+    if (instance == InvalidInstance) {
+        nv::logger::error(nv::logger::Event::SsifInvalidChannel, {lstp_channel_id});
+        return;
+    }
+
+    auto event = nv::ipc::Event::make(instance_event(instance));
     event.set(SlaveEnable);
 }
 
-void Task::peripheral_recovery()
+void Task::peripheral_recovery(uint8_t lstp_channel_id)
 {
-    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    const auto instance = instance_for_channel(lstp_channel_id);
+    if (instance == InvalidInstance) {
+        nv::logger::error(nv::logger::Event::SsifInvalidChannel, {lstp_channel_id});
+        return;
+    }
+
+    auto event = nv::ipc::Event::make(instance_event(instance));
     event.set(PeripheralRecovery);
 }
 
-void Task::wdt_notify()
+void Task::wdt_notify(watchdog::TaskMonitorIndex index)
 {
-    auto event = nv::ipc::Event::make(nv::ipc::EventId::Ssif);
+    // Runtime::query_task_status() routes only TaskMonitorIndex::Ssif0 and Ssif1 here, and the
+    // static_assert in task.h pins that pair to the whole MaxInstances run, so this lookup
+    // cannot miss by construction. Unlike the lstp_channel_id the other entry points take,
+    // the index is internal dispatch state rather than host input, so a miss would mean
+    // the Ssif* monitor run and MaxInstances had drifted apart in a build. Assert so
+    // that surfaces during bring-up, and still bail out in release rather than
+    // deriving IPC ids from an out-of-range instance.
+    const auto instance = instance_for_wdt_index(index);
+    NV_ASSERT(instance != InvalidInstance);
+    if (instance == InvalidInstance) {
+        nv::logger::error(nv::logger::Event::SsifInvalidChannel, {static_cast<uint8_t>(index)});
+        return;
+    }
+
+    // The caller has already set this index's alive bit and only the task clears it, by calling
+    // Runtime::mark_task_alive() once it observes WdtNotify. A dropped notification therefore
+    // strands the bit: Runtime::feed() is never reached and the hardware watchdog resets the
+    // board, so a failed set has to leave a trace instead of being swallowed.
+    auto event = nv::ipc::Event::make(instance_event(instance));
     auto sts   = event.set(WdtNotify);
     if (sts != nv::ipc::Event::Status::Ok) {
-        // TBD
+        nv::logger::error(nv::logger::Event::SsifWdtNotifyFailed,
+                          {static_cast<uint8_t>(index), static_cast<uint8_t>(sts)});
     }
 }
 
 [[noreturn]] void Task::start()
 {
-    auto queue   = nv::ipc::Queue::make(nv::ipc::QueueId::Ssif);
+    auto queue   = nv::ipc::Queue::make(_config.queue_id);
     auto tx_item = _ssif.get_tx_buffer();
 
-    nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Ssif);
+    const auto channel_id = nv::lstp::GetChannelId(
+        nv::lstp::LstpChannels, nv::lstp::LstpChannelType::Ipmi, _config.i2c_bus);
+    if (is_default_enabled(channel_id)) {
+        _ssif.start();
+    }
+
+    nv::bootloader::Driver::set_task_booted(_config.booted_bit);
 
     // This task is designed to run for the lifetime of the system
     // coverity[no_escape : FALSE]*/
@@ -161,7 +377,7 @@ void Task::wdt_notify()
         }
 
         if (event_bits & WdtNotify) {
-            watchdog::Runtime::mark_task_alive(watchdog::TaskMonitorIndex::Ssif);
+            watchdog::Runtime::mark_task_alive(_config.wdt_index);
             _event.clear(WdtNotify);
         }
 

@@ -23,7 +23,6 @@
 
 #include "mbedtls/sha512.h"
 
-#include "nv/vrot/interface/interface.h"
 #include NV_IPC_CONFIG_H
 
 #include "nv/bootloader.h"
@@ -110,16 +109,6 @@ nv::flash::Key get_subtype_npds_key(uint32_t token_type)
     }
 }
 
-constexpr uint32_t get_flash_debug_fw_subtype_for_ap(nv::vrot::ApType ap_type)
-{
-    switch (ap_type) {
-        case nv::vrot::ApType::Cpld: return DebugTokenSubtypeCpldFw;
-        case nv::vrot::ApType::Lpu : return DebugTokenSubtypeLpuFw;
-    }
-
-    return DebugTokenSubtypeNone;
-}
-
 TokenErrorCode set_debug_token_npds_data(nv::flash::Key key, nv::flash::Data data)
 {
     return nv::flash::Flash::set_data(key, data) == nv::flash::Status::Ok
@@ -164,21 +153,6 @@ TokenErrorCode clear_debug_token_cache()
     return TokenErrorCode::NoErrorCode;
 }
 
-[[maybe_unused]] bool
-has_token_feature_enabled(uint32_t                                   token_type,
-                          const std::array<uint32_t, MaxTokenTypes>& subtype_bitmaps,
-                          nv::vrot::DebugTokenFeature                feature)
-{
-    switch (feature) {
-        case nv::vrot::DebugTokenFeature::CpldUnlock:
-            return (token_type & static_cast<uint32_t>(Type::CpldDebug)) != 0
-                && ((subtype_bitmaps.at(DebugTokenBitPosCpldDebug)
-                     & DebugTokenSubtypeCpldUnlockEn)
-                    != 0);
-    }
-    return false;
-}
-
 // Log failure with throttling
 void log_failure_throttled(logger::EventStructItem event, uint8_t error_code)
 {
@@ -200,50 +174,6 @@ void reset_log_throttle()
 {
     (void)nv::flash::Flash::set_data(nv::flash::Key::NpdsDebugTokenFailCount, 0);
 }
-
-constexpr bool HasVrotAp = !nv::vrot::ApList.empty();
-
-enum class FeatureUpdateContext : uint8_t
-{
-    Install  = 0,
-    Erase    = 1,
-    BootSync = 2,
-};
-
-[[maybe_unused]] void log_feature_update_failure(FeatureUpdateContext        context,
-                                                 nv::vrot::DebugTokenFeature feature,
-                                                 bool                        enable,
-                                                 nv::vrot::ApOpErrCode       status)
-{
-    // Data bytes: context, feature, requested enable state, AP operation status.
-    logger::error_no_wait(logger::Event::DtFeatureUpdateFail,
-                          {static_cast<uint8_t>(context),
-                           static_cast<uint8_t>(feature),
-                           static_cast<uint8_t>(enable ? 1U : 0U),
-                           static_cast<uint8_t>(status)},
-                          logger::OutputDirection::Flash);
-}
-
-[[maybe_unused]] nv::vrot::ApOpErrCode
-set_debug_token_feature_on_supported_aps(nv::vrot::DebugTokenFeature feature, bool enable)
-{
-    auto first_error = nv::vrot::ApOpErrCode::Success;
-
-    if constexpr (HasVrotAp) {
-        for (const auto& ap : nv::vrot::ApList) {
-            const auto status = nv::vrot::set_debug_token_feature(ap, feature, enable);
-            if (status == nv::vrot::ApOpErrCode::NotSupported) {
-                continue;
-            }
-            if (status != nv::vrot::ApOpErrCode::Success
-                && first_error == nv::vrot::ApOpErrCode::Success) {
-                first_error = status;
-            }
-        }
-    }
-    return first_error;
-}
-
 }  // anonymous namespace
 
 // TLV index cache structure
@@ -902,16 +832,6 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return TokenErrorCode::TokenInternalError;
     }
 
-    if constexpr (HasVrotAp) {
-        constexpr auto Feature     = nv::vrot::DebugTokenFeature::CpldUnlock;
-        auto           lock_status = set_debug_token_feature_on_supported_aps(Feature, false);
-        if (lock_status != nv::vrot::ApOpErrCode::Success) {
-            log_feature_update_failure(
-                FeatureUpdateContext::Install, Feature, false, lock_status);
-            return TokenErrorCode::TokenStorageError;
-        }
-    }
-
     if (auto status = clear_debug_token_cache(); status != TokenErrorCode::NoErrorCode) {
         return status;
     }
@@ -933,8 +853,7 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
     // First write: aligned portion (if any).
     //
     // From this point on, the prior token was already erased. Failure paths
-    // keep the system fail-closed by clearing cache, erasing partial token
-    // data, and leaving AP features locked.
+    // clear the cache and erase partial token data.
     if (aligned_size > 0) {
         const std::span<const uint8_t> aligned_chunk{token_subspan.data(),
                                                      static_cast<size_t>(aligned_size)};
@@ -966,22 +885,6 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
         return status;
     }
 
-    if constexpr (HasVrotAp) {
-        constexpr auto Feature = nv::vrot::DebugTokenFeature::CpldUnlock;
-        if (has_token_feature_enabled(
-                extracted_token_type, extracted_subtype_bitmaps, Feature)) {
-            auto unlock_status = set_debug_token_feature_on_supported_aps(Feature, true);
-            if (unlock_status != nv::vrot::ApOpErrCode::Success) {
-                log_feature_update_failure(
-                    FeatureUpdateContext::Install, Feature, true, unlock_status);
-                (void)set_debug_token_feature_on_supported_aps(Feature, false);
-                (void)clear_debug_token_cache();
-                (void)flash::Flash::erase(token_address);
-                return TokenErrorCode::TokenStorageError;
-            }
-        }
-    }
-
     // Installation succeeded - reset failure counter
     reset_log_throttle();
 
@@ -993,18 +896,6 @@ TokenErrorCode install_dbg_token_tlv(const std::span<const uint8_t>& token_span)
 TokenErrorCode erase_installed_dbg_token_tlv()
 {
     const bool token_installed = is_dbg_token_tlv_in_flash();
-
-    if constexpr (HasVrotAp) {
-        // Erasing the token store removes all debug-token capabilities. Lock supported
-        // platform features first so a stale NPDS cache cannot re-enable them after reboot.
-        constexpr auto Feature     = nv::vrot::DebugTokenFeature::CpldUnlock;
-        auto           lock_status = set_debug_token_feature_on_supported_aps(Feature, false);
-        if (lock_status != nv::vrot::ApOpErrCode::Success) {
-            log_feature_update_failure(
-                FeatureUpdateContext::Erase, Feature, false, lock_status);
-            return TokenErrorCode::TokenStorageError;
-        }
-    }
 
     if (auto status = clear_debug_token_cache(); status != TokenErrorCode::NoErrorCode) {
         return status;
@@ -1137,51 +1028,6 @@ TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token
     }
 
     return TokenErrorCode::NoErrorCode;
-}
-
-TokenErrorCode check_flash_debug_fw_token_for_ap(nv::vrot::ApType ap_type)
-{
-    const uint32_t subtype = get_flash_debug_fw_subtype_for_ap(ap_type);
-    if (subtype == DebugTokenSubtypeNone) {
-        return TokenErrorCode::TokenUnsupportedType;
-    }
-
-    return check_debug_token_subtype_enabled(Type::FlashDebugFw, subtype);
-}
-
-void sync_debug_token_features_on_boot()
-{
-    if constexpr (HasVrotAp) {
-        constexpr auto Feature = nv::vrot::DebugTokenFeature::CpldUnlock;
-
-        for (const auto& ap : nv::vrot::ApList) {
-            auto lock_status = nv::vrot::set_debug_token_feature(ap, Feature, false);
-            if (lock_status == nv::vrot::ApOpErrCode::NotSupported) {
-                continue;
-            }
-            if (lock_status != nv::vrot::ApOpErrCode::Success) {
-                // Best-effort: log lock failure but still try unlock if the cached token
-                // authorizes it.
-                log_feature_update_failure(
-                    FeatureUpdateContext::BootSync, Feature, false, lock_status);
-            }
-
-            const bool unlock_enabled = nv::debugtoken::check_debug_token_type_enabled(
-                                            nv::debugtoken::Type::CpldDebug)
-                                         == nv::debugtoken::TokenErrorCode::NoErrorCode
-                                     && nv::debugtoken::is_debug_token_subtype_enabled_cached(
-                                            nv::debugtoken::Type::CpldDebug,
-                                            nv::debugtoken::DebugTokenSubtypeCpldUnlockEn);
-
-            if (unlock_enabled) {
-                auto unlock_status = nv::vrot::set_debug_token_feature(ap, Feature, true);
-                if (unlock_status != nv::vrot::ApOpErrCode::Success) {
-                    log_feature_update_failure(
-                        FeatureUpdateContext::BootSync, Feature, true, unlock_status);
-                }
-            }
-        }
-    }
 }
 
 }  // namespace nv::debugtoken

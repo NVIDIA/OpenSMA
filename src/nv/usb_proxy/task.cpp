@@ -18,6 +18,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 #include "nv/usb/usb_mctp_header.h"
 #include "nv/usb/mctp_router.h"
@@ -38,7 +39,7 @@
 #include "sys/ipc/task.h"
 #include "nv/ipc/queue.h"
 #include "sys/usb/usb.h"
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)
 #include "nv/vcom/vruart/bridge.h"
 #endif
 
@@ -51,6 +52,11 @@ namespace nv::usb_proxy {
  ******************************************************************************/
 namespace {
 static constexpr size_t SharedHidBufferSize = 64;
+#if defined(USB_CONFIG_CP2112) && (USB_CONFIG_CP2112 == 0U)
+constexpr bool EnableHid = false;
+#else
+constexpr bool EnableHid = true;
+#endif
 }  // namespace
 
 // Routing table static member definition
@@ -82,7 +88,8 @@ bool Task::send_to_backend(ipchandler::Id     ipchandler_id,
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    constexpr auto           StackSize = std::max(704, int(configMINIMAL_STACK_SIZE));
+    // leave ~264 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(768, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -96,17 +103,11 @@ void Task::entrypoint(void* params)
     task.main();
 }
 
-Task::Task() noexcept
-: ipc::Task(ipc::TaskId::Usb, "UsbVirtual")
-, _event(ipc::Event::make(ipc::EventId::UsbTask))
-{}
+Task::Task() noexcept : ipc::Task(ipc::TaskId::Usb, "UsbVirtual") {}
 
 [[noreturn]] void Task::main()
 {
-    auto wait_bits = MctpRxBit | HidRxBit | HidI2cRespBit | WdtBit | UpdateRoutingTableBit;
-
     if constexpr (nv::lstp::EnableRouter) {
-        wait_bits = wait_bits | LstpRxBit;
         _lstp_router.init();
     }
 
@@ -135,23 +136,23 @@ Task::Task() noexcept
     ipc::Queue::Item                               lstp_item(lstp_buf.data(), lstp_buf.size());
 
     while (true) {
-        auto bits = _event.wait(wait_bits, false, false, 1s);
-        if (!bits.has_value()) {
+        auto notification = ipc::TaskNotify::wait(1s);
+        if (!notification.has_value()) {
             continue;  // Timeout or error, retry wait
         }
-        auto active_bits = bits.value() & wait_bits;
+        auto active_bits = notification.value();
 
         // Handle HID data from C2C (enqueued by IPC task)
-        if (active_bits & HidRxBit) {
-            _event.clear(HidRxBit);
+        if (EnableHid && (active_bits & HidRxBit)) {
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, HidRxBit);
             if (hid_queue.recv(hid_item, 0ms) == ipc::Queue::Status::Ok) {
                 process_hid(hid_buf.data(), hid_buf.size());
             }
         }
 
         // Handle I2C response (enqueued by I2C/I3C/IOX task)
-        if (active_bits & HidI2cRespBit) {
-            _event.clear(HidI2cRespBit);
+        if (EnableHid && (active_bits & HidI2cRespBit)) {
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, HidI2cRespBit);
             if (i2c_resp_queue.recv(i2c_resp_item, 0ms) == ipc::Queue::Status::Ok) {
                 process_i2c_response(i2c_resp.read_length,
                                      i2c_resp.data.data(),
@@ -162,7 +163,7 @@ Task::Task() noexcept
 
         // Handle MCTP data from C2C (enqueued by IPC task)
         if (active_bits & MctpRxBit) {
-            _event.clear(MctpRxBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, MctpRxBit);
             if (mctp_queue.recv(mctp_item, 0ms) == ipc::Queue::Status::Ok) {
                 process_mctp_from_c2c(mctp_buf.data(), mctp_item.size());
             }
@@ -170,7 +171,7 @@ Task::Task() noexcept
 
         if constexpr (nv::lstp::EnableRouter) {
             if (active_bits & LstpRxBit) {
-                _event.clear(LstpRxBit);
+                (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, LstpRxBit);
                 if (lstp_queue.recv(lstp_item, 0ms) == ipc::Queue::Status::Ok) {
                     // This is technically redundant because core1 already validated the request
                     auto status = nv::lstp::LstpParser::validate_request(lstp_item,
@@ -188,12 +189,12 @@ Task::Task() noexcept
         }
 
         if (active_bits & WdtBit) {
-            _event.clear(WdtBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, WdtBit);
             nv::watchdog::Runtime::mark_task_alive(nv::watchdog::TaskMonitorIndex::Usb);
         }
 
         if (active_bits & UpdateRoutingTableBit) {
-            _event.clear(UpdateRoutingTableBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, UpdateRoutingTableBit);
             update_routing_table();
         }
     }
@@ -277,6 +278,17 @@ std::pair<ipchandler::Id, uint8_t> Task::i2c_addr_mapping(uint8_t virtual_addr)
     return usb::i2c_addr_mapping(virtual_addr);
 }
 
+void Task::complete_hid_error(Status1 status)
+{
+    _hid_status0              = Status0::CompleteWithError;
+    _hid_status1              = status;
+    _hid_bytes_received       = 0;
+    _hid_bytes_sent           = 0;
+    _i2c_response_data_length = 0;
+    _has_pending_response     = true;
+    _hid_state                = HidState::Idle;
+}
+
 void Task::process_hid(const uint8_t* data, size_t length)
 {
     if (!data || length < 1) {
@@ -289,11 +301,7 @@ void Task::process_hid(const uint8_t* data, size_t length)
     switch (report_id) {
         case ReportId::DataReadReq: {
             if (length < 4) {
-                // Invalid packet length - send error response
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
             const uint8_t slave_addr            = data[1] >> 1U;
@@ -301,13 +309,17 @@ void Task::process_hid(const uint8_t* data, size_t length)
 
             _hid_read_length = (static_cast<uint16_t>(data[2]) << 8) | data[3];
 
+            if (_hid_read_length > MaxReadSize) {
+                logger::error(logger::Event::UsbBufferOverflow,
+                              {4,
+                               static_cast<uint8_t>(_hid_read_length & UINT8_MAX),
+                               static_cast<uint8_t>(_hid_read_length >> 8)});
+                complete_hid_error(Status1::TimeoutNacked);
+                return;
+            }
+
             if (ipchandler_id == ipchandler::Id::Unuse) {
-                // Send NAK response
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::TimeoutNacked);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::TimeoutNacked);
                 return;
             }
 
@@ -318,25 +330,20 @@ void Task::process_hid(const uint8_t* data, size_t length)
             const bool i2c_ok = send_to_backend(
                 ipchandler_id, physical_addr, 0, _hid_read_length, buffer_span);
             if (!i2c_ok) {
-                // I2C queue send failed - return error
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
-            _hid_state = HidState::Read;
+            _hid_state                = HidState::Read;
+            _hid_bytes_received       = 0;
+            _hid_bytes_sent           = 0;
+            _i2c_response_data_length = 0;
+            _has_pending_response     = false;
             break;
         }
 
         case ReportId::DataWrite: {
             if (length < DataWriteHeaderSize) {
-                // Invalid packet length - send error response
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
             const uint8_t slave_addr            = data[1] >> 1U;
@@ -345,11 +352,7 @@ void Task::process_hid(const uint8_t* data, size_t length)
 
             if (ipchandler_id == ipchandler::Id::Unuse || write_len > MaxDataSize
                 || length < DataWriteHeaderSize + write_len) {
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::TimeoutNacked);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::TimeoutNacked);
                 return;
             }
 
@@ -362,15 +365,18 @@ void Task::process_hid(const uint8_t* data, size_t length)
             const bool i2c_ok = send_to_backend(
                 ipchandler_id, physical_addr, write_len, 0, span_item);
             if (!i2c_ok) {
-                // I2C queue send failed - return error
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
-            _hid_state = HidState::Write;
+            _hid_state                = HidState::Write;
+            _hid_read_length          = 0;
+            _hid_bytes_received       = 0;
+            _hid_bytes_sent           = 0;
+            _hid_status0              = Status0::Busy;
+            _hid_status1              = Status1::WriteInProgress;
+            _has_pending_response     = false;
+            _i2c_response_buffer      = {};
+            _i2c_response_data_length = 0;
             break;
         }
 
@@ -379,14 +385,18 @@ void Task::process_hid(const uint8_t* data, size_t length)
             _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
 
             if (_has_pending_response) {
-                // Operation completed - report status but keep _has_pending_response
-                // It will be cleared when DataReadForceSend is received
+                // Operation completed - report held status. For reads with data, keep
+                // pending until DataReadForceSend. For writes/errors, clear after this
+                // poll so a late TransferStatusReq still sees Complete instead of Idle.
                 _response_buffer[1] = static_cast<uint8_t>(_hid_status0);
                 _response_buffer[2] = static_cast<uint8_t>(_hid_status1);
                 _response_buffer[3] = 0x00;  // Retries high byte
                 _response_buffer[4] = 0x00;  // Retries low byte
                 _response_buffer[5] = (_hid_bytes_received >> 8) & 0xFF;
                 _response_buffer[6] = _hid_bytes_received & 0xFF;
+                if (_i2c_response_data_length == 0) {
+                    _has_pending_response = false;
+                }
             }
             else if (_hid_state == HidState::Read) {
                 _response_buffer[1] = static_cast<uint8_t>(Status0::Busy);
@@ -405,18 +415,34 @@ void Task::process_hid(const uint8_t* data, size_t length)
         }
 
         case ReportId::CancelTransfer: {
-            _hid_state            = HidState::Idle;
-            _has_pending_response = false;
+            // The backend has no cancellation API. If a request is still in
+            // flight, discard its eventual response so it cannot revive this
+            // canceled transaction.
+            const bool backend_response_pending = (_hid_state == HidState::Read
+                                                   || _hid_state == HidState::Write)
+                                               && !_has_pending_response;
+            // Track every canceled in-flight request and saturate to avoid wrapping.
+            if (backend_response_pending
+                && _discard_i2c_response_count < std::numeric_limits<uint8_t>::max()) {
+                ++_discard_i2c_response_count;
+            }
+
+            _hid_state                = HidState::Idle;
+            _hid_read_length          = 0;
+            _hid_bytes_received       = 0;
+            _hid_bytes_sent           = 0;
+            _hid_status0              = Status0::Idle;
+            _hid_status1              = Status1::Acked;
+            _has_pending_response     = false;
+            _i2c_response_buffer      = {};
+            _i2c_response_data_length = 0;
             break;
         }
 
         case ReportId::DataWriteReadReq: {
             // Write-then-read (combined transaction)
             if (length < DataWriteReadReqHeaderSize) {
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
             const uint8_t slave_addr            = data[1] >> 1U;
@@ -424,13 +450,18 @@ void Task::process_hid(const uint8_t* data, size_t length)
             _hid_read_length           = (static_cast<uint16_t>(data[2]) << 8) | data[3];
             const uint8_t tar_addr_len = data[4];
 
-            if (ipchandler_id == ipchandler::Id::Unuse || tar_addr_len > MaxDataSize
+            if (_hid_read_length > MaxReadSize) {
+                logger::error(logger::Event::UsbBufferOverflow,
+                              {4,
+                               static_cast<uint8_t>(_hid_read_length & UINT8_MAX),
+                               static_cast<uint8_t>(_hid_read_length >> 8)});
+                complete_hid_error(Status1::TimeoutNacked);
+                return;
+            }
+
+            if (ipchandler_id == ipchandler::Id::Unuse || tar_addr_len > MaxAddrSize
                 || (tar_addr_len > 0 && length < DataWriteReadReqHeaderSize + tar_addr_len)) {
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::TimeoutNacked);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::TimeoutNacked);
                 return;
             }
 
@@ -445,33 +476,44 @@ void Task::process_hid(const uint8_t* data, size_t length)
             const bool i2c_ok = send_to_backend(
                 ipchandler_id, physical_addr, tar_addr_len, _hid_read_length, span_item);
             if (!i2c_ok) {
-                _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-                _response_buffer[1] = static_cast<uint8_t>(Status0::CompleteWithError);
-                _response_buffer[2] = static_cast<uint8_t>(Status1::ArbitrationLost);
-                send_response_to_core1(_response_buffer.data(), HidBufferSize);
-                _hid_state = HidState::Idle;
+                complete_hid_error(Status1::ArbitrationLost);
                 return;
             }
-            _hid_state = HidState::Read;
+            _hid_state                = HidState::Read;
+            _hid_bytes_received       = 0;
+            _hid_bytes_sent           = 0;
+            _i2c_response_data_length = 0;
+            _has_pending_response     = false;
             break;
         }
 
         case ReportId::DataReadForceSend: {
-            // Force send any pending read data
+            if (length < 3) {
+                complete_hid_error(Status1::ArbitrationLost);
+                return;
+            }
+
+            // Return at most one HID payload and retain any remaining I2C data
+            // for the next force-send request.
             _response_buffer    = {};
             _response_buffer[0] = static_cast<uint8_t>(ReportId::DataReadRes);
 
-            if (_hid_status0 == Status0::Complete && _i2c_response_data_length > 0) {
-                // Return success with data
-                _response_buffer[1] = 0x00;  // Status: success
-                _response_buffer[2] = static_cast<uint8_t>(_i2c_response_data_length);
+            if (_hid_status0 == Status0::Complete
+                && _hid_bytes_sent < _i2c_response_data_length) {
+                // DataReadForceSend.length is big-endian, as sent by the Linux driver.
+                const uint16_t requested_length = (static_cast<uint16_t>(data[1]) << 8)
+                                                | static_cast<uint16_t>(data[2]);
+                const size_t remaining_length = _i2c_response_data_length - _hid_bytes_sent;
+                const size_t copy_length      = std::min({remaining_length,
+                                                          static_cast<size_t>(requested_length),
+                                                          static_cast<size_t>(MaxDataSize)});
 
-                // Copy data starting at byte 3
-                size_t copyLen = std::min(_i2c_response_data_length,
-                                          static_cast<size_t>(HidBufferSize - 3));
-                std::copy(_i2c_response_buffer.begin(),
-                          _i2c_response_buffer.begin() + copyLen,
+                _response_buffer[1] = 0x00;  // Status: success
+                _response_buffer[2] = static_cast<uint8_t>(copy_length);
+                std::copy(_i2c_response_buffer.begin() + _hid_bytes_sent,
+                          _i2c_response_buffer.begin() + _hid_bytes_sent + copy_length,
                           _response_buffer.begin() + 3);
+                _hid_bytes_sent += copy_length;
             }
             else {
                 // Return with 0 bytes (error or no data)
@@ -479,10 +521,15 @@ void Task::process_hid(const uint8_t* data, size_t length)
                 _response_buffer[2] = 0x00;
             }
 
-            // Clear pending response after sending data
-            _has_pending_response     = false;
-            _i2c_response_data_length = 0;
-            _hid_state                = HidState::Idle;
+            if (_hid_bytes_sent >= _i2c_response_data_length) {
+                _has_pending_response     = false;
+                _hid_bytes_sent           = 0;
+                _i2c_response_data_length = 0;
+                _hid_state                = HidState::Idle;
+            }
+            else {
+                _hid_state = HidState::Read;
+            }
 
             send_response_to_core1(_response_buffer.data(), HidBufferSize);
             break;
@@ -497,63 +544,56 @@ void Task::process_i2c_response(uint16_t       read_length,
                                 size_t         data_length,
                                 i2c::I2cStatus result)
 {
+    if (_discard_i2c_response_count > 0) {
+        --_discard_i2c_response_count;
+        return;
+    }
+
     // Update HID state based on I2C result
     if (result == i2c::I2cStatus::Ok) {
         _hid_status0        = Status0::Complete;
         _hid_status1        = Status1::Succeeded;
-        _hid_bytes_received = read_length;
+        _hid_bytes_received = 0;
+        _hid_bytes_sent     = 0;
 
         if (data_length > 0 && data != nullptr) {
-            const size_t copy_len = std::min(data_length, _i2c_response_buffer.size());
+            const size_t copy_len = std::min(
+                {static_cast<size_t>(read_length), data_length, _i2c_response_buffer.size()});
             std::copy(data, data + copy_len, _i2c_response_buffer.begin());
+            _hid_bytes_received       = static_cast<uint16_t>(copy_len);
             _i2c_response_data_length = copy_len;
         }
         else {
             _i2c_response_data_length = 0;
         }
     }
-    else if (result == i2c::I2cStatus::Nak) {
-        _hid_status0              = Status0::CompleteWithError;
-        _hid_status1              = Status1::TimeoutNacked;
-        _i2c_response_data_length = 0;
-    }
     else {
-        _hid_status0              = Status0::CompleteWithError;
-        _hid_status1              = Status1::ArbitrationLost;
+        _hid_status0 = Status0::CompleteWithError;
+        switch (result) {
+            case i2c::I2cStatus::Busy   : _hid_status1 = Status1::Scllowtimeout; break;
+            case i2c::I2cStatus::ArbLost: _hid_status1 = Status1::ArbitrationLost; break;
+            case i2c::I2cStatus::Nak    :
+            case i2c::I2cStatus::Error  :
+            default                     : _hid_status1 = Status1::TimeoutNacked; break;
+        }
+        _hid_bytes_received       = 0;
+        _hid_bytes_sent           = 0;
         _i2c_response_data_length = 0;
     }
 
+    // Hold the result instead of pushing it. 0x16 is defined as the reply to a
+    // TransferStatusReq (0x15), and the host discards input reports that arrive
+    // outside its own request window, so an unsolicited report would be dropped
+    // and would also consume Core1's single HID IN buffer.
     _has_pending_response = true;
 
-    // Auto-send TransferStatusRes to host (real CP2112 behavior).
-    // A real CP2112 pushes a TransferStatusRes Input Report when the I2C
-    // operation completes. The Linux cp2112 kernel driver polls with
-    // TransferStatusReq (0x15) and waits for TransferStatusRes (0x16) with
-    // Complete status before issuing DataReadForceSend (0x12) to retrieve data.
-    _response_buffer = {};
-
-    _response_buffer[0] = static_cast<uint8_t>(ReportId::TransferStatusRes);
-    _response_buffer[1] = static_cast<uint8_t>(_hid_status0);
-    _response_buffer[2] = static_cast<uint8_t>(_hid_status1);
-    _response_buffer[3] = 0x00;  // Retries high byte
-    _response_buffer[4] = 0x00;  // Retries low byte
-    _response_buffer[5] = (_hid_bytes_received >> 8) & 0xFF;
-    _response_buffer[6] = _hid_bytes_received & 0xFF;
-
-    if (_hid_state == HidState::Read && _hid_status0 == Status0::Complete
-        && _i2c_response_data_length > 0) {
-        // Read succeeded with data: keep _has_pending_response and
-        // _i2c_response_data_length intact so that the subsequent
-        // DataReadForceSend (0x12) can return the actual data.
-    }
-    else {
-        // Write completed, read failed, or read with 0 bytes:
-        // No data to retrieve via DataReadForceSend, clear pending state.
-        _has_pending_response     = false;
+    // Reads with data stay pending until DataReadForceSend; writes and errors are
+    // cleared once TransferStatusReq has reported them.
+    if (!(_hid_state == HidState::Read && _hid_status0 == Status0::Complete
+          && _i2c_response_data_length > 0)) {
         _i2c_response_data_length = 0;
     }
 
-    send_response_to_core1(_response_buffer.data(), HidBufferSize);
     _hid_state = HidState::Idle;
 }
 
@@ -578,16 +618,29 @@ bool Task::to_usb_proxy(ipchandler::Id    src_id,
     const auto q_item = ipc::Queue::ConstItem(
         reinterpret_cast<const uint8_t*>(&resp),  // NOLINT(*-reinterpret-cast)
         sizeof(resp));
-    auto& queue  = ipc::Queue::make(ipc::QueueId::UsbI2cResp);
-    auto  status = queue.send(q_item, 100ms);
+    auto& queue = ipc::Queue::make(ipc::QueueId::UsbI2cResp);
 
-    // Set event to notify usb_proxy::Task only on successful enqueue
+    // Give the USB proxy task a bounded opportunity to drain its single-entry queue.
+    // Do not wait indefinitely here because this runs in the backend task context.
+    constexpr uint8_t MaxSendAttempts = 3;
+    uint8_t           send_attempts   = 0;
+    auto              status          = ipc::Queue::Status::Full;
+    do {
+        ++send_attempts;
+        status = queue.send(q_item, 100ms);
+    } while ((status == ipc::Queue::Status::Full || status == ipc::Queue::Status::Timeout)
+             && send_attempts < MaxSendAttempts);
+
+    // Notify usb_proxy::Task only on successful enqueue
     if (status == ipc::Queue::Status::Ok) {
-        auto& event = ipc::Event::make(ipc::EventId::UsbTask);
-        event.set(HidI2cRespBit);
+        (void)ipc::TaskNotify::send(ipc::TaskId::Usb, HidI2cRespBit);
+    }
+    else {
+        logger::error(
+            logger::Event::UsbRequestQueueError,
+            {static_cast<uint8_t>(status), static_cast<uint8_t>(src_id), send_attempts});
     }
 
-    (void)src_id;
     return status == ipc::Queue::Status::Ok;
 }
 
@@ -622,38 +675,47 @@ bool Task::send_response_to_core1(const uint8_t* data, size_t length)
 bool dispatch_c2c_data(ipc::QueueId queue_id, const uint8_t* data, uint16_t length)
 {
     using namespace std::chrono_literals;
-    auto& event = ipc::Event::make(ipc::EventId::UsbTask);
 
     if (queue_id == ipc::QueueId::UsbTx) {
         // MCTP: enqueue to UsbTx FreeRTOS queue (item_size = 512)
         constexpr size_t MctpQueueItemSize = 512;
         const auto       item              = ipc::Queue::ConstItem(data, MctpQueueItemSize);
         if (ipc::Queue::make(ipc::QueueId::UsbTx).send(item, 100ms) == ipc::Queue::Status::Ok) {
-            event.set(Task::MctpRxBit);
+            (void)ipc::TaskNotify::send(ipc::TaskId::Usb, Task::MctpRxBit);
         }
         return true;
     }
 
-    if (queue_id == ipc::QueueId::UsbHid) {
+    if (EnableHid && queue_id == ipc::QueueId::UsbHid) {
         // HID: enqueue to UsbHid FreeRTOS queue (item_size = 64)
-        constexpr size_t HidReportSize = 64;
-        const auto       item          = ipc::Queue::ConstItem(data, HidReportSize);
+        if (data == nullptr || length == 0 || length > SharedHidBufferSize) {
+            logger::error(logger::Event::UsbBufferOverflow, {4});
+            return true;
+        }
+
+        // Core1 forwards the actual USB transfer length, which may be shorter
+        // than the fixed 64-byte queue item. Zero-pad locally so the queue copy
+        // never reads beyond the valid C2C payload.
+        std::array<uint8_t, SharedHidBufferSize> hid_report{};
+        std::copy(data, data + length, hid_report.begin());
+
+        const auto item = ipc::Queue::ConstItem(hid_report.data(), hid_report.size());
         if (ipc::Queue::make(ipc::QueueId::UsbHid).send(item, 100ms)
             == ipc::Queue::Status::Ok) {
-            event.set(Task::HidRxBit);
+            (void)ipc::TaskNotify::send(ipc::TaskId::Usb, Task::HidRxBit);
         }
         return true;
     }
 
-#if defined(USB_CONFIG_UART_BRIDGE)
+#if defined(USB_CONFIG_UART_BRIDGE) && (USB_CONFIG_UART_BRIDGE > 0U)
     if (queue_id == ipc::QueueId::UsbAcm) {
-        // ACM: wrap with 2-byte length prefix, enqueue to UbridgeRx for bridge task
+        // ACM: wrap with 2-byte length prefix, enqueue to Ubridge0Rx for bridge task
         constexpr size_t                AcmBufSize = 514;  // 2-byte length + 512-byte max data
         std::array<uint8_t, AcmBufSize> buf{};
         std::memcpy(buf.data(), &length, sizeof(length));
         std::memcpy(buf.data() + 2, data, length);
         const auto item = ipc::Queue::ConstItem(buf.data(), buf.size());
-        (void)ipc::Queue::make(ipc::QueueId::UbridgeRx).send(item, 100ms);
+        (void)ipc::Queue::make(ipc::QueueId::Ubridge0Rx).send(item, 100ms);
         nv::vruart::CdcBridge::set_usb_rx_done_event();
         return true;
     }
@@ -664,7 +726,7 @@ bool dispatch_c2c_data(ipc::QueueId queue_id, const uint8_t* data, uint16_t leng
             const auto item = ipc::Queue::ConstItem(data, nv::ipc::UsbLstpMsgSize);
             if (ipc::Queue::make(ipc::QueueId::LstpRx).send(item, 100ms)
                 == ipc::Queue::Status::Ok) {
-                event.set(Task::LstpRxBit);
+                (void)ipc::TaskNotify::send(ipc::TaskId::Usb, Task::LstpRxBit);
             }
             return true;
         }
@@ -688,8 +750,7 @@ bool to_usbLstp_proxy_impl(std::span<uint8_t>& data)
 
 void Task::set_update_routing_table_event()
 {
-    auto& event = ipc::Event::make(ipc::EventId::UsbTask);
-    event.set(UpdateRoutingTableBit);
+    (void)ipc::TaskNotify::send(ipc::TaskId::Usb, UpdateRoutingTableBit);
 }
 
 void Task::update_routing_table()

@@ -93,4 +93,13 @@ public:
     // static void mark_updated(ImageIndex index);
 };
 
+/**
+ * Boot-status bits that must all be set before boot is declared complete.
+ *
+ * The weak default is the project's nv::ipc::BootedEventBits::BootStatusMask. A
+ * multi-product image overrides this to drop the bits of tasks the strap-selected
+ * product does not create; otherwise boot never completes and the watchdog resets.
+ */
+uint32_t project_boot_status_mask();
+
 }  // namespace nv::bootloader

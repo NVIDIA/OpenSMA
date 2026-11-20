@@ -36,14 +36,13 @@ enum class SelfTestStatus : uint8_t
 
 enum class SelfTestCmd : uint32_t
 {
-    FwVersion             = 0,
-    TestingFwResult       = 1,
-    StackUsage            = 2,
-    TestingPerf           = 3,
-    GetTRNGConfig         = 4,
-    GetCMACValue          = 5,
-    I2cLoopbackTest       = 6,
-    I2cLoopbackTestResult = 7,
+    FwVersion       = 0,
+    TestingFwResult = 1,
+    StackUsage      = 2,
+    TestingPerf     = 3,
+    GetTRNGConfig   = 4,
+    GetCMACValue    = 5,
+    // Bits 6 and 7 belonged to the removed I2C loopback test; do not reuse them.
     Max,
 };
 
@@ -76,8 +75,6 @@ public:
         v      |= common::bit(TestingFwResult);
         v      |= common::bit(GetTRNGConfig);
         v      |= common::bit(GetCMACValue);
-        v      |= common::bit(I2cLoopbackTest);
-        v      |= common::bit(I2cLoopbackTestResult);
 
         if constexpr (WantStackUsage) {
             v |= common::bit(StackUsage);
@@ -95,12 +92,6 @@ public:
 
         std::array<uint8_t, 4> nvok_magic_number;  // should be "KOVN"
     } TestingFwResultStruct;
-
-    typedef struct [[gnu::packed]]
-    {
-        uint8_t                 IsRunning;
-        std::array<uint8_t, 10> flexcomm_result;
-    } I2cLoopbackTestResultStruct;
 
     consteval static bool validate_stack_usage_buffer_size()
     {
@@ -124,8 +115,6 @@ protected:
         8,                                                            // TestingPerf
         sizeof(uint32_t),                                             // TRNGConfig
         sizeof(uint32_t),                                             // CMACValue
-        0,                                                            // I2cLoopbackTest
-        sizeof(I2cLoopbackTestResultStruct)                           // I2cLoopbackTestResult
     };
 
     static SelfTestStatus fw_version(const std::span<uint8_t>& buffer);
@@ -137,8 +126,6 @@ protected:
     static void           get_testing_fw_result(TestingFwResultStruct& testing_result);
     static void           get_testing_fw_result_svc(TestingFwResultStruct& testing_result);
     static SelfTestStatus get_trng_config_svc(const std::span<uint8_t>& buffer);
-    static SelfTestStatus i2c_loopback_test(const std::span<uint8_t>& buffer);
-    static SelfTestStatus i2c_loopback_test_result(const std::span<uint8_t>& buffer);
 };
 
 static_assert(

@@ -24,27 +24,35 @@ namespace pdk::mctp::platforms {
 enum class Interface : uint16_t
 {
     Begin,
-    UsI2c = Begin,
-    UsUsb = 1,
+    UsI2c   = Begin,
+    UsUsb   = 1,
+    UsUsbFs = 2,
+    UsI3c   = 3,
     UsEnd,
-    DsI2c0 = 2,
-    DsI2c1 = 3,
-    DsI2c2 = 4,
-    DsI2c3 = 5,
-    DsI3c0 = 6,
-    DsI3c1 = 7,
-    Pldm   = 8,
-    Spdm   = 9,
-    Spdm4K = 10,
-    Spi0   = 11,
-    Spi1   = 12,
-    Spi2   = 13,
-    DsI2c4 = 14,
-    DsI2c5 = 15,
-    DsI2c6 = 16,
-    DsI2c7 = 17,
+    DsI2c0 = 4,
+    DsI2c1 = 5,
+    DsI2c2 = 6,
+    DsI2c3 = 7,
+    DsI3c0 = 8,
+    DsI3c1 = 9,
+    Pldm   = 10,
+    Spdm   = 11,
+    Spdm4K = 12,
+    Spi0   = 13,
+    Spi1   = 14,
+    Spi2   = 15,
+    DsI2c4 = 16,
+    DsI2c5 = 17,
+    DsI2c6 = 18,
+    DsI2c7 = 19,
     End,
 };
+
+constexpr bool is_upstream_client(Interface client)
+{
+    return client == Interface::UsI2c || client == Interface::UsUsb
+        || client == Interface::UsUsbFs || client == Interface::UsI3c;
+}
 
 enum class Ccode : uint8_t
 {
@@ -99,31 +107,31 @@ enum class Rcode : uint16_t
 
 enum class VdmCmd : uint8_t
 {
-    SetEpUuid                 = 0x01,
-    BootComplete              = 0x02,
-    Heartbeat                 = 0x03,
-    EnableHeartbeat           = 0x04,
-    QueryBootStatus           = 0x05,
-    DownloadLog               = 0x06,
-    EnableIbUpdate            = 0x07,
-    SelfTest                  = 0x08,
-    BackgroundCopy            = 0x09,
-    RestartNotification       = 0x0A,
-    InstallDbgToken           = 0x0B,
-    EraseDbgToken             = 0x0C,
-    QueryDbgTokenStatus       = 0x0F,
-    AddExtTimestamp           = 0x13,
-    ProgramCertificate        = 0x31,
-    ReadDevIkCsr              = 0x30,
-    ApProvision               = 0x40,
-    QueryApProvisionStatus    = 0x41,
-    GetModelWeightKeyWrapInfo = 0x50,
-    InstallModelWeightKey     = 0x51,
-    GetGpioStatus             = 0x83,
-    RegTableAccess            = 0x84,
-    ScanI2c                   = 0x85,
-    DownloadCoverage          = 0x86,
-    FanControl                = 0x87,
+    SetEpUuid           = 0x01,
+    BootComplete        = 0x02,
+    Heartbeat           = 0x03,
+    EnableHeartbeat     = 0x04,
+    QueryBootStatus     = 0x05,
+    DownloadLog         = 0x06,
+    EnableIbUpdate      = 0x07,
+    SelfTest            = 0x08,
+    BackgroundCopy      = 0x09,
+    RestartNotification = 0x0A,
+    InstallDbgToken     = 0x0B,
+    EraseDbgToken       = 0x0C,
+    QueryDbgTokenStatus = 0x0F,
+    AddExtTimestamp     = 0x13,
+    ProgramCertificate  = 0x31,
+    ReadDevIkCsr        = 0x30,
+    // 0x40, 0x41, 0x50 and 0x51 are reserved.
+    GetGpioStatus    = 0x83,
+    RegTableAccess   = 0x84,
+    ScanI2c          = 0x85,
+    DownloadCoverage = 0x86,
+    FanControl       = 0x87,
+    // 0x88 reserved for the DFP thermal-control command
+    I2cFreqControl = 0x89,
+    BusModeControl = 0x8A,
 };
 
 }  // namespace pdk::mctp::platforms

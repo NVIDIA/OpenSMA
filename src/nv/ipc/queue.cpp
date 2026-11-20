@@ -25,7 +25,7 @@ using namespace nv::ipc;
 Queue& Queue::make(QueueId id)
 {
     // pre-conditions
-    nv::always_assert(common::is_in_range(id));
+    NV_ALWAYS_ASSERT_NO_LOG(common::is_in_range(id));
 
     auto obj_mem = Supervisor::inst().memory_for(id);
     if (obj_mem->obj_is_allocated) {
@@ -36,4 +36,13 @@ Queue& Queue::make(QueueId id)
     auto obj              = new (obj_mem) Queue(id);  // NOLINT (*-owning-memory)
     obj->obj_is_allocated = true;
     return *obj;
+}
+
+Queue& Queue::get(QueueId id)
+{
+    NV_ALWAYS_ASSERT_NO_LOG(common::is_in_range(id));
+
+    auto obj_mem = Supervisor::inst().memory_for(id);
+    NV_ALWAYS_ASSERT_NO_LOG(obj_mem != nullptr && obj_mem->obj_is_allocated);
+    return *obj_mem;
 }

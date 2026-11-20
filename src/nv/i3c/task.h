@@ -199,22 +199,6 @@ public:
     static Status update_ocp_address(nv::mctp::Client client, nv::i3c::Gpu::I2cAddr addr);
     static Status sync_cbc_sn(nv::mctp::Client client);
 
-    template<nv::ipchandler::Id EnumVal>
-    static constexpr nv::ipc::QueueId GetQueueFromIpchandlerId()
-    {
-        static_assert(EnumVal > nv::ipchandler::Id::I3cStart
-                          && EnumVal < nv::ipchandler::Id::I3cEnd,
-                      "The Input ipchandler id is not valid");
-
-        for (const auto& I2cAddrMappingItem : nv::ipc::I2cVirtualAddressMappingTable) {
-            if (I2cAddrMappingItem.ipchandler_id == EnumVal) {
-                return I2cAddrMappingItem.queue_id;
-            }
-        }
-        // not found any match
-        return nv::ipc::QueueId::I3c0;
-    }
-
     Task(Config config) noexcept;
     void        start();
     void        on_ibi(uint8_t address, std::span<volatile uint8_t> data);
@@ -249,6 +233,23 @@ private:
     gpio_info          _gpu_error;
     nv::ipchandler::Id _ipchandler_id;
     APStatus           _ap_status = APStatus::Querying;
+    // Track the sampled I3C-ready GPIO so it is logged only on initialization
+    // and subsequent state transitions.
+    bool _pull_up_status_initialized = false;
+    bool _last_pull_up_status        = false;
+    // Debounced view of the I3C readiness pin. Pending means the pin changed
+    // level but has not held it long enough to act on.
+    enum class I3cReadyState : uint8_t
+    {
+        Pending,
+        Ready,
+        NotReady
+    };
+    uint8_t _i3c_ready_count     = 0;
+    uint8_t _i3c_not_ready_count = 0;
+    // Last settled debounce result. Pending until the pin first holds a level long
+    // enough, and used to keep per-sample logging to the unsettled window.
+    I3cReadyState _i3c_ready_settled = I3cReadyState::Pending;
 
     void    handle_mctp_ibi(std::span<uint8_t> buffer);
     void    handle_gpu_ibi(std::span<uint8_t> buffer);
@@ -266,7 +267,9 @@ private:
     void    transmit(std::span<uint8_t> packet);
     bool    handle_gpu_reset(uint8_t ocp_addr, uint8_t therm_addr);
     bool    handle_cxx_reset(bool ping);
+    bool    recover_cpu_i3c_bus(bool ping);
     void    read_gpu_sensor(uint8_t reg);
+    uint8_t mctp_endpoint_index() const;
     uint8_t get_smbpbi_command_index();
     void    update_smbpbi_command_index();
     void    update_smbpbi_items(uint32_t value);
@@ -276,6 +279,26 @@ private:
     static constexpr uint8_t  DaaRetry      = 5;
     constexpr static uint32_t ThresholdTick = 10000;  // 10 ms
     void                      handle_ap_status(APStatus set_status);
+    // Periodic liveness probe for the downstream AP link (GPU DsI3c and every other
+    // non-bridge client). Kept in its own function so bridge-side changes cannot reach
+    // the behavior all other products ship.
+    APStatus query_ds_ap_link();
+    // Periodic liveness probe for the CPU-facing UsI3c bridge link. Bridge builds only.
+    APStatus query_us_i3c_link();
+    // Log the transition and (de)enumerate this task's MCTP endpoint when the resolved
+    // status differs from the current one.
+    void commit_ap_status(APStatus status);
+    // True when this task owns the project's AP-status poll timer.
+    bool is_ap_status_timer() const;
+
+    // The I3C readiness pin is sampled once per AP-status tick, so these are tick
+    // counts. Tear-down needs more confirmations than bring-up because dropping the
+    // CPU endpoint also invalidates its aliases in the BMC routing table, so a
+    // bouncing pin must not flap it out and back in.
+    static constexpr uint8_t I3cReadyDebounce    = 3;
+    static constexpr uint8_t I3cNotReadyDebounce = 5;
+    bool                     sample_i3c_ready();
+    I3cReadyState            debounced_i3c_ready();
 
     // OOB Bus error telemetry
     nv::perf_mon::OobBus _oob_bus;

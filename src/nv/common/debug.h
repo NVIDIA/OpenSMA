@@ -230,29 +230,23 @@ inline void assert(bool cond, const std::source_location& loc = std::source_loca
     }
 }
 
-/**
- * Assertion even if DbgLevel is set to None.
- *
- * @param[in]  cond       will assert if false
- * @param[in]  loc        auto source_location, do not change this
- */
-inline void always_assert(bool                        cond,
-                          const std::source_location& loc = std::source_location::current())
-{
-    if (!cond) {
-        Console::print(DebugLevel::Error,
-                       "assert @ %s:%d @ %s()\n",
-                       loc.file_name(),
-                       loc.line(),
-                       loc.function_name());
-        System::inst().abort(ExitValue::Error);
-    }
-}
-
 #define NV_ALWAYS_ASSERT(cond, ...)                                                            \
     if (!(cond)) {                                                                             \
         nv::common::fatal(                                                                     \
             "%s:%d - %s - %s\n", __FILE__, __LINE__, #cond __VA_OPT__(, ) __VA_ARGS__);        \
+    }
+
+/**
+ * Same as NV_ALWAYS_ASSERT, but aborts without printing.
+ *
+ * Use this (instead of NV_ALWAYS_ASSERT) for preconditions inside primitives that the console
+ * logging pipeline itself depends on (e.g. nv::ipc::Queue/Event). Routing their failure through
+ * Console::print re-enters the logger's IPC path (Task::request -> Queue::make), which creates
+ * a call-graph cycle that static stack analysis cannot prove is bounded.
+ */
+#define NV_ALWAYS_ASSERT_NO_LOG(cond)                                                          \
+    if (!(cond)) {                                                                             \
+        nv::common::System::inst().abort(nv::common::ExitValue::Error);                        \
     }
 
 #ifdef NV_DEBUG

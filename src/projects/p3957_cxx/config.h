@@ -54,8 +54,6 @@
 #include "sys/common/common.h"
 #include "nv/iox/common.h"
 #include "nv/i2c/vr_i2c_bus_slot.h"
-#include "nv/pldm/common.h"
-#include "nv/vrot/interface/types.h"
 #include "nv/volt_mon/common.h"
 #include "core0/powersensor.h"
 
@@ -83,9 +81,10 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 
 namespace nv::ipc {
 
-constexpr bool EanbleTaskSamePriority = false;
-constexpr bool EnableLstp             = true;
-constexpr auto UartInstance           = NV_UART_INSTANCE;
+constexpr bool EnableTaskSamePriority   = false;
+constexpr bool EnableCustomTaskPriority = false;
+constexpr bool EnableLstp               = true;
+constexpr auto UartInstance             = NV_UART_INSTANCE;
 }  // namespace nv::ipc
 
 namespace nv::lstp {
@@ -96,7 +95,7 @@ constexpr uint16_t LstpGpioNum     = 8 + 24;
 // clang-format off
 constexpr inline std::array<LstpChannelEntry, LstpNumChannels> LstpChannels{
     LstpChannelEntry{
-        LstpChannelInfo{LstpChannelType::Management, 0, "P3957_MCU"},
+        LstpChannelInfo{LstpChannelType::Management, 0, "E1S_MCU"},
         LstpManagementConfig{LSTP_VERSION, LstpNumChannels}
     },
     LstpChannelEntry{
@@ -271,7 +270,6 @@ enum class QueueId
     MctpPldmRequest,
     MctpSpdmRequest,
     MctpCmd,
-    I2c0,
     I2c1,
     I2c2,
     I2c3,
@@ -280,9 +278,6 @@ enum class QueueId
     I2c6,
     I2c7,
     I2c8,
-    I2c9,
-    VrI2c0,
-    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -307,8 +302,8 @@ enum class QueueId
     LstpTx,
     LstpGpioIrq,
     LstpToGpio,
-    UbridgeTx,
-    UbridgeRx,
+    Ubridge0Tx,
+    Ubridge0Rx,
     End
 };
 
@@ -334,20 +329,9 @@ enum class EventId
 {
     Begin,
     Nhp,
-    I2c0,
-    I2c1,
-    I2c2,
-    I2c3,
-    I2c4,
-    I2c5,
-    I2c6,
-    I2c7,
-    I2c8,
-    I2c9,
     I3c0,
     I3c1,
     PldmTask,
-    UsbTask,
     FlashEvent,
     Spi0Event,
     Spi1Event,
@@ -357,63 +341,55 @@ enum class EventId
     DiagEvent,
     TaskBootStatus,
     TaskAliveStatus,
-    Spi0EdmaDriverEvent,
     End
 };
 
 using EventInfo = std::tuple<EventId, CoreId>;
 
 constexpr inline std::array<EventInfo, int(EventId::End)> EventInfos{
-    EventInfo{              EventId::Begin,                     CoreId::Invalid},
-    EventInfo{                EventId::Nhp,     get_core_from_task(TaskId::NHP)},
-    EventInfo{               EventId::I2c0, get_core_from_task(TaskId::Invalid)},
-    EventInfo{               EventId::I2c1,    get_core_from_task(TaskId::I2c1)},
-    EventInfo{               EventId::I2c2,    get_core_from_task(TaskId::I2c2)},
-    EventInfo{               EventId::I2c3,    get_core_from_task(TaskId::I2c3)},
-    EventInfo{               EventId::I2c4,    get_core_from_task(TaskId::I2c4)},
-    EventInfo{               EventId::I2c5,    get_core_from_task(TaskId::I2c5)},
-    EventInfo{               EventId::I2c6,    get_core_from_task(TaskId::I2c6)},
-    EventInfo{               EventId::I2c7,    get_core_from_task(TaskId::I2c7)},
-    EventInfo{               EventId::I2c8,    get_core_from_task(TaskId::I2c8)},
-    EventInfo{               EventId::I2c9, get_core_from_task(TaskId::Invalid)},
-    EventInfo{               EventId::I3c0, get_core_from_task(TaskId::Invalid)},
-    EventInfo{               EventId::I3c1, get_core_from_task(TaskId::Invalid)},
-    EventInfo{           EventId::PldmTask,    get_core_from_task(TaskId::Pldm)},
-    EventInfo{            EventId::UsbTask,     get_core_from_task(TaskId::Usb)},
-    EventInfo{         EventId::FlashEvent,   get_core_from_task(TaskId::Flash)},
-    EventInfo{          EventId::Spi0Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{          EventId::Spi1Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{          EventId::Spi2Event, get_core_from_task(TaskId::Invalid)},
-    EventInfo{           EventId::LogEvent,  get_core_from_task(TaskId::Logger)},
-    EventInfo{           EventId::SpdmTask,    get_core_from_task(TaskId::Spdm)},
-    EventInfo{          EventId::DiagEvent,    get_core_from_task(TaskId::Diag)},
-    EventInfo{     EventId::TaskBootStatus,                       CoreId::Core0},
-    EventInfo{    EventId::TaskAliveStatus,                       CoreId::Core0},
-    EventInfo{EventId::Spi0EdmaDriverEvent, get_core_from_task(TaskId::Invalid)},
+    EventInfo{          EventId::Begin,                     CoreId::Invalid},
+    EventInfo{            EventId::Nhp,     get_core_from_task(TaskId::NHP)},
+    EventInfo{           EventId::I3c0, get_core_from_task(TaskId::Invalid)},
+    EventInfo{           EventId::I3c1, get_core_from_task(TaskId::Invalid)},
+    EventInfo{       EventId::PldmTask,    get_core_from_task(TaskId::Pldm)},
+    EventInfo{     EventId::FlashEvent,   get_core_from_task(TaskId::Flash)},
+    EventInfo{      EventId::Spi0Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{      EventId::Spi1Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{      EventId::Spi2Event, get_core_from_task(TaskId::Invalid)},
+    EventInfo{       EventId::LogEvent,  get_core_from_task(TaskId::Logger)},
+    EventInfo{       EventId::SpdmTask,    get_core_from_task(TaskId::Spdm)},
+    EventInfo{      EventId::DiagEvent,    get_core_from_task(TaskId::Diag)},
+    EventInfo{ EventId::TaskBootStatus,                       CoreId::Core0},
+    EventInfo{EventId::TaskAliveStatus,                       CoreId::Core0},
 };
 
 using ClientInfo = std::tuple<mctp::Client, TaskId>;
 
 constexpr inline std::array<ClientInfo, int(mctp::Client::End)> ClientInfos{
-    ClientInfo{ mctp::Client::UsI2c, TaskId::Invalid},
-    ClientInfo{ mctp::Client::UsUsb,     TaskId::Usb},
-    ClientInfo{mctp::Client::DsI2c0,    TaskId::I2c1},
-    ClientInfo{mctp::Client::DsI2c1,    TaskId::I2c2},
-    ClientInfo{mctp::Client::DsI2c2,    TaskId::I2c3},
-    ClientInfo{mctp::Client::DsI2c3,    TaskId::I2c4},
-    ClientInfo{mctp::Client::DsI3c0, TaskId::Invalid},
-    ClientInfo{mctp::Client::DsI3c1, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Pldm,    TaskId::Pldm},
-    ClientInfo{  mctp::Client::Spdm,    TaskId::Spdm},
-    ClientInfo{mctp::Client::Spdm4K,    TaskId::Spdm},
-    ClientInfo{  mctp::Client::Spi0, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Spi1, TaskId::Invalid},
-    ClientInfo{  mctp::Client::Spi2, TaskId::Invalid},
-    ClientInfo{mctp::Client::DsI2c4,    TaskId::I2c5},
-    ClientInfo{mctp::Client::DsI2c5,    TaskId::I2c6},
-    ClientInfo{mctp::Client::DsI2c6,    TaskId::I2c7},
-    ClientInfo{mctp::Client::DsI2c7,    TaskId::I2c8},
+    ClientInfo{  mctp::Client::UsI2c, TaskId::Invalid},
+    ClientInfo{  mctp::Client::UsUsb,     TaskId::Usb},
+    ClientInfo{mctp::Client::UsUsbFs, TaskId::Invalid},
+    ClientInfo{  mctp::Client::UsI3c, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c0,    TaskId::I2c1},
+    ClientInfo{ mctp::Client::DsI2c1,    TaskId::I2c2},
+    ClientInfo{ mctp::Client::DsI2c2,    TaskId::I2c3},
+    ClientInfo{ mctp::Client::DsI2c3,    TaskId::I2c4},
+    ClientInfo{ mctp::Client::DsI3c0, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI3c1, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Pldm,    TaskId::Pldm},
+    ClientInfo{   mctp::Client::Spdm,    TaskId::Spdm},
+    ClientInfo{ mctp::Client::Spdm4K,    TaskId::Spdm},
+    ClientInfo{   mctp::Client::Spi0, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Spi1, TaskId::Invalid},
+    ClientInfo{   mctp::Client::Spi2, TaskId::Invalid},
+    ClientInfo{ mctp::Client::DsI2c4,    TaskId::I2c5},
+    ClientInfo{ mctp::Client::DsI2c5,    TaskId::I2c6},
+    ClientInfo{ mctp::Client::DsI2c6,    TaskId::I2c7},
+    ClientInfo{ mctp::Client::DsI2c7,    TaskId::I2c8}
 };
+
+static_assert(mctp::client_infos_in_enum_order(ClientInfos),
+              "ClientInfos must list every mctp::Client in enum order");
 
 /// All Stream Buffers must be part of this enum.
 enum class StreamBufferId
@@ -439,7 +415,7 @@ constexpr uint8_t  I3cDownStreamNum        = 0;
 constexpr uint8_t  DownStreamNum           = I2cDownStreamNum + I3cDownStreamNum;
 constexpr uint8_t  UpStreamNum             = 1;
 constexpr uint8_t  DefaultRoutingTableSize = DownStreamNum + UpStreamNum;
-constexpr uint8_t  RoutingInfoUpdateSize   = 4;
+constexpr uint8_t  RoutingInfoUpdateSize   = 16;
 constexpr uint8_t  RoutingTableSize        = DefaultRoutingTableSize + RoutingInfoUpdateSize;
 constexpr uint32_t EnumerateStartMs        = 1000;
 constexpr bool     EnableEndpointStatusChangeDebounce = false;
@@ -481,9 +457,6 @@ constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos
                          0x1d},
 };
 
-constexpr uint32_t ApEcdsa384PublicKeySize = 96;
-constexpr std::array<std::array<uint8_t, ApEcdsa384PublicKeySize>, 2> ApFwPublicKeys{};
-
 constexpr uint32_t SpdmRequestQueueSize      = 2048;
 constexpr uint32_t SpdmRxQueueSize           = 72;
 constexpr uint32_t SpdmCryptoHelperQueueSize = 12;
@@ -507,7 +480,6 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {    QueueId::MctpPldmRequest,   1,                                                256,    get_core_from_task(TaskId::Mctp)},
     {    QueueId::MctpSpdmRequest,   1,                               SpdmRequestQueueSize,    get_core_from_task(TaskId::Mctp)},
     {            QueueId::MctpCmd, 130,                                                 12,    get_core_from_task(TaskId::Mctp)},
-    {               QueueId::I2c0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I2c1,  16,                                                528,    get_core_from_task(TaskId::I2c1)},
     {               QueueId::I2c2,  16,                                                528,    get_core_from_task(TaskId::I2c2)},
     {               QueueId::I2c3,  16,                                                528,    get_core_from_task(TaskId::I2c3)},
@@ -516,9 +488,6 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     {               QueueId::I2c6,  16,                                                528,    get_core_from_task(TaskId::I2c6)},
     {               QueueId::I2c7,  16,                                                528,    get_core_from_task(TaskId::I2c7)},
     {               QueueId::I2c8,  16,                                                528,    get_core_from_task(TaskId::I2c8)},
-    {               QueueId::I2c9,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {             QueueId::VrI2c0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {             QueueId::VrI2c1,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::I3c1,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
     {               QueueId::Spi0,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
@@ -554,8 +523,8 @@ constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
               LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize,
               get_core_from_task(TaskId::Lstp)                                                                                          },
     {         QueueId::LstpToGpio,   1,                                     LstpToGpioSize,    get_core_from_task(TaskId::Lstp)},
-    {          QueueId::UbridgeTx,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
-    {          QueueId::UbridgeRx,   1,                                                  1, get_core_from_task(TaskId::Invalid)}
+    {         QueueId::Ubridge0Tx,   1,                                                  1, get_core_from_task(TaskId::Invalid)},
+    {         QueueId::Ubridge0Rx,   1,                                                  1, get_core_from_task(TaskId::Invalid)}
 };
 
 constexpr uint32_t I3cQueueMaxTxSize = 1;
@@ -642,22 +611,25 @@ constexpr inline std::array<I2cTimerInfo, 0> I2cTimerInfos{};
 [[maybe_unused]] constexpr auto MaxQueuesPerTask = 4;
 [[maybe_unused]] constexpr auto MaxEventsPerTask = 4;
 
-// Physical GPIOs per port (8+11+10+18+11+8) plus 24 virtual (vrPort) amber LED
+// Physical GPIOs per port (11+11+10+18+11+8) plus 24 virtual (vrPort) amber LED
 // state pins (3 per drive x 8 drives) exposed to the BMC over LSTP.
-constexpr uint8_t GpioNum = 8 + 11 + 10 + 18 + 11 + 8 + 24;
+constexpr uint8_t GpioNum            = 11 + 11 + 10 + 18 + 11 + 8 + 24;
+constexpr bool    EnableMultiProduct = false;
 enum Port : gpio::GpioPort
 {
-    GlobalWpPort = nv::gpio::InvalidGpioPort,
-    ApGoodPort   = nv::gpio::InvalidGpioPort,
+    ApGoodPort = nv::gpio::InvalidGpioPort,
     // Port 0
-    MCU_RECOV_N_PORT      = 0,
-    MCU_SSD0_PERST_L_PORT = 0,
-    MCU_SSD1_PERST_L_PORT = 0,
-    MCU_SSD4_PERST_L_PORT = 0,
-    MCU_SSD2_PERST_L_PORT = 0,
-    MCU_SSD5_PERST_L_PORT = 0,
-    MCU_SSD3_PERST_L_PORT = 0,
-    MCU_SSD6_PERST_L_PORT = 0,
+    L_MCU_P0_2_PORT         = 0,
+    S_MCU_READY_STATUS_PORT = 0,
+    MCU_RECOV_N_PORT        = 0,
+    GLOBAL_WP_MCU_PORT      = 0,
+    MCU_SSD0_PERST_L_PORT   = 0,
+    MCU_SSD1_PERST_L_PORT   = 0,
+    MCU_SSD4_PERST_L_PORT   = 0,
+    MCU_SSD2_PERST_L_PORT   = 0,
+    MCU_SSD5_PERST_L_PORT   = 0,
+    MCU_SSD3_PERST_L_PORT   = 0,
+    MCU_SSD6_PERST_L_PORT   = 0,
     // Port 1
     MCU_SSD7_PERST_L_PORT  = 1,
     VPP_CPU1B_ALERT_L_PORT = 1,
@@ -724,22 +696,26 @@ enum Port : gpio::GpioPort
     // Virtual (vrPort) amber LED state pins. These have no physical GPIO; the
     // BMC writes them over LSTP and the AHS task decodes them into amber LED
     // blink patterns for each SSD drive.
-    vSSD_AMBER_PORT = nv::gpio::vrPort
+    vSSD_AMBER_PORT = nv::gpio::vrPort,
+
+    GlobalWpPort = GLOBAL_WP_MCU_PORT
 };
 
 enum Pin : gpio::GpioPin
 {
-    GlobalWpPin = nv::gpio::InvalidGpioPin,
-    ApGoodPin   = nv::gpio::InvalidGpioPin,
+    ApGoodPin = nv::gpio::InvalidGpioPin,
     // Port 0 Pins
-    MCU_RECOV_N_PIN      = 6,
-    MCU_SSD0_PERST_L_PIN = 14,
-    MCU_SSD1_PERST_L_PIN = 15,
-    MCU_SSD4_PERST_L_PIN = 18,
-    MCU_SSD2_PERST_L_PIN = 19,
-    MCU_SSD5_PERST_L_PIN = 23,
-    MCU_SSD3_PERST_L_PIN = 28,
-    MCU_SSD6_PERST_L_PIN = 29,
+    L_MCU_P0_2_PIN         = 2,
+    S_MCU_READY_STATUS_PIN = 3,
+    MCU_RECOV_N_PIN        = 6,
+    GLOBAL_WP_MCU_PIN      = 9,
+    MCU_SSD0_PERST_L_PIN   = 14,
+    MCU_SSD1_PERST_L_PIN   = 15,
+    MCU_SSD4_PERST_L_PIN   = 18,
+    MCU_SSD2_PERST_L_PIN   = 19,
+    MCU_SSD5_PERST_L_PIN   = 23,
+    MCU_SSD3_PERST_L_PIN   = 28,
+    MCU_SSD6_PERST_L_PIN   = 29,
     // Port 1 Pins
     MCU_SSD7_PERST_L_PIN  = 2,
     VPP_CPU1B_ALERT_L_PIN = 6,
@@ -828,110 +804,115 @@ enum Pin : gpio::GpioPin
     vSSD6_AMBER_B2_PIN = 20,
     vSSD7_AMBER_B0_PIN = 21,
     vSSD7_AMBER_B1_PIN = 22,
-    vSSD7_AMBER_B2_PIN = 23
+    vSSD7_AMBER_B2_PIN = 23,
+
+    GlobalWpPin = GLOBAL_WP_MCU_PIN
 };
 
 using Gpios = std::tuple<gpio::GpioPort, gpio::GpioPin>;
 
 constexpr inline std::array<Gpios, GpioNum> GpioSetup{
     // Port 0
-    Gpios{      MCU_RECOV_N_PORT,       MCU_RECOV_N_PIN}, // 0
-    Gpios{ MCU_SSD0_PERST_L_PORT,  MCU_SSD0_PERST_L_PIN}, // 1
-    Gpios{ MCU_SSD1_PERST_L_PORT,  MCU_SSD1_PERST_L_PIN}, // 2
-    Gpios{ MCU_SSD4_PERST_L_PORT,  MCU_SSD4_PERST_L_PIN}, // 3
-    Gpios{ MCU_SSD2_PERST_L_PORT,  MCU_SSD2_PERST_L_PIN}, // 4
-    Gpios{ MCU_SSD5_PERST_L_PORT,  MCU_SSD5_PERST_L_PIN}, // 5
-    Gpios{ MCU_SSD3_PERST_L_PORT,  MCU_SSD3_PERST_L_PIN}, // 6
-    Gpios{ MCU_SSD6_PERST_L_PORT,  MCU_SSD6_PERST_L_PIN}, // 7
+    Gpios{        L_MCU_P0_2_PORT,         L_MCU_P0_2_PIN}, // 0
+    Gpios{S_MCU_READY_STATUS_PORT, S_MCU_READY_STATUS_PIN}, // 1
+    Gpios{       MCU_RECOV_N_PORT,        MCU_RECOV_N_PIN}, // 2
+    Gpios{     GLOBAL_WP_MCU_PORT,      GLOBAL_WP_MCU_PIN}, // 3
+    Gpios{  MCU_SSD0_PERST_L_PORT,   MCU_SSD0_PERST_L_PIN}, // 4
+    Gpios{  MCU_SSD1_PERST_L_PORT,   MCU_SSD1_PERST_L_PIN}, // 5
+    Gpios{  MCU_SSD4_PERST_L_PORT,   MCU_SSD4_PERST_L_PIN}, // 6
+    Gpios{  MCU_SSD2_PERST_L_PORT,   MCU_SSD2_PERST_L_PIN}, // 7
+    Gpios{  MCU_SSD5_PERST_L_PORT,   MCU_SSD5_PERST_L_PIN}, // 8
+    Gpios{  MCU_SSD3_PERST_L_PORT,   MCU_SSD3_PERST_L_PIN}, // 9
+    Gpios{  MCU_SSD6_PERST_L_PORT,   MCU_SSD6_PERST_L_PIN}, // 10
     // Port 1
-    Gpios{ MCU_SSD7_PERST_L_PORT,  MCU_SSD7_PERST_L_PIN}, // 8
-    Gpios{VPP_CPU1B_ALERT_L_PORT, VPP_CPU1B_ALERT_L_PIN}, // 9
-    Gpios{MCU_CLK_SSD0_EN_N_PORT, MCU_CLK_SSD0_EN_N_PIN}, // 10
-    Gpios{ VPP_CPU1_ALERT_L_PORT,  VPP_CPU1_ALERT_L_PIN}, // 11
-    Gpios{   SSD67_PWRBRK_L_PORT,    SSD67_PWRBRK_L_PIN}, // 12
-    Gpios{MCU_CLK_SSD1_EN_N_PORT, MCU_CLK_SSD1_EN_N_PIN}, // 13
-    Gpios{      SSD6_PWRDIS_PORT,       SSD6_PWRDIS_PIN}, // 14
-    Gpios{     SSD0_PRSNT_L_PORT,      SSD0_PRSNT_L_PIN}, // 15
-    Gpios{     SSD1_PRSNT_L_PORT,      SSD1_PRSNT_L_PIN}, // 16
-    Gpios{   MCU_V_SSD5_DIS_PORT,    MCU_V_SSD5_DIS_PIN}, // 17
-    Gpios{   MCU_V_SSD6_DIS_PORT,    MCU_V_SSD6_DIS_PIN}, // 18
+    Gpios{  MCU_SSD7_PERST_L_PORT,   MCU_SSD7_PERST_L_PIN}, // 11
+    Gpios{ VPP_CPU1B_ALERT_L_PORT,  VPP_CPU1B_ALERT_L_PIN}, // 12
+    Gpios{ MCU_CLK_SSD0_EN_N_PORT,  MCU_CLK_SSD0_EN_N_PIN}, // 13
+    Gpios{  VPP_CPU1_ALERT_L_PORT,   VPP_CPU1_ALERT_L_PIN}, // 14
+    Gpios{    SSD67_PWRBRK_L_PORT,     SSD67_PWRBRK_L_PIN}, // 15
+    Gpios{ MCU_CLK_SSD1_EN_N_PORT,  MCU_CLK_SSD1_EN_N_PIN}, // 16
+    Gpios{       SSD6_PWRDIS_PORT,        SSD6_PWRDIS_PIN}, // 17
+    Gpios{      SSD0_PRSNT_L_PORT,       SSD0_PRSNT_L_PIN}, // 18
+    Gpios{      SSD1_PRSNT_L_PORT,       SSD1_PRSNT_L_PIN}, // 19
+    Gpios{    MCU_V_SSD5_DIS_PORT,     MCU_V_SSD5_DIS_PIN}, // 20
+    Gpios{    MCU_V_SSD6_DIS_PORT,     MCU_V_SSD6_DIS_PIN}, // 21
     // Port 2
-    Gpios{     SSD4_PRSNT_L_PORT,      SSD4_PRSNT_L_PIN}, // 19
-    Gpios{     SSD5_PRSNT_L_PORT,      SSD5_PRSNT_L_PIN}, // 20
-    Gpios{     SSD6_PRSNT_L_PORT,      SSD6_PRSNT_L_PIN}, // 21
-    Gpios{MCU_CLK_SSD7_EN_N_PORT, MCU_CLK_SSD7_EN_N_PIN}, // 22
-    Gpios{MCU_CLK_SSD5_EN_N_PORT, MCU_CLK_SSD5_EN_N_PIN}, // 23
-    Gpios{MCU_CLK_SSD4_EN_N_PORT, MCU_CLK_SSD4_EN_N_PIN}, // 24
-    Gpios{         SSD4_LED_PORT,          SSD4_LED_PIN}, // 25
-    Gpios{         SSD5_LED_PORT,          SSD5_LED_PIN}, // 26
-    Gpios{         SSD6_LED_PORT,          SSD6_LED_PIN}, // 27
-    Gpios{         SSD7_LED_PORT,          SSD7_LED_PIN}, // 28
+    Gpios{      SSD4_PRSNT_L_PORT,       SSD4_PRSNT_L_PIN}, // 22
+    Gpios{      SSD5_PRSNT_L_PORT,       SSD5_PRSNT_L_PIN}, // 23
+    Gpios{      SSD6_PRSNT_L_PORT,       SSD6_PRSNT_L_PIN}, // 24
+    Gpios{ MCU_CLK_SSD7_EN_N_PORT,  MCU_CLK_SSD7_EN_N_PIN}, // 25
+    Gpios{ MCU_CLK_SSD5_EN_N_PORT,  MCU_CLK_SSD5_EN_N_PIN}, // 26
+    Gpios{ MCU_CLK_SSD4_EN_N_PORT,  MCU_CLK_SSD4_EN_N_PIN}, // 27
+    Gpios{          SSD4_LED_PORT,           SSD4_LED_PIN}, // 28
+    Gpios{          SSD5_LED_PORT,           SSD5_LED_PIN}, // 29
+    Gpios{          SSD6_LED_PORT,           SSD6_LED_PIN}, // 30
+    Gpios{          SSD7_LED_PORT,           SSD7_LED_PIN}, // 31
     // Port 3
-    Gpios{      SSD0_PWRDIS_PORT,       SSD0_PWRDIS_PIN}, // 29
-    Gpios{      SSD1_PWRDIS_PORT,       SSD1_PWRDIS_PIN}, // 30
-    Gpios{      SSD2_PWRDIS_PORT,       SSD2_PWRDIS_PIN}, // 31
-    Gpios{     SSD45_PWRBRK_PORT,      SSD45_PWRBRK_PIN}, // 32
-    Gpios{      SSD3_PWRDIS_PORT,       SSD3_PWRDIS_PIN}, // 33
-    Gpios{MCU_CLK_SSD2_EN_N_PORT, MCU_CLK_SSD2_EN_N_PIN}, // 34
-    Gpios{      SSD5_PWRDIS_PORT,       SSD5_PWRDIS_PIN}, // 35
-    Gpios{         SSD3_LED_PORT,          SSD3_LED_PIN}, // 36
-    Gpios{MCU_CLK_SSD3_EN_N_PORT, MCU_CLK_SSD3_EN_N_PIN}, // 37
-    Gpios{      SSD7_PWRDIS_PORT,       SSD7_PWRDIS_PIN}, // 38
-    Gpios{     SSD01_PWRBRK_PORT,      SSD01_PWRBRK_PIN}, // 39
-    Gpios{ VPP_CPU0_ALERT_L_PORT,  VPP_CPU0_ALERT_L_PIN}, // 40
-    Gpios{         SSD0_LED_PORT,          SSD0_LED_PIN}, // 41
-    Gpios{      SSD4_PWRDIS_PORT,       SSD4_PWRDIS_PIN}, // 42
-    Gpios{         SSD1_LED_PORT,          SSD1_LED_PIN}, // 43
-    Gpios{     SSD23_PWRBRK_PORT,      SSD23_PWRBRK_PIN}, // 44
-    Gpios{VPP_CPU0B_ALERT_L_PORT, VPP_CPU0B_ALERT_L_PIN}, // 45
-    Gpios{         SSD2_LED_PORT,          SSD2_LED_PIN}, // 46
+    Gpios{       SSD0_PWRDIS_PORT,        SSD0_PWRDIS_PIN}, // 32
+    Gpios{       SSD1_PWRDIS_PORT,        SSD1_PWRDIS_PIN}, // 33
+    Gpios{       SSD2_PWRDIS_PORT,        SSD2_PWRDIS_PIN}, // 34
+    Gpios{      SSD45_PWRBRK_PORT,       SSD45_PWRBRK_PIN}, // 35
+    Gpios{       SSD3_PWRDIS_PORT,        SSD3_PWRDIS_PIN}, // 36
+    Gpios{ MCU_CLK_SSD2_EN_N_PORT,  MCU_CLK_SSD2_EN_N_PIN}, // 37
+    Gpios{       SSD5_PWRDIS_PORT,        SSD5_PWRDIS_PIN}, // 38
+    Gpios{          SSD3_LED_PORT,           SSD3_LED_PIN}, // 39
+    Gpios{ MCU_CLK_SSD3_EN_N_PORT,  MCU_CLK_SSD3_EN_N_PIN}, // 40
+    Gpios{       SSD7_PWRDIS_PORT,        SSD7_PWRDIS_PIN}, // 41
+    Gpios{      SSD01_PWRBRK_PORT,       SSD01_PWRBRK_PIN}, // 42
+    Gpios{  VPP_CPU0_ALERT_L_PORT,   VPP_CPU0_ALERT_L_PIN}, // 43
+    Gpios{          SSD0_LED_PORT,           SSD0_LED_PIN}, // 44
+    Gpios{       SSD4_PWRDIS_PORT,        SSD4_PWRDIS_PIN}, // 45
+    Gpios{          SSD1_LED_PORT,           SSD1_LED_PIN}, // 46
+    Gpios{      SSD23_PWRBRK_PORT,       SSD23_PWRBRK_PIN}, // 47
+    Gpios{ VPP_CPU0B_ALERT_L_PORT,  VPP_CPU0B_ALERT_L_PIN}, // 48
+    Gpios{          SSD2_LED_PORT,           SSD2_LED_PIN}, // 49
     // Port 4
-    Gpios{     SSD7_PRSNT_L_PORT,      SSD7_PRSNT_L_PIN}, // 47
-    Gpios{MCU_CLK_SSD6_EN_N_PORT, MCU_CLK_SSD6_EN_N_PIN}, // 48
-    Gpios{   MCU_V_SSD3_DIS_PORT,    MCU_V_SSD3_DIS_PIN}, // 49
-    Gpios{PCIE_SSD5_PERST_L_PORT, PCIE_SSD5_PERST_L_PIN}, // 50
-    Gpios{PCIE_SSD6_PERST_L_PORT, PCIE_SSD6_PERST_L_PIN}, // 51
-    Gpios{PCIE_SSD7_PERST_L_PORT, PCIE_SSD7_PERST_L_PIN}, // 52
-    Gpios{   MCU_V_SSD2_DIS_PORT,    MCU_V_SSD2_DIS_PIN}, // 53
-    Gpios{   MCU_V_SSD4_DIS_PORT,    MCU_V_SSD4_DIS_PIN}, // 54
-    Gpios{     SSD2_PRSNT_L_PORT,      SSD2_PRSNT_L_PIN}, // 55
-    Gpios{     SSD3_PRSNT_L_PORT,      SSD3_PRSNT_L_PIN}, // 56
-    Gpios{   MCU_V_SSD7_DIS_PORT,    MCU_V_SSD7_DIS_PIN}, // 57
+    Gpios{      SSD7_PRSNT_L_PORT,       SSD7_PRSNT_L_PIN}, // 50
+    Gpios{ MCU_CLK_SSD6_EN_N_PORT,  MCU_CLK_SSD6_EN_N_PIN}, // 51
+    Gpios{    MCU_V_SSD3_DIS_PORT,     MCU_V_SSD3_DIS_PIN}, // 52
+    Gpios{ PCIE_SSD5_PERST_L_PORT,  PCIE_SSD5_PERST_L_PIN}, // 53
+    Gpios{ PCIE_SSD6_PERST_L_PORT,  PCIE_SSD6_PERST_L_PIN}, // 54
+    Gpios{ PCIE_SSD7_PERST_L_PORT,  PCIE_SSD7_PERST_L_PIN}, // 55
+    Gpios{    MCU_V_SSD2_DIS_PORT,     MCU_V_SSD2_DIS_PIN}, // 56
+    Gpios{    MCU_V_SSD4_DIS_PORT,     MCU_V_SSD4_DIS_PIN}, // 57
+    Gpios{      SSD2_PRSNT_L_PORT,       SSD2_PRSNT_L_PIN}, // 58
+    Gpios{      SSD3_PRSNT_L_PORT,       SSD3_PRSNT_L_PIN}, // 59
+    Gpios{    MCU_V_SSD7_DIS_PORT,     MCU_V_SSD7_DIS_PIN}, // 60
     // Port 5
-    Gpios{PCIE_SSD0_PERST_L_PORT, PCIE_SSD0_PERST_L_PIN}, // 58
-    Gpios{PCIE_SSD1_PERST_L_PORT, PCIE_SSD1_PERST_L_PIN}, // 59
-    Gpios{PCIE_SSD4_PERST_L_PORT, PCIE_SSD4_PERST_L_PIN}, // 60
-    Gpios{PCIE_SSD3_PERST_L_PORT, PCIE_SSD3_PERST_L_PIN}, // 61
-    Gpios{PCIE_SSD2_PERST_L_PORT, PCIE_SSD2_PERST_L_PIN}, // 62
-    Gpios{  MCU_CLKSEL_MODE_PORT,   MCU_CLKSEL_MODE_PIN}, // 63
-    Gpios{   MCU_V_SSD0_DIS_PORT,    MCU_V_SSD0_DIS_PIN}, // 64
-    Gpios{   MCU_V_SSD1_DIS_PORT,    MCU_V_SSD1_DIS_PIN}, // 65
+    Gpios{ PCIE_SSD0_PERST_L_PORT,  PCIE_SSD0_PERST_L_PIN}, // 61
+    Gpios{ PCIE_SSD1_PERST_L_PORT,  PCIE_SSD1_PERST_L_PIN}, // 62
+    Gpios{ PCIE_SSD4_PERST_L_PORT,  PCIE_SSD4_PERST_L_PIN}, // 63
+    Gpios{ PCIE_SSD3_PERST_L_PORT,  PCIE_SSD3_PERST_L_PIN}, // 64
+    Gpios{ PCIE_SSD2_PERST_L_PORT,  PCIE_SSD2_PERST_L_PIN}, // 65
+    Gpios{   MCU_CLKSEL_MODE_PORT,    MCU_CLKSEL_MODE_PIN}, // 66
+    Gpios{    MCU_V_SSD0_DIS_PORT,     MCU_V_SSD0_DIS_PIN}, // 67
+    Gpios{    MCU_V_SSD1_DIS_PORT,     MCU_V_SSD1_DIS_PIN}, // 68
     // Virtual amber LED state pins (vrPort). Order defines the shadow-state slot;
     // it does not need to match the LSTP gpio_index order.
-    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B0_PIN}, // 66
-    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B1_PIN}, // 67
-    Gpios{       vSSD_AMBER_PORT,    vSSD0_AMBER_B2_PIN}, // 68
-    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B0_PIN}, // 69
-    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B1_PIN}, // 70
-    Gpios{       vSSD_AMBER_PORT,    vSSD1_AMBER_B2_PIN}, // 71
-    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B0_PIN}, // 72
-    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B1_PIN}, // 73
-    Gpios{       vSSD_AMBER_PORT,    vSSD2_AMBER_B2_PIN}, // 74
-    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B0_PIN}, // 75
-    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B1_PIN}, // 76
-    Gpios{       vSSD_AMBER_PORT,    vSSD3_AMBER_B2_PIN}, // 77
-    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B0_PIN}, // 78
-    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B1_PIN}, // 79
-    Gpios{       vSSD_AMBER_PORT,    vSSD4_AMBER_B2_PIN}, // 80
-    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B0_PIN}, // 81
-    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B1_PIN}, // 82
-    Gpios{       vSSD_AMBER_PORT,    vSSD5_AMBER_B2_PIN}, // 83
-    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B0_PIN}, // 84
-    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B1_PIN}, // 85
-    Gpios{       vSSD_AMBER_PORT,    vSSD6_AMBER_B2_PIN}, // 86
-    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B0_PIN}, // 87
-    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B1_PIN}, // 88
-    Gpios{       vSSD_AMBER_PORT,    vSSD7_AMBER_B2_PIN}  // 89
+    Gpios{        vSSD_AMBER_PORT,     vSSD0_AMBER_B0_PIN}, // 69
+    Gpios{        vSSD_AMBER_PORT,     vSSD0_AMBER_B1_PIN}, // 70
+    Gpios{        vSSD_AMBER_PORT,     vSSD0_AMBER_B2_PIN}, // 71
+    Gpios{        vSSD_AMBER_PORT,     vSSD1_AMBER_B0_PIN}, // 72
+    Gpios{        vSSD_AMBER_PORT,     vSSD1_AMBER_B1_PIN}, // 73
+    Gpios{        vSSD_AMBER_PORT,     vSSD1_AMBER_B2_PIN}, // 74
+    Gpios{        vSSD_AMBER_PORT,     vSSD2_AMBER_B0_PIN}, // 75
+    Gpios{        vSSD_AMBER_PORT,     vSSD2_AMBER_B1_PIN}, // 76
+    Gpios{        vSSD_AMBER_PORT,     vSSD2_AMBER_B2_PIN}, // 77
+    Gpios{        vSSD_AMBER_PORT,     vSSD3_AMBER_B0_PIN}, // 78
+    Gpios{        vSSD_AMBER_PORT,     vSSD3_AMBER_B1_PIN}, // 79
+    Gpios{        vSSD_AMBER_PORT,     vSSD3_AMBER_B2_PIN}, // 80
+    Gpios{        vSSD_AMBER_PORT,     vSSD4_AMBER_B0_PIN}, // 81
+    Gpios{        vSSD_AMBER_PORT,     vSSD4_AMBER_B1_PIN}, // 82
+    Gpios{        vSSD_AMBER_PORT,     vSSD4_AMBER_B2_PIN}, // 83
+    Gpios{        vSSD_AMBER_PORT,     vSSD5_AMBER_B0_PIN}, // 84
+    Gpios{        vSSD_AMBER_PORT,     vSSD5_AMBER_B1_PIN}, // 85
+    Gpios{        vSSD_AMBER_PORT,     vSSD5_AMBER_B2_PIN}, // 86
+    Gpios{        vSSD_AMBER_PORT,     vSSD6_AMBER_B0_PIN}, // 87
+    Gpios{        vSSD_AMBER_PORT,     vSSD6_AMBER_B1_PIN}, // 88
+    Gpios{        vSSD_AMBER_PORT,     vSSD6_AMBER_B2_PIN}, // 89
+    Gpios{        vSSD_AMBER_PORT,     vSSD7_AMBER_B0_PIN}, // 90
+    Gpios{        vSSD_AMBER_PORT,     vSSD7_AMBER_B1_PIN}, // 91
+    Gpios{        vSSD_AMBER_PORT,     vSSD7_AMBER_B2_PIN}  // 92
 };
 
 // Product-specific NSM Event GPIO configuration
@@ -1015,9 +996,6 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 13> TaskMonitorList{
 
 constexpr bool EnableRuntimeWdt       = true;
 constexpr bool EnableCP2112NativeGpio = false;
-constexpr bool EnablePufEngine        = false;
-constexpr bool EnableEcdhP384Engine   = false;
-constexpr bool EnableAesGCM           = false;
 
 // MCU heartbeat config
 constexpr bool           EnableMcuHeartbeat = false;
@@ -1031,6 +1009,10 @@ constexpr bool DebugTokenEnabled = true;
 constexpr bool EnableSmbDirect = false;
 // I2C scan VDM support
 constexpr bool EnableI2cScanVdm = false;
+// I2C master frequency control VDM support
+constexpr bool EnableI2cFreqVdm = false;
+// I2CS master bus (I2C/I3C) switch VDM support
+constexpr bool EnableBusModeVdm = false;
 // I2c virtual address mapping configuration
 constexpr bool I2cManualNackMode = true;  // true, when mapping is not existed in the
                                           // I2cVirtualAddressMappingTable, command will send
@@ -1154,6 +1136,9 @@ constexpr bool EnableDelayInI3CInit = false;
 constexpr uint32_t CheckApStatusTimerUs = 5 * 1000 * 1000;
 // Use the I2C AP status timer if I3C is not enabled
 constexpr bool UseI2cApStatusTimer = true;
+// When true: skip get_status while ApDown (re-up via erot_recovery). Querying still pings once
+// at boot.
+constexpr bool SuppressApStatusPingWhenDown = false;
 // GPU I3C pull up status pin
 constexpr bool               I3CPullUpCheck = false;
 constexpr nv::gpio::GpioPort I3CPullUpPort  = 0;
@@ -1173,9 +1158,11 @@ constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
 /******** ******** Virtual I2C Config Starts ******** ********/
-constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline size_t        VrI2c0DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c0SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
 constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c1SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
 /******** ******** Virtual I2C Config Ends ******** ********/
 
@@ -1424,10 +1411,6 @@ constexpr inline std::array<McuDiagnosticTelemetry, T4TelemetriesSize> mcuDiagno
 
 }  // namespace nv::mctp
 
-namespace nv::vrot {
-constexpr inline std::array<ApInfo, 0> ApList = {{}};
-}  // namespace nv::vrot
-
 namespace nv::nhp {
 
 // -------------------------------------
@@ -1512,6 +1495,9 @@ namespace nv::lstp {
 // Device specific constraint on LSTP I2C buffer size. Make sure you really want to set this
 constexpr bool I2cSmallBuffer = false;
 
+// WAR for GPU I2C-over-I3C - GPU I2C will hang on I2C transaction other then block read/write
+constexpr bool NackI2cReadOnI3c = false;
+
 static_assert(EnableI2c ? (I2cSmallBuffer ? nv::i2c::I2cBufferSize < 512
                                           : nv::i2c::I2cBufferSize == 512)
                         : !I2cSmallBuffer);
@@ -1571,6 +1557,25 @@ constexpr nv::volt_mon::McuInternalTempSensor mcu_internal_temp_get_sensor_confi
             0, },
         Sensor::McuInternalTemp,
         0.0f
+    };
+}
+
+constexpr nv::volt_mon::VbatSensor vbat_get_sensor_config()
+{
+    return {
+        {
+         nv::volt_mon::AdcInstance::Invalid,
+         nv::volt_mon::AdcChannel::Invalid,
+         nv::volt_mon::AdcScanMode::Invalid,
+         nv::volt_mon::AdcCommand::None,
+         nv::volt_mon::AdcCommand::None,
+         nv::volt_mon::AdcCommand::None,
+         nv::volt_mon::AdcTriggerSrc::Invalid,
+         0, },
+        nv::volt_mon::Sensor::Invalid,
+        false,
+        nv::gpio::InvalidGpioPort,
+        nv::gpio::InvalidGpioPin
     };
 }
 }  // namespace nv::ipc::voltage_monitor_config

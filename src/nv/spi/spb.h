@@ -18,6 +18,7 @@
 #pragma once
 #include "nv/ipc/event.h"
 #include "nv/spi/common.h"
+#include "nv/spi/spb_status.h"
 #include "sys/spi/spi.h"
 using namespace std::chrono_literals;
 namespace nv::spi {
@@ -49,43 +50,6 @@ constexpr uint8_t TarCycle     = 1;  // 1 in single, 4 in quad
 constexpr uint8_t TarWaitCycle = WaitCycle + TarCycle;
 
 using SpbTransBuffer = std::array<uint8_t, MaxBytesPerTransaction>;
-
-enum class SpbStatus : uint32_t
-{
-    Ok,
-    // Packet rewrite error
-    SendInvalidMctpPkt,
-    RecvInvalidSpiPkt,
-    // Spi event error
-    SetRxEventFail,
-    EventClearFail,
-
-    InterruptHandleError,
-    PollCmdTimeout,
-    MbxEventTimeout,
-    PostedReadError,
-    PostedWriteError,
-    WaitAckError,
-    WaitTxAck0Error,
-    WaitTxAck1Error,
-    WaitRxAckError,
-    WaitResetAckError,
-    WaitLenError,
-    WriteLenError,
-    GetEcMsgAvailNotAck,
-    GetEcMsgAvailNotLen,
-    GetAckNotEcMsgAvail,
-
-    // mailbox_write error
-    RequestWriteError,
-    ReadyToReadError,
-    FinishedReadError,
-    RequestResetError,
-
-    MbxReadFailInTask,
-    // Likely not happen
-    InvalidParameter,
-};
 
 enum class Timeout : uint8_t
 {

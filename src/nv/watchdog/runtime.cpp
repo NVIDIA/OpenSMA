@@ -29,9 +29,21 @@
 #include "nv/ssif/task.h"
 #include "boot.h"
 using namespace nv::watchdog;
+
+namespace nv::watchdog {
+
+__attribute__((weak)) std::span<const TaskMonitorIndex> project_task_monitor_list()
+{
+    return {nv::ipc::TaskMonitorList.data(), nv::ipc::TaskMonitorList.size()};
+}
+
+}  // namespace nv::watchdog
+
 void Runtime::start_task_status_query([[maybe_unused]] ipc::Timer& id)
 {
     auto& task_alive_event = ipc::Event::make(ipc::EventId::TaskAliveStatus);
+
+    const auto monitor_list = project_task_monitor_list();
 
     auto value    = task_alive_event.bits().value();
     bool feed_wdt = false;
@@ -41,7 +53,7 @@ void Runtime::start_task_status_query([[maybe_unused]] ipc::Timer& id)
     }
     else {
         // Query the task that doesn't clear the event bit yet
-        for (auto wdt_notify_id : nv::ipc::TaskMonitorList) {
+        for (auto wdt_notify_id : monitor_list) {
             if (value & nv::common::bit(wdt_notify_id)) {
                 query_task_status(wdt_notify_id);
             }
@@ -49,7 +61,7 @@ void Runtime::start_task_status_query([[maybe_unused]] ipc::Timer& id)
     }
 
     if (feed_wdt) {
-        for (auto wdt_notify_id : nv::ipc::TaskMonitorList) {
+        for (auto wdt_notify_id : monitor_list) {
             query_task_status(wdt_notify_id);
         }
     }
@@ -108,9 +120,10 @@ void Runtime::query_task_status(TaskMonitorIndex index)
         case TaskMonitorIndex::I3c1: {
             i3c::Task::wdt_notify(index);
         } break;
-        case TaskMonitorIndex::Ssif: {
+        case TaskMonitorIndex::Ssif0:
+        case TaskMonitorIndex::Ssif1: {
             if constexpr (nv::lstp::EnableIpmi) {
-                ssif::Task::wdt_notify();
+                ssif::Task::wdt_notify(index);
             }
         } break;
 

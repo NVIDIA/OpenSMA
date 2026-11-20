@@ -37,4 +37,12 @@ void Driver::set_pwm(Instance instance,
     (void)duty_cycle_percent;
 }
 
+uint32_t Driver::measure_tach_rpm(Instance instance, CaptureChannel capture_channel)
+{
+    // Stub implementation for x86 - no actual hardware
+    (void)instance;
+    (void)capture_channel;
+    return 0;
+}
+
 }  // namespace sys::pwm_ctimer

@@ -17,8 +17,11 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include "sys/i2c/i2c_slave.h"
 
@@ -36,7 +39,31 @@ public:
     virtual void i2c_write(const std::array<uint8_t, sys::i2c::I2cSlaveBufferSize>& i2c_data,
                            uint8_t data_length) = 0;
 
+    virtual void i2c_write(std::span<const uint8_t> i2c_data)
+    {
+        sys::i2c::I2cSlaveBuffer buffer{};
+        const auto               size = std::min(i2c_data.size(), buffer.size());
+        std::copy_n(i2c_data.begin(), size, buffer.begin());
+        i2c_write(buffer, static_cast<uint8_t>(size));
+    }
+
+    virtual void i2c_write_virtual(std::span<const uint8_t> i2c_data) { i2c_write(i2c_data); }
+
     virtual void i2c_read(uint8_t& out, bool new_transaction) = 0;
+
+    virtual void i2c_read(std::span<uint8_t> i2c_data, size_t& i2c_size, bool new_transaction)
+    {
+        constexpr uint8_t kDummyReadByte = 0xFF;
+        i2c_data[0]                      = kDummyReadByte;
+        i2c_read(i2c_data[0], new_transaction);
+        i2c_size = 1U;
+    }
+
+    virtual void
+    i2c_read_virtual(std::span<uint8_t> i2c_data, size_t& i2c_size, bool new_transaction)
+    {
+        i2c_read(i2c_data, i2c_size, new_transaction);
+    }
 
 protected:
     EmulationDevice()  = default;

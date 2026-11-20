@@ -27,6 +27,14 @@
 
 namespace nv::mctp {
 
+namespace nsm_type5 {
+/**
+ * @brief Stop Leak Detection Error if active
+ */
+void clear_leak_detection_error();
+
+}  // namespace nsm_type5
+
 /** Common Enable Disable enums */
 enum NsmDevCfgEnablingMode : uint8_t
 {
@@ -49,20 +57,13 @@ constexpr uint8_t MaxEinjIDBytesNum = (static_cast<uint8_t>(
                                        / 8)
                                     + 1;
 
-// Error Type values
-enum ErrorType : uint8_t
-{
-    FatalErrors              = 0x0,
-    PortRecoveryErrors       = 0x1,
-    USBBridgeEmulationErrors = 0x2,
-    LeakDetectionErrors      = 0x3,
-};
-
 enum FatalFaultEIPayloadValues : uint32_t
 {
     FatalFaultEIMCUException    = 0,  // bit 0
     FatalFaultEIWatchdogTimeout = 1,  // bit 1
+    FatalFaultEIStackCheckFail  = 2,  // bit 2
     FatalFaultEIMask = (1u << FatalFaultEIMCUException) | (1u << FatalFaultEIWatchdogTimeout)
+                     | (1u << FatalFaultEIStackCheckFail)
 };
 
 // Port Recovery Errors payload values
@@ -275,18 +276,6 @@ struct [[gnu::packed]] T5SmaBaseboardWriteProtectResponse
     std::array<uint8_t, T5SmaBaseboardWriteProtectResponseSize> bitarray{0};
 };
 
-// Bit positions within byte 0 of the WP Settings response (data_index 0x00)
-// per NSM MCU Usage Specification v0.5 section 7.1.4. The actual supported-
-// function list is product-specific and is declared in each project's
-// config.h via the response_bit_pos field of WriteProtectionGpioConfig.
-enum class T5SmaBaseboardWpResponseBit : uint8_t
-{
-    FruEeprom  = 1,  // bit 1: WP_BASEBOARD_FRU_EEPROM
-    NvswQm4Spi = 3,  // bit 3: WP_NVSW_QM4_SPI
-    Cx9Spi     = 4,  // bit 4: WP_CX9_SPI
-    GpuSpi     = 7,  // bit 7: WP_GPU_SPI
-};
-
 // PCIe Fundamental Reset response (data_index 0x01): 4 bytes per NSM MCU
 // Usage Specification v0.5 section 7.1.4.
 //
@@ -360,6 +349,35 @@ struct [[gnu::packed]] T5SmaBaseboardGpuPgdResponse
 
 /** END Get SMA baseboard settings 0X05 0X64 */
 
+/** BEGIN DeviceError Leak Detection Error Injection */
+constexpr auto MaxLeakSensorsNumber = nv::ipc::voltage_monitor_config::LeakDetectSensorNum + 1;
+
+struct [[gnu::packed]] LeakSensors
+{
+    uint16_t sensor_id  = 0;
+    uint16_t sensor_adc = 0;
+};
+
+struct [[gnu::packed]] LeakDetectionErrorPayloadBase
+{
+    ErrorInjectionPayloadHeader ei_header{0, 0, 0};     // Use default member initializer
+    uint16_t                    number_of_sensors = 0;  // offset 8
+};
+
+struct [[gnu::packed]] LeakDetectionErrorPayload : LeakDetectionErrorPayloadBase
+{
+    // LeakDetectionErrorPayloadBase at offset 0
+    LeakSensors sensors[MaxLeakSensorsNumber];  // offset 10
+
+    void clearPayload()
+    {
+        number_of_sensors = 0;
+        memset(&sensors[0], 0, sizeof(sensors));
+    }
+};
+
+/** END DeviceError Leak Detection Error Injection */
+
 /** single data structure for type persistent data */
 struct [[gnu::packed]] NsmDevCfgPersistentData
 {
@@ -388,6 +406,8 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
     bool                   currentNcsiMacAddrLoaded = false;
     std::array<uint8_t, 6> currentNcsiMacAddr{};
     std::array<uint8_t, 6> pendingNcsiMacAddr{};
+
+    LeakDetectionErrorPayload leakDetectionErrorResp{};
 
     bool isErrorInjectionModeEnabled()
     {
@@ -436,6 +456,9 @@ struct [[gnu::packed]] NsmDevCfgPersistentData
             fatalerrorResp         = FatalErrorPayload{};
             portRecoveryResp       = PortRecoveryPayload{};
             usbBridgeEmulationResp = USBBridgeEmulationPayload{};
+            leakDetectionErrorResp = LeakDetectionErrorPayload{};
+            // clear/stop Leak Detection Error if still active
+            nsm_type5::clear_leak_detection_error();
         }
         else if (error_injection_id == static_cast<uint8_t>(ErrorInjectionID::GpioSpoofing)) {
             gpioSpoofingResp            = GPIOSpoofingPayload{};
@@ -502,25 +525,6 @@ struct [[gnu::packed]] NsmT5GetSupportedDeviceModesV2Resp
     uint32_t modes[1];    // Array of DeviceModeIndex values (variable length)
 };
 
-struct [[gnu::packed]] CpldFeatureRowResponse
-{
-    uint16_t current_length;
-    uint16_t pending_length;
-};
-
-struct [[gnu::packed]] ProgramCpldFeatureRowResponse : CpldFeatureRowResponse
-{
-    uint8_t match;
-    uint8_t length;
-    uint8_t reserved[2];
-    uint8_t data[10];
-};
-
-struct [[gnu::packed]] OtpCpldFeatureRowResponse : CpldFeatureRowResponse
-{
-    uint8_t data;
-};
-
 struct NsmPktResp;
 
 /**
@@ -546,11 +550,6 @@ NsmStatus platform_get_sma_gpu_degrade_mode(T5SmaBaseboardGpuDegradeModeResponse
 NsmStatus platform_get_sma_power_supply(T5SmaBaseboardPowerSupplyResponse& response);
 NsmStatus platform_get_sma_gpu_presence(T5SmaBaseboardGpuPresenceResponse& response);
 NsmStatus platform_get_sma_gpu_pgd(T5SmaBaseboardGpuPgdResponse& response);
-
-Ccode handle_set_program_cpld_feature_row();
-Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx);
-Ccode handle_set_otp_cpld_feature_row();
-Ccode handle_get_otp_cpld_feature_row(NsmPktResp& ntx);
 
 /**
  * CPLD-only hook for NSM Set GPU degrade mode (validated device_index and action).

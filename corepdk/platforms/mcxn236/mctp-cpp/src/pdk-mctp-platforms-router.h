@@ -34,6 +34,7 @@ struct ShardRoutingTable
     bool      is_set_eid_sent;
     uint8_t   assigned_eid;
     Interface client;
+    uint8_t   bridge_real_eid{};
 };
 
 struct RoutingTableEntry

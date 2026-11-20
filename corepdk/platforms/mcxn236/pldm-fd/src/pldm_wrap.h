@@ -110,6 +110,9 @@ constexpr size_t NV_PLDM_32_TRANSFER_SIZE = NV_PLDM_RESERVE_HEADER_SIZE
 #define NV_PLDM_VERIFY_CC_KEY_FAIL        0x94
 #define NV_PLDM_VERIFY_CC_IMAGE_AUTH_FAIL 0x95
 
+// PldmContextRecord::pldm_state value while no firmware update is in progress
+#define NV_PLDM_STATE_IDLE 0
+
 //  base
 struct [[gnu::packed]] PldmCapability
 {
@@ -264,7 +267,6 @@ void pldm_get_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bui
 void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build);
 
 void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc);
-void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc);
 
 }  // namespace pldm
 }  // namespace nv

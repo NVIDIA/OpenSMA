@@ -67,12 +67,14 @@ public:
     static void entrypoint(void* params);
     static bool to_spi(std::span<uint8_t>& msg);
 
+    // Error injection API: command=0x00 clears, command=0x01 enables.
+    static void set_error_injection(uint8_t command, uint8_t bus_number, uint8_t error_type);
+
     FlashromTask(Config config) noexcept;
     [[noreturn]] void start();
 
 private:
     nv::ipc::BootedEventBits _boot_event;
-
-    Flashrom _flashrom;
+    Flashrom                 _flashrom;
 };
 }  // namespace nv::spi

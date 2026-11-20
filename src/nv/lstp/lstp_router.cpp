@@ -27,6 +27,7 @@
 #include <variant>
 
 #include "nv/i2c/common.h"
+#include "nv/debugtoken/debugtoken.h"
 #include "nv/ipc/event.h"
 #include "nv/nv.h"
 #include "nv/ipc/queue.h"
@@ -36,6 +37,8 @@
 #include "nv/usb/task.h"
 #include "nv/ssif/task.h"
 #include "nv/i2c/task.h"
+#include "nv/i3c/task.h"
+#include "nv/usb/i2c_backend.h"
 #include "nv/spi/flashrom_task.h"
 #include "nv/vcom/vruart/lstp_bridge.h"
 
@@ -57,14 +60,16 @@ nv::gpio::Status gpio_get_direction(const LstpGpioPinInfo& info, nv::gpio::Direc
 
 void LstpRouter::init()
 {
-    for (size_t channel_id = 0; channel_id < LstpNumChannels; channel_id++) {
-        const auto& channel_info    = LstpChannels.at(channel_id).info;
+    const auto channels = project_lstp_channels();
+    for (size_t channel_id = 0; channel_id < channels.size(); channel_id++) {
+        const auto& channel_info    = channels[channel_id].info;
         bool        channel_enabled = false;
 
         switch (channel_info.type) {
             case LstpChannelType::Ipmi: {
                 if constexpr (EnableIpmi) {
-                    channel_enabled = nv::ssif::Task::is_default_enabled();
+                    channel_enabled = nv::ssif::Task::is_default_enabled(
+                        static_cast<uint8_t>(channel_id));
                 }
                 break;
             }
@@ -186,7 +191,7 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
     auto& channel_config_request = from<LstpChannelConfigReadRequest>(
         &req_buffer.data()[req_offset]);
 
-    if (channel_config_request.channel_id >= LstpNumChannels) {
+    if (channel_config_request.channel_id >= project_lstp_channels().size()) {
         return LstpStatus::Error;
     }
 
@@ -199,7 +204,7 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
     auto& resp_data  = from<LstpChannelConfigBlob>(&resp_buffer.data()[resp_offset]);
     resp_offset     += sizeof(LstpChannelConfigBlob);
 
-    const auto& channel_entry = LstpChannels.at(channel_config_request.channel_id);
+    const auto& channel_entry = project_lstp_channels()[channel_config_request.channel_id];
     const auto& channel_info  = channel_entry.info;
     const auto& channel_cfg   = channel_entry.config;
     const auto& channel_state = _channels.at(channel_config_request.channel_id);
@@ -298,7 +303,7 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
             static_assert(sizeof(LstpChannelConfigBlob) + sizeof(LstpIpmiChannelConfig)
                           <= LstpMaxPayloadSize);
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi) == true) {
-                // Empty config for IPMI channel
+                // IPMI has no host-visible channel configuration payload.
             }
             else {
                 return LstpStatus::NotSupported;
@@ -331,6 +336,9 @@ LstpStatus LstpRouter::read_channel_config(std::span<uint8_t>& req_buffer)
             }
             break;
         }
+        case LstpChannelType::Reserved: {
+            break;
+        }
         default: {
             static_assert(sizeof(LstpChannelConfigBlob) <= LstpMaxPayloadSize);
             return LstpStatus::NotSupported;
@@ -356,8 +364,8 @@ LstpRouter::read_gpio_config_helper(size_t                                      
                                     std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& resp_buffer,
                                     size_t&                                       resp_offset)
 {
-    constexpr size_t max_config_offset = sizeof(LstpGpioChannelConfig)
-                                       + LstpGpioNum * sizeof(LstpGpioConfig);
+    const size_t max_config_offset = sizeof(LstpGpioChannelConfig)
+                                   + project_pin_configs().size() * sizeof(LstpGpioConfig);
     constexpr size_t max_config_length = LstpMaxPayloadSize - sizeof(LstpChannelConfigBlob);
 
     /*
@@ -384,9 +392,10 @@ LstpRouter::read_gpio_config_helper(size_t                                      
     // Legacy support for out of spec driver that has special case for reading length of 0.
     if (config_offset == 0) {
         auto& gpio_channel_config = from<LstpGpioChannelConfig>(&resp_buffer.at(resp_offset));
-        gpio_channel_config.channel_num_gpio  = LstpGpioNum;
-        resp_offset                          += sizeof(LstpGpioChannelConfig);
-        config_offset                        += sizeof(LstpGpioChannelConfig);
+        gpio_channel_config.channel_num_gpio = static_cast<uint8_t>(
+            project_pin_configs().size());
+        resp_offset   += sizeof(LstpGpioChannelConfig);
+        config_offset += sizeof(LstpGpioChannelConfig);
 
         const size_t pin_region_len  = config_length - sizeof(LstpGpioChannelConfig);
         const size_t whole_pin_bytes = (pin_region_len / sizeof(LstpGpioConfig))
@@ -394,7 +403,7 @@ LstpRouter::read_gpio_config_helper(size_t                                      
         config_end_offset = sizeof(LstpGpioChannelConfig) + whole_pin_bytes;
     }
 
-    for (size_t pin = config_start_pin; pin < LstpGpioNum; pin++) {
+    for (size_t pin = config_start_pin; pin < project_pin_configs().size(); pin++) {
         const size_t config_start_byte = sizeof(LstpGpioChannelConfig)
                                        + pin * sizeof(LstpGpioConfig);
         if (config_start_byte >= config_end_offset) {
@@ -414,7 +423,7 @@ LstpRouter::read_gpio_config_helper(size_t                                      
             continue;
         }
 
-        const auto& config_pin_info = PinConfigs.at(pin);
+        const auto& config_pin_info = project_pin_configs()[pin];
         auto        config_pin      = config_pin_info.config;
 
         // vrPort pins report configured direction; physical pins read live hardware.
@@ -454,7 +463,7 @@ LstpStatus LstpRouter::write_channel_config(std::span<uint8_t>& req_buffer)
         &req_buffer.data()[req_offset]);
     req_offset += sizeof(LstpChannelConfigWriteRequest);
 
-    if (channel_config_request.channel_id >= LstpNumChannels) {
+    if (channel_config_request.channel_id >= project_lstp_channels().size()) {
         return LstpStatus::Error;
     }
 
@@ -492,7 +501,7 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
         return status;
     }
 
-    const auto channel_type = LstpChannels.at(channel_id).info.type;
+    const auto channel_type = project_lstp_channels()[channel_id].info.type;
     if (static_cast<LstpChannelType>(cfg.channel_type) != channel_type) {
         return LstpStatus::Error;
     }
@@ -510,7 +519,9 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
             status = LstpStatus::NotSupported;
             if constexpr (IsChannelEnabled(LstpChannels, LstpChannelType::Ipmi) == true) {
                 if (static_cast<bool>(cfg.channel_enabled) == true) {
-                    nv::ssif::Task::enable();
+                    // Enable the interface the host actually addressed, so bookkeeping and
+                    // hardware cannot diverge on a multi-interface board.
+                    nv::ssif::Task::enable(channel_id);
                     channel_state.enabled = true;
                     status                = LstpStatus::Success;
                 }
@@ -540,14 +551,14 @@ LstpStatus LstpRouter::write_channel_config_helper(uint8_t                channe
 
 LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
 {
-    if (GpioWriteConfigMode(PinConfigs) == LstpConfigMode::Locked) {
+    if (GpioWriteConfigMode(project_pin_configs()) == LstpConfigMode::Locked) {
         return LstpStatus::NotSupported;
     }
 
     constexpr size_t min_payload_length = sizeof(LstpChannelConfigWriteRequest)
                                         + sizeof(LstpChannelConfigBlob);
-    constexpr size_t max_config_offset = sizeof(LstpGpioChannelConfig)
-                                       + LstpGpioNum * sizeof(LstpGpioConfig);
+    const size_t max_config_offset = sizeof(LstpGpioChannelConfig)
+                                   + project_pin_configs().size() * sizeof(LstpGpioConfig);
     /*
      * Incoming packet format:
      * LstpHdr | LstpChannelConfigWriteRequest | LstpChannelConfigBlob | <pin config bytes>
@@ -582,7 +593,7 @@ LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
     LstpStatus status = LstpStatus::Success;
 
     // Only check write request for direction changes; ignore other config fields.
-    for (size_t pin = config_start_pin; pin < LstpGpioNum; pin++) {
+    for (size_t pin = config_start_pin; pin < project_pin_configs().size(); pin++) {
         const size_t config_direction_byte = sizeof(LstpGpioChannelConfig)
                                            + pin * sizeof(LstpGpioConfig)
                                            + offsetof(LstpGpioConfig, direction);
@@ -601,7 +612,7 @@ LstpStatus LstpRouter::write_gpio_config_helper(std::span<uint8_t>& req_buffer)
             return LstpStatus::Error;
         }
 
-        const auto& config_pin_info = PinConfigs.at(pin);
+        const auto& config_pin_info = project_pin_configs()[pin];
         const auto& config_pin      = config_pin_info.config;
 
         nv::gpio::Direction hw_dir{};
@@ -757,13 +768,27 @@ LstpStatus LstpRouter::receive_i2c(std::span<uint8_t>& req_buffer)
     uint16_t           read_len  = 0;
     nv::i2c::I2cFlags  flags     = nv::i2c::I2cFlags::NoFlag;
     std::span<uint8_t> write_data;
+    auto               ipchandler_id = static_cast<ipchandler::Id>(
+        project_lstp_channels()[req_hdr.channel_id].info.id);
+
+    if (ipchandler_id == ipchandler::Id::Unuse) {
+        // This is for when a project wants to effectively disable an I2C channel without moving
+        // other channels around
+        return LstpStatus::Nak;
+    }
 
     constexpr size_t MaxI2cPayloadSize = std::min<size_t>(LstpMaxPayloadSize,
                                                           nv::i2c::I2cBufferSize);
 
     auto cmd = static_cast<LstpI2cCommand>(req_hdr.cmd_status_code & LstpI2cCmdMask);
     switch (cmd) {
-        case LstpI2cCommand::BusRecovery: return LstpStatus::NotSupported;
+        case LstpI2cCommand::BusRecovery: {
+            if (payload_len != 0) {
+                return LstpStatus::Error;
+            }
+            return LstpStatus_from(
+                nv::i2c::Task::to_i2c_recovery(ipchandler::Id::Lstp, ipchandler_id));
+        }
 
         case LstpI2cCommand::Read: {
             if (req_offset + sizeof(LstpI2cReadRequest) > LstpMaxPayloadSize) {
@@ -876,6 +901,10 @@ LstpStatus LstpRouter::receive_i2c(std::span<uint8_t>& req_buffer)
         default: return LstpStatus::NotSupported;
     }
 
+    if (address >= nv::i2c::NumI2cAddresses) {
+        return LstpStatus::Error;
+    }
+
     if (write_len > MaxI2cPayloadSize || read_len > MaxI2cPayloadSize) {
         return LstpStatus::TooLarge;
     }
@@ -884,12 +913,41 @@ LstpStatus LstpRouter::receive_i2c(std::span<uint8_t>& req_buffer)
         flags |= nv::i2c::I2cFlags::NoStop;
     }
 
-    auto ipchandler_id = static_cast<ipchandler::Id>(
-        LstpChannels.at(req_hdr.channel_id).info.id);
-    auto status = LstpStatus_from(nv::i2c::Task::to_i2c(
-        ipchandler::Id::Lstp, address, ipchandler_id, write_len, read_len, flags, write_data));
+    const auto& priv = project_lstp_channels()[req_hdr.channel_id].priv;
+    if (std::holds_alternative<LstpI2cChannelPriv>(priv)) {
+        if (std::get<LstpI2cChannelPriv>(priv).need_debug_token[address]
+            && !nv::debugtoken::is_debug_token_subtype_enabled_cached(
+                nv::debugtoken::Type::McuDebug,
+                nv::debugtoken::DebugTokenSubtypePwrFailI2cDebug)) {
+            return LstpStatus::Nak;
+        }
+    }
 
-    return status;
+    // LstpChannelType has no I3C enumerator, so a bus behind an I3C controller is declared as
+    // an I2c channel whose handler id names an I3C task. The host keeps using I2C semantics and
+    // the request is handed to the task that owns the peripheral, the same dispatch the CP2112
+    // path does in usb/i2c_backend.cpp. The branch is compiled only for projects that declare
+    // such a channel, so no project gains a dependency on i3c::Task by enabling LSTP I2C.
+    //
+    // i3c::Task takes no I2C flags: NoStop has no equivalent on the I3C driver, so a
+    // repeated-start request is rejected rather than silently downgraded to a stopped transfer.
+    if constexpr (nv::i3c::EnableI2cOverI3c) {
+        if (nv::usb::is_i3c_handler(ipchandler_id)) {
+            if (flags & nv::i2c::I2cFlags::NoStop) {
+                return LstpStatus::NotSupported;
+            }
+            if constexpr (nv::lstp::NackI2cReadOnI3c) {
+                if (write_len == 0) {
+                    return LstpStatus::Nak;
+                }
+            }
+            return LstpStatus_from(nv::i3c::Task::to_i2c(
+                ipchandler::Id::Lstp, address, ipchandler_id, write_len, read_len, write_data));
+        }
+    }
+
+    return LstpStatus_from(nv::i2c::Task::to_i2c(
+        ipchandler::Id::Lstp, address, ipchandler_id, write_len, read_len, flags, write_data));
 }
 
 void LstpRouter::send_i2c(ipchandler::Id    src_id,
@@ -902,15 +960,16 @@ void LstpRouter::send_i2c(ipchandler::Id    src_id,
     auto&                                        resp_hdr = from<LstpHdr>(resp_buffer.data());
 
     // TODO: Optimize with LUT
-    uint8_t channel_id = 0;
-    for (channel_id = 1; channel_id < LstpNumChannels; channel_id++) {
-        const auto& channel_info = LstpChannels.at(channel_id).info;
+    const auto channels   = project_lstp_channels();
+    uint8_t    channel_id = 0;
+    for (channel_id = 1; channel_id < channels.size(); channel_id++) {
+        const auto& channel_info = channels[channel_id].info;
         if ((channel_info.type == LstpChannelType::I2c)
             && (static_cast<ipchandler::Id>(channel_info.id) == src_id)) {
             break;
         }
     }
-    if (channel_id >= LstpNumChannels) {
+    if (channel_id >= channels.size()) {
         return;
     }
 
@@ -951,15 +1010,19 @@ LstpStatus LstpRouter::receive_ipmi(std::span<uint8_t>& buffer)
         return LstpStatus::Success;
     }
 
-    (void)nv::ssif::Task::to_ssif(buffer);
+    // The channel id is what distinguishes one SSIF interface from another, so route on it
+    // rather than assuming a single destination.
+    (void)nv::ssif::Task::to_ssif(hdr.channel_id, buffer);
     return LstpStatus::Success;
 }
 
-void LstpRouter::send_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size)
+void LstpRouter::send_ipmi(uint8_t                                       channel_id,
+                           std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
+                           size_t                                        size)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
-    hdr.channel_id      = GetFirstChannelId(LstpChannels, LstpChannelType::Ipmi);
+    hdr.channel_id      = channel_id;
     hdr.cmd_status_code = static_cast<uint8_t>(LstpIpmiCommand::IpmiMessage);
     hdr.len_lsb         = size & LSB_MASK;
     hdr.len_msb         = size >> BYTE1_SHIFT;
@@ -981,13 +1044,20 @@ LstpStatus LstpRouter::receive_uart(std::span<uint8_t>& buffer)
     // Flag bits ignored without error for now
     const auto cmd = static_cast<LstpUartCommand>(req_hdr.cmd_status_code & LstpUartCmdMask);
 
+    // Which tunnelled UART the host addressed decides the queue and event group below. A
+    // project with a single UART always resolves to bridge 0.
+    uint8_t idx = 0;
+    if (!nv::vruart::LstpBridge::channel_to_index(req_hdr.channel_id, idx)) {
+        return LstpStatus::NotSupported;
+    }
+
     if (req_hdr.cmd_status_code & LstpResponseBit) {
         // ACK/NACK response from the host - notify UART bridge task
         // We intentionally don't check the status and don't retry on NACK. In this
         // implementation MCU side is the console so host is expected to always ACK anyway
         // The response is only used for serialization
         if (cmd == LstpUartCommand::Write) {
-            nv::vruart::LstpBridge::set_usb_tx_done_event();
+            nv::vruart::LstpBridge::set_usb_tx_done_event(idx);
         }
         else {
             // Response to non-existent request - ignore
@@ -995,14 +1065,14 @@ LstpStatus LstpRouter::receive_uart(std::span<uint8_t>& buffer)
     }
     else if (cmd == LstpUartCommand::Write) {
         // USB RX data to be sent over UART
-        auto& queue   = ipc::Queue::make(ipc::QueueId::UbridgeRx);
+        auto& queue   = ipc::Queue::make(nv::vruart::LstpBridge::rx_queue_for(idx));
         auto  rx_item = ipc::Queue::Item(buffer.data(), buffer.size());
         if (queue.send(rx_item, 0s) != ipc::Queue::Status::Ok) {
             // Queue full - backpressure the host (will cause retry)
             return LstpStatus::Nak;
         }
         else {
-            nv::vruart::LstpBridge::set_usb_rx_done_event();
+            nv::vruart::LstpBridge::set_usb_rx_done_event(idx);
         }
 
         // ACK response
@@ -1021,11 +1091,11 @@ LstpStatus LstpRouter::receive_uart(std::span<uint8_t>& buffer)
     return LstpStatus::Success;
 }
 
-bool LstpRouter::send_uart(std::span<uint8_t>& buffer)
+bool LstpRouter::send_uart(std::span<uint8_t>& buffer, uint8_t channel_id)
 {
     auto& hdr = from<LstpHdr>(buffer.data());
 
-    hdr.channel_id      = GetFirstChannelId(LstpChannels, LstpChannelType::Uart);
+    hdr.channel_id      = channel_id;
     hdr.cmd_status_code = static_cast<uint8_t>(LstpUartCommand::Write);
     // Length is already populated by UART bridge task
 

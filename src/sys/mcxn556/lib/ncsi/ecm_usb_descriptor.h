@@ -50,6 +50,7 @@ extern "C" {
  * Supported configurations:
  *   MCTP(0) + HID(1)
  *   MCTP(0) + LSTP(1)
+ *   MCTP(0) + LSTP(1) + CDC-ECM(2-3)
  *   MCTP(0) + HID(1) + LSTP(2)
  *   MCTP(0) + HID(1) + CDC-ECM(2-3)
  *   MCTP(0) + HID(1) + CDC-ECM(2-3) + CDC-ACM(4-5)
@@ -168,7 +169,8 @@ extern "C" {
 #define USB_DEVICE_CDC_ECM_INTERFACE_COUNT     (0x02U)
 #define USB_DEVICE_CDC_ECM_CONFIGURATION_VALUE (0x01U)
 
-#define USB_DEVICE_CDC_ECM_COMM_INTERFACE_NUMBER          (0x02U)
+#define USB_DEVICE_CDC_ECM_COMM_INTERFACE_NUMBER                                               \
+    (USB_MCTP_INTERFACE_COUNT + USB_HID_INTERFACE_COUNT)
 #define USB_DEVICE_CDC_ECM_COMM_INTERFACE_ALTERNATE       (0x00U)
 #define USB_DEVICE_CDC_ECM_COMM_INTERFACE_ALTERNATE_COUNT (0x01U)
 #define USB_DEVICE_CDC_ECM_COMM_INTERFACE_CLASS_CODE      (USB_DEVICE_CDC_CLASS_COMM_CODE)
@@ -185,7 +187,7 @@ extern "C" {
 /*******************************************************************************
  * CDC-ECM Data Interface (Interface 3)
  ******************************************************************************/
-#define USB_DEVICE_CDC_ECM_DATA_INTERFACE_NUMBER          (0x03U)
+#define USB_DEVICE_CDC_ECM_DATA_INTERFACE_NUMBER          (USB_DEVICE_CDC_ECM_COMM_INTERFACE_NUMBER + 1U)
 #define USB_DEVICE_CDC_ECM_DATA_INTERFACE_ALTERNATE_COUNT (0x02U)
 #define USB_DEVICE_CDC_ECM_DATA_INTERFACE_ALTERNATE0      (0x00U)
 #define USB_DEVICE_CDC_ECM_DATA_INTERFACE_ALTERNATE1      (0x01U)
@@ -194,9 +196,14 @@ extern "C" {
 #define USB_DEVICE_CDC_ECM_DATA_INTERFACE_PROTOCOL_CODE   (0x00U)
 #define USB_DEVICE_CDC_ECM_DATA_ENDPOINT_NUMBER           (0x02U)
 
-/* Bulk endpoints - EP4/EP5 */
-#define USB_DEVICE_CDC_ECM_DATA_BULK_IN_EP_NUMBER         (0x04U)
-#define USB_DEVICE_CDC_ECM_DATA_BULK_OUT_EP_NUMBER        (0x05U)
+/* With LSTP, pair ECM IN/OUT on EP4 to leave EP5 for LSTP.
+ * IN and OUT have independent pipes on the same endpoint number. */
+#define USB_DEVICE_CDC_ECM_DATA_BULK_IN_EP_NUMBER (0x04U)
+#if USB_CONFIG_LSTP
+#define USB_DEVICE_CDC_ECM_DATA_BULK_OUT_EP_NUMBER (0x04U)
+#else
+#define USB_DEVICE_CDC_ECM_DATA_BULK_OUT_EP_NUMBER (0x05U)
+#endif
 #define USB_DEVICE_CDC_ECM_DATA_BULK_IN_EP_MAXPKT_SIZE_FS (0x0040U)
 #define USB_DEVICE_CDC_ECM_DATA_BULK_IN_EP_MAXPKT_SIZE_HS (0x0200U)
 #define USB_DEVICE_CDC_ECM_DATA_BULK_IN_EP_INTERVAL       (0x00U)
@@ -230,19 +237,23 @@ extern "C" {
 #define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_MAC_ADDRESS_STRING_INDEX                           \
     (USB_DEVICE_MAC_ADDRESS_STRING_INDEX)
 #define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_ETHERNET_STATISTICS      (0x00000000U)
-#define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_MAX_SEGMENT_SIZE         (0x05EAU) /* 1514 bytes */
+#define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_MAX_SEGMENT_SIZE         (0x05EEU) /* 1518 bytes (VLAN) */
 #define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_MULTICAST_FILTERS_NUMBER (0x0000U)
 #define USB_DEVICE_CDC_ECM_CLASS_DESCRIPTOR_POWER_FILTERS_NUMBER     (0x00U)
 
 #endif  // USB_DEVICE_CONFIG_CDC_ECM
 
 /*******************************************************************************
- * CDC-ACM Communication Interface (Interface 4) - UART Bridge
+ * CDC-ACM Communication Interface (interface 4, or 5 after LSTP) - UART Bridge
  * Only compiled when USB_DEVICE_CONFIG_CDC_ACM is enabled (per-project via -D flag)
+ * Interface/endpoint numbers are relative to LSTP presence: ACM follows CDC-ECM in byte order,
+ * but when LSTP is also enabled it sits between ECM and ACM, so ACM shifts up by LSTP's counts.
  ******************************************************************************/
 #if USB_DEVICE_CONFIG_CDC_ACM
 
-#define USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER          (0x04U)
+#define USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER                                               \
+    (USB_MCTP_INTERFACE_COUNT + USB_HID_INTERFACE_COUNT + USB_CDC_ECM_INTERFACE_COUNT          \
+     + USB_LSTP_INTERFACE_COUNT)
 #define USB_DEVICE_CDC_ACM_COMM_INTERFACE_ALTERNATE       (0x00U)
 #define USB_DEVICE_CDC_ACM_COMM_INTERFACE_ALTERNATE_COUNT (0x01U)
 #define USB_DEVICE_CDC_ACM_COMM_ENDPOINT_NUMBER           (0x01U)
@@ -258,9 +269,9 @@ extern "C" {
 #define USB_DEVICE_CDC_ACM_COMM_INTERRUPT_IN_EP_INTERVAL_HS (0x07U) /* 2^(7-1) = 8ms */
 
 /*******************************************************************************
- * CDC-ACM Data Interface (Interface 5) - UART Bridge
+ * CDC-ACM Data Interface (interface 5, or 6 after LSTP) - UART Bridge
  ******************************************************************************/
-#define USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER          (0x05U)
+#define USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER          (USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER + 1U)
 #define USB_DEVICE_CDC_ACM_DATA_INTERFACE_ALTERNATE       (0x00U)
 #define USB_DEVICE_CDC_ACM_DATA_INTERFACE_ALTERNATE_COUNT (0x01U)
 #define USB_DEVICE_CDC_ACM_DATA_ENDPOINT_NUMBER           (0x02U)
@@ -271,7 +282,7 @@ extern "C" {
 
 #define USB_DEVICE_CDC_ACM_INTERFACE_COUNT (0x02U) /* Comm + Data */
 
-/* Bulk endpoints - EP7 */
+/* Bulk endpoints - EP7 (IN and OUT use separate pipes). */
 #define USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_NUMBER         (0x07U)
 #define USB_DEVICE_CDC_ACM_DATA_BULK_OUT_EP_NUMBER        (0x07U)
 #define USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_MAXPKT_SIZE_FS (0x0040U) /* 64 bytes */
@@ -297,10 +308,11 @@ extern "C" {
  ******************************************************************************/
 #if USB_CONFIG_LSTP
 #if USB_DEVICE_CONFIG_CDC_ECM
-/* MCTP(0) + HID(1) + ECM(2-3) + LSTP(4) */
-#define USB_LSTP_INTERFACE_INDEX (0x04U)
-#define USB_LSTP_ENDPOINT_IN     (0x06U)
-#define USB_LSTP_ENDPOINT_OUT    (0x06U)
+/* LSTP follows MCTP, optional HID, and ECM. */
+#define USB_LSTP_INTERFACE_INDEX                                                               \
+    (USB_MCTP_INTERFACE_COUNT + USB_HID_INTERFACE_COUNT + USB_CDC_ECM_INTERFACE_COUNT)
+#define USB_LSTP_ENDPOINT_IN  (0x05U)
+#define USB_LSTP_ENDPOINT_OUT (0x05U)
 #elif USB_CONFIG_COMPOSITE
 /* MCTP(0) + HID(1) + LSTP(2) */
 #define USB_LSTP_INTERFACE_INDEX (0x02U)
@@ -375,6 +387,15 @@ usb_status_t ECM_USB_DeviceGetHidReportDescriptor(
 bool ECM_USB_IsEcmInterfaceVisible(void);
 #endif
 void ECM_USB_SetEcmInterfaceVisible(bool visible);
+
+#if USB_CONFIG_LSTP
+uint8_t ECM_USB_GetLstpInterfaceNumber(void);
+#endif
+
+#if USB_DEVICE_CONFIG_CDC_ACM
+uint8_t ECM_USB_GetAcmCommInterfaceNumber(void);
+uint8_t ECM_USB_GetAcmDataInterfaceNumber(void);
+#endif
 
 #ifdef __cplusplus
 }

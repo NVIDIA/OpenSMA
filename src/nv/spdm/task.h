@@ -33,8 +33,24 @@
 #include "corepdk/modules/spdm/src/app/pdk-spdm-app-res-library.h"
 namespace nv::spdm {
 
-constexpr size_t SpdmResponderNumber = nv::ipc::SpdmI2cResponder == true ? 2 : 1;
-constexpr auto   DualCoreSpdmCryptoHelperQueueMaxItems = 2;
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+constexpr bool SpdmUsbFsResponder = true;
+#else
+constexpr bool SpdmUsbFsResponder = false;
+#endif
+// Omit USB FS when disabled so subsequent context indices remain contiguous.
+enum SpdmContextIndex : size_t
+{
+    SpdmUsbHsContext = 0,
+#if defined(USB_CONFIG_KHCI_MCTP) && (USB_CONFIG_KHCI_MCTP > 0U)
+    SpdmUsbFsContext,
+#endif
+    SpdmI2cContext,
+};
+
+constexpr size_t SpdmResponderNumber = 1U + (SpdmUsbFsResponder ? 1U : 0U)
+                                     + (nv::ipc::SpdmI2cResponder ? 1U : 0U);
+constexpr auto DualCoreSpdmCryptoHelperQueueMaxItems = 2;
 
 enum class Status
 {
@@ -59,29 +75,21 @@ public:
     Task();
     enum EventBits : nv::ipc::Event::Bits
     {
-        UsbRxBit = 0_bit,
-        I2cRxBit = 1_bit,
+        UsbRxBit   = 0_bit,
+        I2cRxBit   = 1_bit,
+        UsbFsRxBit = 2_bit,
         // for authenticate usage
-        AuthenticateRequestBit    = 4_bit,  // notify the spdm task to auth
-        AuthenticateTaskIdle      = 5_bit,  // act as a lock to access spdm auth functionality
-        CryptoPrimitiveRequestBit = 6_bit,
-        RuntimeConsistencyBit     = 7_bit,
-        RuntimeConsistencySuccessBit = 8_bit,
-        RuntimeConsistencyFailureBit = 9_bit,
-        CertReadyBit                 = 22_bit,
+        AuthenticateRequestBit = 4_bit,  // notify the spdm task to auth
+        AuthenticateTaskIdle   = 5_bit,  // act as a lock to access spdm auth functionality
+        CertReadyBit           = 22_bit,
     };
     static constexpr nv::ipc::Event::Bits
         CryptoRequestEventBit = static_cast<nv::ipc::Event::Bits>(
-                                    spdm::Task::EventBits::AuthenticateRequestBit)
-                              | static_cast<nv::ipc::Event::Bits>(
-                                    spdm::Task::EventBits::CryptoPrimitiveRequestBit)
-                              | static_cast<nv::ipc::Event::Bits>(
-                                    spdm::Task::EventBits::RuntimeConsistencyBit);
-    static constexpr auto RxWaitEventBit = (nv::ipc::SpdmI2cResponder == true
-                                                ? spdm::Task::EventBits::UsbRxBit
-                                                      | spdm::Task::EventBits::I2cRxBit
-                                                : spdm::Task::EventBits::UsbRxBit)
-                                         | CryptoRequestEventBit;
+            spdm::Task::EventBits::AuthenticateRequestBit);
+    // The receive callback clears only receive bits, preserving crypto notifications.
+    static constexpr nv::ipc::Event::Bits
+        RxWaitEventBit = UsbRxBit | (SpdmUsbFsResponder ? nv::ipc::Event::Bits(UsbFsRxBit) : 0U)
+                       | (nv::ipc::SpdmI2cResponder ? nv::ipc::Event::Bits(I2cRxBit) : 0U);
 
     static void make();
     static void entrypoint(void* params);
@@ -121,12 +129,10 @@ public:
     static constexpr size_t MaxCryptoContextSize      = sizeof(mbedtls_sha512_context);
     static constexpr size_t MaxCryptoContextItemCount = 3;
     // for spdm context and scratch buffer
-    static constexpr size_t MaxSpdmContextItemSize  = 2200;  // last check need 2080
-    static constexpr size_t MaxSpdmContextItemCount = nv::ipc::SpdmI2cResponder == true ? 2 : 1;
+    static constexpr size_t MaxSpdmContextItemSize        = 2200;  // last check need 2080
+    static constexpr size_t MaxSpdmContextItemCount       = SpdmResponderNumber;
     static constexpr size_t MaxSpdmScratchBufferItemSize  = 4200;  // last check need 4141
-    static constexpr size_t MaxSpdmScratchBufferItemCount = nv::ipc::SpdmI2cResponder == true
-                                                              ? 2
-                                                              : 1;
+    static constexpr size_t MaxSpdmScratchBufferItemCount = SpdmResponderNumber;
 
     // for crypto context
     struct CryptoContextAllocateItem

@@ -24,8 +24,6 @@
 #include "sys/common/address_map.h"
 #include "fsl_nboot.h"
 #include "fsl_flash_ffr.h"
-#include "fsl_puf_v3.h"
-#include "mcuxClEls.h"
 #include NV_IPC_CONFIG_H
 #include "nv/flash/flash.h"
 #include "sys/crypto/crypto.h"
@@ -37,8 +35,6 @@ namespace sys::crypto {
 namespace {  // some helper function
 using nv::spdm::crypto::CryptoStatus;
 
-constexpr uint32_t ElsTimeoutCycles = 0x00100000U;
-
 template<typename InputT>
 std::array<uint8_t, sizeof(InputT)>& to_array_view(InputT& input_data)
 {
@@ -48,88 +44,6 @@ template<typename InputT>
 static std::span<uint8_t> to_span_view(InputT& input_data)
 {
     return std::span(*std::bit_cast<std::array<uint8_t, sizeof(InputT)>*>(&input_data));
-}
-
-CryptoStatus els_wait()
-{
-    MCUX_CSSL_FP_FUNCTION_CALL_BEGIN(
-        result,
-        token,
-        mcuxClEls_LimitedWaitForOperation(ElsTimeoutCycles, MCUXCLELS_ERROR_FLAGS_CLEAR));
-    if ((MCUX_CSSL_FP_FUNCTION_CALLED(mcuxClEls_LimitedWaitForOperation) != token)
-        || (MCUXCLELS_STATUS_OK != result)) {
-        return CryptoStatus::FailRandomGen;
-    }
-    MCUX_CSSL_FP_FUNCTION_CALL_END();
-    return CryptoStatus::Success;
-}
-
-CryptoStatus puf_init_and_start()
-{
-    if constexpr (!nv::ipc::EnablePufEngine) {
-        return CryptoStatus::FailPufFail;
-    }
-    else {
-        constexpr uint32_t PufFfrHeaderValid = 0x95959595u;
-
-        // FFR key store layout at FSL_FEATURE_PUF_ACTIVATION_CODE_ADDRESS.
-        struct [[gnu::packed]] PufFfrKeyStore
-        {
-            uint32_t headerValid;
-            uint32_t dischargeTime;  // legacy, unused on MCXN
-            uint8_t  activationCode[PUF_ACTIVATION_CODE_SIZE];
-        };
-
-        const PufFfrKeyStore* const
-            PufFfrKeyStoreAddr = reinterpret_cast<const PufFfrKeyStore*>(
-                FSL_FEATURE_PUF_ACTIVATION_CODE_ADDRESS);
-
-        // PUF session state survives across wrap/unwrap calls within one boot.
-        // Re-cycling PUF SRAM degrades fingerprint quality and can break unwrap.
-        static uint8_t s_ac_buf[PUF_ACTIVATION_CODE_SIZE];
-        static bool    s_ac_enrolled = false;
-        static bool    s_puf_started = false;
-
-        if (s_puf_started) {
-            return CryptoStatus::Success;
-        }
-
-        puf_config_t cfg;
-        PUF_GetDefaultConfig(&cfg);
-
-        PUF_Deinit(PUF, &cfg);
-
-        if (PUF_Init(PUF, &cfg) != kStatus_Success) {
-            return CryptoStatus::FailPufFail;
-        }
-
-        const uint8_t* ac = nullptr;
-
-        if (PufFfrKeyStoreAddr->headerValid == PufFfrHeaderValid) {
-            ac = PufFfrKeyStoreAddr->activationCode;
-        }
-        else {
-            if (!s_ac_enrolled) {
-                uint8_t score = 0u;
-                if (PUF_Enroll(PUF, s_ac_buf, sizeof(s_ac_buf), &score) != kStatus_Success) {
-                    return CryptoStatus::FailPufFail;
-                }
-                s_ac_enrolled = true;
-                PUF_Deinit(PUF, &cfg);
-                if (PUF_Init(PUF, &cfg) != kStatus_Success) {
-                    return CryptoStatus::FailPufFail;
-                }
-            }
-            ac = s_ac_buf;
-        }
-
-        uint8_t score = 0u;
-        if (PUF_Start(PUF, ac, PUF_ACTIVATION_CODE_SIZE, &score) != kStatus_Success) {
-            return CryptoStatus::FailPufFail;
-        }
-        s_puf_started = true;
-        return CryptoStatus::Success;
-    }
 }
 }  // namespace
 
@@ -349,121 +263,6 @@ authenticate_firmware(const nv::fw_parser::mcu::ParsingFwType InputParseingFwTyp
     auto            imageAddress = std::bit_cast<uint8_t*>(
         nv::fw_parser::mcu::get_fw_image_address(InputParseingFwType));
     return perform_image_auth(nbootCtx, imageAddress, is_signature_verified, parms);
-}
-
-nv::spdm::crypto::CryptoStatus trng_generate(std::span<uint8_t> output)
-{
-    MCUX_CSSL_FP_FUNCTION_CALL_BEGIN(
-        result, token, mcuxClEls_Rng_DrbgRequest_Async(output.data(), output.size()));
-    if ((MCUX_CSSL_FP_FUNCTION_CALLED(mcuxClEls_Rng_DrbgRequest_Async) != token)
-        || (MCUXCLELS_STATUS_OK_WAIT != result)) {
-        return CryptoStatus::FailRandomGen;
-    }
-    MCUX_CSSL_FP_FUNCTION_CALL_END();
-    return els_wait();
-}
-
-nv::spdm::crypto::CryptoStatus puf_wrap(std::span<const uint8_t> key,
-                                        std::span<uint8_t>       wrapped_key)
-{
-    if constexpr (!nv::ipc::EnablePufEngine) {
-        return CryptoStatus::FailPufFail;
-    }
-    else {
-        if (auto status = puf_init_and_start(); status != CryptoStatus::Success) {
-            return status;
-        }
-
-        puf_key_ctx_t keyCtx{};
-        keyCtx.keyScopeStarted  = kPUF_KeyAllowRegister;
-        keyCtx.keyScopeEnrolled = kPUF_KeyAllowRegister;
-
-        // NXP's PUF API takes a mutable key pointer but only streams the input key.
-        auto* key_data = const_cast<uint8_t*>(key.data());
-        if (PUF_Wrap(PUF, &keyCtx, key_data, key.size(), wrapped_key.data(), wrapped_key.size())
-            != kStatus_Success) {
-            return CryptoStatus::FailPufFail;
-        }
-        return CryptoStatus::Success;
-    }
-}
-
-nv::spdm::crypto::CryptoStatus puf_unwrap(std::span<const uint8_t> key_code,
-                                          std::span<uint8_t>       key)
-{
-    if constexpr (!nv::ipc::EnablePufEngine) {
-        return CryptoStatus::FailPufFail;
-    }
-    else {
-        if (auto status = puf_init_and_start(); status != CryptoStatus::Success) {
-            return status;
-        }
-
-        // NXP's PUF API takes a mutable key-code pointer but only streams the KC.
-        auto* key_code_data = const_cast<uint8_t*>(key_code.data());
-        auto  rc            = PUF_Unwrap(
-            PUF, kPUF_KeyDestRegister, key_code_data, key_code.size(), key.data(), key.size());
-        if (rc != kStatus_Success) {
-            return CryptoStatus::FailPufFail;
-        }
-        return CryptoStatus::Success;
-    }
-}
-
-nv::spdm::crypto::CryptoStatus
-aes_256_gcm_encrypt(const nv::crypto::Aes256Key&                        key,
-                    std::span<const uint8_t, nv::crypto::AesGcmIvBytes> iv,
-                    std::span<const uint8_t>                            aad,
-                    std::span<const uint8_t>                            plaintext,
-                    std::span<uint8_t>                                  ciphertext,
-                    std::span<uint8_t, nv::crypto::AesGcmTagBytes>      tag)
-{
-    if constexpr (!nv::ipc::EnableAesGCM) {
-        return CryptoStatus::FailAesGcmEncrypt;
-    }
-    else {
-        return nv::crypto::aes_256_gcm_encrypt(key, iv, aad, plaintext, ciphertext, tag);
-    }
-}
-
-nv::spdm::crypto::CryptoStatus
-aes_256_gcm_decrypt(const nv::crypto::Aes256Key&                         key,
-                    std::span<const uint8_t, nv::crypto::AesGcmIvBytes>  iv,
-                    std::span<const uint8_t>                             aad,
-                    std::span<const uint8_t>                             ciphertext,
-                    std::span<const uint8_t, nv::crypto::AesGcmTagBytes> tag,
-                    std::span<uint8_t>                                   plaintext)
-{
-    if constexpr (!nv::ipc::EnableAesGCM) {
-        return CryptoStatus::FailAesGcmDecrypt;
-    }
-    else {
-        return nv::crypto::aes_256_gcm_decrypt(key, iv, aad, ciphertext, tag, plaintext);
-    }
-}
-
-nv::spdm::crypto::CryptoStatus
-ecdh_p384_generate_key_pair([[maybe_unused]] nv::crypto::EcdhP384KeyPair& key_pair)
-{
-    return CryptoStatus::FailEcdhKeyGeneration;
-}
-
-nv::spdm::crypto::CryptoStatus
-ecdh_p384_compute_shared_secret(
-    [[maybe_unused]] const nv::crypto::EcdhP384PrivateKey& private_key,
-    [[maybe_unused]] const nv::crypto::EcdhP384PublicKey&  peer_public_key,
-    [[maybe_unused]] nv::crypto::EcdhP384SharedSecret&     shared_secret)
-{
-    return CryptoStatus::FailEcdhKeyAgreement;
-}
-
-nv::spdm::crypto::CryptoStatus
-hkdf_sha384([[maybe_unused]] std::span<const uint8_t> input_key_material,
-            [[maybe_unused]] std::span<const uint8_t> salt,
-            [[maybe_unused]] std::span<const uint8_t> info,
-            [[maybe_unused]] std::span<uint8_t>       output)
-{
-    return CryptoStatus::FailHkdf;
 }
 
 }  // namespace sys::crypto

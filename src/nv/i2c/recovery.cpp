@@ -27,10 +27,11 @@ void quick_recovery(nv::i2c::Port port, uint8_t address)
     sys::i2c::quick_recovery(port, address);
 }
 
-void bus_recovery(nv::i2c::Port port)
+I2cStatus bus_recovery(nv::i2c::Port port)
 {
     const auto status = sys::i2c::bus_recovery(port);
     nv::logger::info(nv::logger::Event::I2CRecovery,
                      {static_cast<uint8_t>(port), static_cast<uint8_t>(status)});
+    return status;
 }
 }  // namespace nv::i2c

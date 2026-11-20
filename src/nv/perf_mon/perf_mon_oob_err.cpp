@@ -24,20 +24,25 @@ void Driver::set_transaction_error(OobBus bus, uint8_t error_type)
 {
     auto& driver = Driver::inst();
     auto  index  = static_cast<uint32_t>(bus);
+
     if (!driver.is_oob_bus_valid(bus)) {
         return;
     }
+    if (error_type >= ErrorTypeNum) {
+        return;
+    }
+
     driver.oob_bus_error_buf.at(index).at(error_type) = nv::common::add(
-        driver.oob_bus_error_buf.at(index).at(error_type), static_cast<uint32_t>(1));
+        driver.oob_bus_error_buf.at(index).at(error_type), static_cast<ErrorCounter>(1));
 
     driver.oob_bus_error_latched.at(index) = error_type;
 }
 
-uint32_t Driver::get_transaction_error(OobBus bus, uint8_t error_type)
+ErrorCounter Driver::get_transaction_error(OobBus bus, uint8_t error_type)
 {
     auto& driver = Driver::inst();
     auto  index  = static_cast<uint32_t>(bus);
-    if (!driver.is_oob_bus_valid(bus)) {
+    if (!driver.is_oob_bus_valid(bus) || error_type >= ErrorTypeNum) {
         return Driver::InvalidErrorCount;
     }
     return driver.oob_bus_error_buf.at(index).at(error_type);
@@ -53,6 +58,7 @@ void Driver::reset_transaction_error(OobBus bus)
     driver.oob_bus_error_buf.at(index)     = {};
     driver.oob_bus_error_latched.at(index) = 0;
 }
+
 uint8_t Driver::get_latached_error(OobBus bus)
 {
     auto& driver = Driver::inst();

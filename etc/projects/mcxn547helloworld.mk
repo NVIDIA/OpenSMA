@@ -154,9 +154,11 @@ $(foreach DIR,$1, \
 	$(shell [ -d $(UBS_PATH_SRC)/nv/$(DIR) ] && find $(UBS_PATH_SRC)/nv/$(DIR) \( -name "*.adb" -or -name "*.ads" -or -name "*.cpp" \) -not -name "*-test.adb" -not -name "*-test.ads" -not -name "*-test.cpp" -not -name "handle_test.cpp") \
 )
 endef
-MODULES := common ipc mctp i2c pldm usb flash bootloader gpio i3c logger ctimer spdm uart watchdog perf_mon ipchandler sensor debugtoken telemetry spi fw_parser crypto c2c_mailbox vrot fru smartdma lstp ssif diag vcom/vruart
+MODULES := common ipc mctp i2c pldm usb flash bootloader gpio logger ctimer spdm uart watchdog perf_mon ipchandler sensor debugtoken telemetry spi fw_parser crypto c2c_mailbox fru lstp ssif diag vcom/vruart
 SOURCES += $(FREERTOS_SRC) $(FREERTOS_SRC_ARCH) $(UBS_PATH_SRC)/nv/nv.ads $(PATH_PROJECT_SYS)/linker_script.ld
 SOURCES += $(call nvsrcfiles,$(MODULES))
+# Other modules still call nv::i3c::Task entry points; keep those as no-ops.
+SOURCES += $(PATH_PROJECTS)/$(PROJECT)/i3c_stubs.cpp
 
 include etc/projects/nvheader.mk
 SOURCES += $(NVHEADER_SRC)

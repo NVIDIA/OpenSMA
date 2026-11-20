@@ -26,9 +26,9 @@
 
 namespace nv::gpio_mon {
 
-// Each scan window holds 1 FullIoDump (28B) plus up to N BankInterruptDumps (12B each).
-// 1024 bytes accommodates 1 + 82 records, comfortably above what 100 ms of edge activity
-// on five banks would generate before the buffer is shipped.
+// Each scan window holds 1 FullIoDump (28B) plus BankInterruptDumps (12B each). Every
+// interrupt now emits one record per bank (BankCount = 5 records, 60B/interrupt), so
+// 1024 bytes accommodates 1 + 83 records ~= 16 interrupts
 constexpr size_t BufferSize = 1024;
 
 enum EventBits : uint32_t
@@ -49,8 +49,9 @@ public:
     static void  entrypoint(void* params);
     static Task& inst();
 
-    // Called from GPIO bank IRQ handlers (in ISR context).
-    static void on_gpio_interrupt(uint8_t bank, uint32_t bank_io_val);
+    // Called from GPIO bank IRQ handlers (in ISR context). Emits one record per bank
+    // (every bank's I/O state) for each interrupt, regardless of which bank fired.
+    static void on_gpio_interrupt();
 
     // Called from the USB CDC callback; defers packet handling to this task.
     static uint8_t usb_rx_callback(uint8_t* data, uint32_t length);
@@ -73,7 +74,7 @@ private:
     void on_scan_tick();
 
     void write_full_io_dump(Buffer& buf);
-    bool append_record_isr(uint32_t header, uint32_t bank_io_val);
+    bool append_record_isr();
 
     std::array<Buffer, 2>                buffers{};
     volatile uint8_t                     active_idx       = 0;

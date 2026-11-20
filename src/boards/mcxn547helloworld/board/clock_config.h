@@ -430,9 +430,9 @@ void BOARD_BootClockFROHF144M(void);
 #define BOARD_BOOTCLOCKPLL150M_I3C0_FCLK_CLOCK        0UL            /* Clock consumers of I3C0_FCLK_clock output : I3C0 */
 #define BOARD_BOOTCLOCKPLL150M_I3C0_SLOW_TC_CLOCK     0UL            /* Clock consumers of I3C0_SLOW_TC_clock output : I3C0 */
 #define BOARD_BOOTCLOCKPLL150M_I3C0_SLOW_CLOCK        0UL            /* Clock consumers of I3C0_SLOW_clock output : I3C0 */
-#define BOARD_BOOTCLOCKPLL150M_I3C1_FCLK_CLOCK        25000000UL     /* Clock consumers of I3C1_FCLK_clock output : I3C1 */
+#define BOARD_BOOTCLOCKPLL150M_I3C1_FCLK_CLOCK        0UL            /* Clock consumers of I3C1_FCLK_clock output : I3C1 */
 #define BOARD_BOOTCLOCKPLL150M_I3C1_SLOW_TC_CLOCK     0UL            /* Clock consumers of I3C1_SLOW_TC_clock output : I3C1 */
-#define BOARD_BOOTCLOCKPLL150M_I3C1_SLOW_CLOCK        1000000UL      /* Clock consumers of I3C1_SLOW_clock output : I3C1 */
+#define BOARD_BOOTCLOCKPLL150M_I3C1_SLOW_CLOCK        0UL            /* Clock consumers of I3C1_SLOW_clock output : I3C1 */
 #define BOARD_BOOTCLOCKPLL150M_LP_OSC_CLOCK           0UL            /* Clock consumers of LP_OSC_clock output : RTC0, TDET0, WUU0 */
 #define BOARD_BOOTCLOCKPLL150M_MAIN_CLOCK             150000000UL    /* Clock consumers of MAIN_clock output : N/A */
 #define BOARD_BOOTCLOCKPLL150M_MICFILFCLK_CLOCK       0UL            /* Clock consumers of MICFILFCLK_clock output : PDM */

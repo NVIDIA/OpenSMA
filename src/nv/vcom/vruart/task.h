@@ -17,6 +17,10 @@
  */
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <utility>
+
 #include "nv/ipc/task.h"
 #include "nv/ipc/event.h"
 
@@ -28,10 +32,10 @@ namespace nv::vruart {
 // Handles both directions:
 //   USB RX → UART TX (synchronous, UART is bottleneck)
 //   UART RX → USB TX (via queue, USB may be busy)
-class BridgeTask : public ipc::Task
+class Task : public ipc::Task
 {
 public:
-    BridgeTask();
+    explicit Task(uint8_t index) noexcept;
 
     [[noreturn]] void main();
 
@@ -39,6 +43,13 @@ public:
     static void entrypoint(void* params);
 
 private:
+    template<size_t Index>
+    static void make_instance();
+
+    template<size_t... Indices>
+    static void make_instances(std::index_sequence<Indices...>);
+
+    uint8_t index;
     Bridge& bridge;
 };
 

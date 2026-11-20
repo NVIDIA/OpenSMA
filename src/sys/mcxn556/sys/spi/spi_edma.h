@@ -53,9 +53,10 @@ struct MasterTransferContext
 class EdmaDriver
 {
 public:
-    void             bind(nv::spi::Flexcomm flexcomm, nv::ipc::TaskId task_id);
+    void             bind(nv::spi::Flexcomm flexcomm);
     void             init();
-    sys::spi::Status sendRecv(uint32_t                 send_len,
+    sys::spi::Status sendRecv(nv::ipc::TaskId          recipient_task_id,
+                              uint32_t                 send_len,
                               const std::span<uint8_t> sbuf,
                               uint32_t                 recv_len,
                               std::span<uint8_t>       rbuf);
@@ -63,7 +64,7 @@ public:
 private:
     LPSPI_Type*       _base;
     nv::spi::Flexcomm _flexcomm;
-    nv::ipc::TaskId   _notification_task_id;
+    nv::ipc::TaskId   _recipient_task_id;
 
     static LPSPI_Type* get_base(nv::spi::Flexcomm flexcomm);
     static void        master_edma_callback(LPSPI_Type*                 base,

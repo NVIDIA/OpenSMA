@@ -40,9 +40,9 @@ constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
 #else  // SYS_USB_DISABLED == 0 - Original implementation
 
 #include "nv/i2c/common.h"
-#include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/ipchandler/ipchandler.h"
 #include "nv/mctp/interface.h"
 #include "nv/mctp/router.h"
@@ -50,7 +50,6 @@ constexpr uint32_t UsbPortResetMagicNumber = 0x55534252;  // "USBR"
 #include "nv/usb/mctp_router.h"
 #include "nv/usb/usb_mctp_header.h"
 #include "nv/lstp/lstp_router.h"
-#include "sys/ipc/event.h"
 #include "sys/usb/usb.h"
 #include "sys/usb/usb_device_descriptor.h"
 
@@ -69,7 +68,7 @@ class Task : public ipc::Task
 public:
     Task();
 
-    enum EventBits : nv::ipc::Event::Bits
+    enum EventBits : nv::ipc::TaskNotify::Bits
     {
         MctpTxBit             = 1_bit,
         MctpRxBit             = 2_bit,
@@ -114,9 +113,6 @@ public:
     uint8_t transmit();
     void    update_routing_table();
 
-    inline uint32_t enable_bit(uint32_t bits, uint32_t event_bit) { return bits | event_bit; }
-    inline uint32_t disable_bit(uint32_t bits, uint32_t event_bit) { return bits & ~event_bit; }
-
     static void wdt_notify();
 
 protected:
@@ -140,7 +136,6 @@ protected:
     HidSmb _hid_smb;
 #endif
     nv::lstp::LstpRouter _lstp_router;
-    ipc::Event&          _event;
     ipc::Queue&          _tx;
     Buffer               mctp_rx_buffer{};
     Buffer               mctp_tx_buffer{};

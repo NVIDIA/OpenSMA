@@ -22,7 +22,7 @@
 
 using namespace sys::i2c;
 
-void Driver::bind(nv::i2c::Port port, void* task)
+void Driver::bind(nv::i2c::Port port, void* task, [[maybe_unused]] void* emul_task)
 {
     auto i2c_task = static_cast<nv::i2c::Task*>(task);
     nv::info("task %s binds to I2C port %d\n", i2c_task->name().data(), port);

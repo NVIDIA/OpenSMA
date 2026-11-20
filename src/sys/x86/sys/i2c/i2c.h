@@ -30,7 +30,7 @@ class Driver
 public:
     constexpr static size_t BufferSzie = 76;
 
-    void        bind(nv::i2c::Port port, void* task);
+    void        bind(nv::i2c::Port port, void* task, void* emul_task);
     void        init();
     void        start(bool enable_target);
     void        peripheral_recovery(bool enable_target);

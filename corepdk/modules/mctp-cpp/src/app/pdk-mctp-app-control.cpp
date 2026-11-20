@@ -147,15 +147,37 @@ void Control::on_allocate_endpoint_id(const Packet& rx, Packet& tx)
 {
     fill_packet_header(rx, tx);
     fill_control_msg_header(rx, tx);
-    auto& ctx           = Control::PktRes::from(tx);
-    auto& crx           = Control::PktReq::from(rx);
-    ctx.completion_code = platforms::Ccode::Success;
+    auto& ctx                      = Control::PktRes::from(tx);
+    auto& crx                      = Control::PktReq::from(rx);
+    ctx.completion_code            = platforms::Ccode::Success;
+    const uint8_t packet_interface = platforms::get_packet_interface(rx);
 
-    if (_allocate_eid_bus == static_cast<uint8_t>(platforms::Interface::End)) {
-        _allocate_eid_bus = platforms::get_packet_interface(rx);
+    if (packet_interface >= static_cast<uint8_t>(platforms::Interface::End)) {
+        ctx.completion_code = platforms::Ccode::ErrorInvalidData;
+        platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse + 3);
+        return;
     }
 
-    if (_allocate_eid_bus == platforms::get_packet_interface(rx)) {
+    // DSP0236: the first interface to allocate owns the EID pool and every other
+    // bus owner is answered Reject. Products that bridge a second upstream domain
+    // are enumerated by two bus owners at once, so they skip the latch.
+    bool accept = true;
+    if constexpr (!platforms::allows_concurrent_bus_owners()) {
+        accept = (_allocate_eid_bus == static_cast<uint8_t>(platforms::Interface::End))
+              || (_allocate_eid_bus == packet_interface);
+    }
+
+    if (accept) {
+        // Only a product with two concurrent bus owners needs to remember more than
+        // the latch below: where one owner is accepted the mask can never hold a
+        // second bit, so it carries no information the latch does not already have.
+        if constexpr (platforms::allows_concurrent_bus_owners()) {
+            if (packet_interface <= MaxEidBusMaskBit) {
+                _allocate_eid_bus_mask |= (uint32_t{1} << packet_interface);
+            }
+        }
+        _allocate_eid_bus = packet_interface;
+
         // clear the additional eid count and infos by RoutingInfoUpdate if force allocate
         if (crx.data[0] == static_cast<uint8_t>(AllocateEndpoint::ForceAllocate)) {
             for (uint8_t index = platforms::DefaultRoutingTableSize;
@@ -177,25 +199,40 @@ void Control::on_allocate_endpoint_id(const Packet& rx, Packet& tx)
         _start_eid        = crx.data[2];
         _allocate_src_eid = rx.hdr.src_eid;
         _is_enumerated    = true;
+        // _us_i2c_eid is deliberately not latched here. Addressing the SMBus bus
+        // owner by its real EID is only correct on a transparent I2C bridge, which
+        // is a per-product property, so the platform sets it from its own
+        // configuration. Latching it unconditionally would make every other
+        // product send DiscoveryNotify to the owner's real EID instead of the
+        // NULL EID that DSP0236 pre-discovery expects.
+        if (packet_interface == static_cast<uint8_t>(platforms::Interface::UsUsb)) {
+            _us_usb_eid = rx.hdr.src_eid;
+        }
+        else if (platforms::is_us_i3c_interface(packet_interface)) {
+            _us_i3c_eid = rx.hdr.src_eid;
+        }
 
         // TODO: should change to index 0-3
-        if (EidPoolSize > 0) {
-            auto start_eid = crx.data[2];
+        if (platforms::should_allocate_downstream_pool(packet_interface)) {
+            _ds_pool_start_eid    = crx.data[2];
+            _is_ds_pool_allocated = true;
             for (uint32_t index = 0; index < EidPoolSize; index++) {
-                auto& info        = _routing_map.at(index);
-                info.assigned_eid = start_eid;
-
-                if (start_eid != UINT8_MAX) {
-                    start_eid++;
-                }
+                _routing_map.at(index).assigned_eid = platforms::get_downstream_pool_eid(
+                    _ds_pool_start_eid, static_cast<uint8_t>(index));
             }
         }
 
         // store update stream information
-        _routing_map[EidPoolSize].is_enumerated = true;
-        _routing_map[EidPoolSize].assigned_eid  = rx.hdr.src_eid;
-        _routing_map[EidPoolSize].client        = static_cast<platforms::Interface>(
-            platforms::get_packet_interface(rx));
+        const uint8_t upstream_index = platforms::get_upstream_routing_index(packet_interface);
+        if (upstream_index >= _routing_map.size()) {
+            ctx.completion_code = platforms::Ccode::ErrorInvalidData;
+            platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse + 3);
+            return;
+        }
+        _routing_map.at(upstream_index).is_enumerated = true;
+        _routing_map.at(upstream_index).assigned_eid  = rx.hdr.src_eid;
+        _routing_map.at(upstream_index).client        = static_cast<platforms::Interface>(
+            packet_interface);
 
         // use platform specific driver to enumerate
         platforms::on_enumerate_plat();
@@ -206,8 +243,9 @@ void Control::on_allocate_endpoint_id(const Packet& rx, Packet& tx)
         ctx.data[0] = static_cast<uint8_t>(AllocateEndpointStatus::Reject);
     }
 
-    ctx.data[1] = EidPoolSize;
-    ctx.data[2] = (EidPoolSize == 0) ? 0 : _start_eid;
+    const uint8_t reported_pool_size = platforms::get_reported_eid_pool_size(packet_interface);
+    ctx.data[1]                      = reported_pool_size;
+    ctx.data[2]                      = (reported_pool_size == 0) ? 0 : _start_eid;
     platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse + 3);
 }
 
@@ -215,7 +253,6 @@ void Control::on_routing_info_update(const Packet& rx, Packet& tx)
 {
     fill_packet_header(rx, tx);
     fill_control_msg_header(rx, tx);
-    auto& crx = Control::PktReq::from(rx);
     auto& ctx = Control::PktRes::from(tx);
     platforms::set_packet_length(tx, sizeof(TransportHeader) + HeaderSizeResponse);
 
@@ -226,10 +263,34 @@ void Control::on_routing_info_update(const Packet& rx, Packet& tx)
     }
 
     // only the bus owner can update routing info
-    if (_allocate_eid_bus != platforms::get_packet_interface(rx)) {
+    const uint8_t rx_interface = platforms::get_packet_interface(rx);
+    bool          is_bus_owner = _allocate_eid_bus == rx_interface;
+    if constexpr (platforms::allows_concurrent_bus_owners()) {
+        // The latch holds only the most recent of the two owners, so an update from
+        // the other one is still legitimate and has to be looked up in the mask.
+        is_bus_owner = is_bus_owner || has_allocate_eid_bus(rx_interface);
+    }
+    if (!is_bus_owner) {
         ctx.completion_code = platforms::Ccode::ErrorInvalidData;
         return;
     }
+
+    if constexpr (platforms::tolerant_routing_info_update()) {
+        apply_routing_info_update_tolerant(rx, tx);
+    }
+    else {
+        apply_routing_info_update_strict(rx, tx);
+    }
+}
+
+// DSP0236 contract, for products enumerated by a single bus owner: one storable
+// SingleEndpoint entry per request, and the owner is told what it got wrong so it
+// can correct the request instead of repeating it.
+void Control::apply_routing_info_update_strict(const Packet& rx, Packet& tx)
+{
+    auto& crx = Control::PktReq::from(rx);
+    auto& ctx = Control::PktRes::from(tx);
+
     // the update entry count should be 0 or 1
     const uint8_t update_count = crx.data[0];
     if (update_count != 0 && update_count != 1) {
@@ -270,25 +331,129 @@ void Control::on_routing_info_update(const Packet& rx, Packet& tx)
     }
 
     // add the new eid to the routing table
-    const uint8_t index = platforms::DefaultRoutingTableSize + _additional_eid_count;
+    const auto index = static_cast<uint8_t>(platforms::DefaultRoutingTableSize
+                                            + _additional_eid_count);
     _routing_map.at(index).assigned_eid = update_eid;
     _routing_map.at(index).client       = static_cast<platforms::Interface>(
         platforms::get_packet_interface(rx));
     _routing_map.at(index).is_enumerated = true;
 
-    // if the interface is UsI2c, store the additional i2c address
-    // only used in get_rouuting_table_entry command
-    if (platforms::get_packet_interface(rx)
-        == static_cast<platforms::Packet::InterfaceType>(platforms::Interface::UsI2c)) {
+    // Store the additional address only for transports that need it in
+    // GetRoutingTableEntries.
+    if (platforms::should_store_additional_address(platforms::get_packet_interface(rx))) {
         _additional_address.at(_additional_eid_count) = crx.data[4];
     }
 
-    // increase the additional eid count
     _additional_eid_count++;
 
     // use platform specific driver to update routing info
     platforms::on_routing_info_update_plat(
         rx.hdr.src_eid, platforms::get_packet_interface(rx), update_eid);
+
+    ctx.completion_code = platforms::Ccode::Success;
+}
+
+void Control::apply_routing_info_update_tolerant(const Packet& rx, Packet& tx)
+{
+    auto& crx = Control::PktReq::from(rx);
+    auto& ctx = Control::PktRes::from(tx);
+
+    // A bus owner may push its entire routing table in a single Routing
+    // Information Update, i.e. multiple entries in one request, including entry
+    // types we do not store (bridge / EID range) and EIDs we already know (our
+    // own EID, already-enumerated downstreams). Answering the strict policy's
+    // ErrorInvalidData / ErrorInsufficientSpace to such an owner makes it retry
+    // the same request forever.
+    //
+    // Walk every entry, store the ones we can actually use (new SingleEndpoint
+    // reachable via this interface) and silently skip the rest, then always
+    // acknowledge with Success so the owner can complete enumeration. Routing to
+    // downstream endpoints does not depend on this additional table being fully
+    // populated; it is handled by the normal forward path plus the entries
+    // created during enumeration.
+    const uint8_t  update_count = crx.data[0];
+    const uint8_t* req          = &crx.data[0];
+
+    // Each entry is 4 bytes: [entry_type, eid_range, starting_eid, address].
+    // Clamp the iteration to what the message buffer can hold so a bogus count
+    // can never make us read past the packet.
+    constexpr uint8_t BytesPerEntry = 4;
+    constexpr auto    MaxEntries    = static_cast<uint8_t>((platforms::TransmitUnit - 1)
+                                                     / BytesPerEntry);
+    const uint8_t     entry_count   = (update_count < MaxEntries) ? update_count : MaxEntries;
+
+    bool    any_added      = false;
+    uint8_t last_added_eid = 0;
+    for (uint8_t i = 0; i < entry_count; i++) {
+        const auto    base       = static_cast<uint8_t>(1 + (i * BytesPerEntry));
+        const uint8_t entry_type = req[base];
+        const uint8_t eid_range  = req[base + 1];
+        const uint8_t update_eid = req[base + 2];
+
+        // Only store single, non-bridge endpoints with a 1-EID range. Other
+        // entry types (bridge / EID range) are accepted but not stored.
+        if ((entry_type & 0b11U) != static_cast<uint8_t>(EntryType::SingleEndpoint)
+            || eid_range != 0x01) {
+            continue;
+        }
+
+        // Never treat one of our own current EIDs as a new downstream entry.
+        // Skip it (do not reject the whole request) so the bus owner can still
+        // push its full table; preserves the Bug-6222894 guard under the
+        // tolerant multi-entry policy.
+        bool is_current_eid = false;
+        for (const auto current_eid : _router.ec.cur_eid) {
+            if (update_eid == current_eid) {
+                is_current_eid = true;
+                break;
+            }
+        }
+        if (is_current_eid) {
+            continue;
+        }
+
+        // Skip EIDs we already know (our own EID or an already-enumerated
+        // endpoint); re-adding them is unnecessary and must not be an error.
+        bool already_known = false;
+        for (auto& info : _routing_map) {
+            if (info.assigned_eid == update_eid) {
+                already_known = true;
+                break;
+            }
+        }
+        if (already_known) {
+            continue;
+        }
+
+        // Stop storing once the additional routing slots are full, but keep
+        // acknowledging the command with Success.
+        if (_additional_eid_count >= platforms::RoutingInfoUpdateSize) {
+            continue;
+        }
+
+        const auto index = static_cast<uint8_t>(platforms::DefaultRoutingTableSize
+                                                + _additional_eid_count);
+        _routing_map.at(index).assigned_eid = update_eid;
+        _routing_map.at(index).client       = static_cast<platforms::Interface>(
+            platforms::get_packet_interface(rx));
+        _routing_map.at(index).is_enumerated = true;
+
+        // Store the additional address only for transports that need it in
+        // GetRoutingTableEntries.
+        if (platforms::should_store_additional_address(platforms::get_packet_interface(rx))) {
+            _additional_address.at(_additional_eid_count) = req[base + 3];
+        }
+
+        _additional_eid_count++;
+        any_added      = true;
+        last_added_eid = update_eid;
+    }
+
+    // use platform specific driver to update routing info if anything changed
+    if (any_added) {
+        platforms::on_routing_info_update_plat(
+            rx.hdr.src_eid, platforms::get_packet_interface(rx), last_added_eid);
+    }
 
     ctx.completion_code = platforms::Ccode::Success;
 }

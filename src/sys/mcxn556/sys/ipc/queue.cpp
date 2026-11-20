@@ -84,7 +84,7 @@ Queue::Status Queue::send(const ConstItem& item, Usecs timeout, CoreId dest_core
         // GBS:END NO COVERAGE FIXME!!
     }
     // Check if on the other core
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_queue_data(item, id(), false);
         if (status != nv::ipc::task::Status::Ok) {
             return Status::CommunicationFailed;
@@ -108,7 +108,7 @@ Queue::Status Queue::send_isr(const ConstItem& item)
         portYIELD_FROM_ISR(higher_priority_woken);
         return res == pdFALSE ? Status::Unknown : Status::Ok;
     }
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_queue_data(item, id(), false);
 
         if (status != nv::ipc::task::Status::Ok) {
@@ -145,7 +145,7 @@ Queue::Status Queue::send_front(const ConstItem& item, Usecs timeout)
         return Status::Unknown;
         // GBS:END NO COVERAGE FIXME!!
     }
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_queue_data(item, id(), true);
         if (status != nv::ipc::task::Status::Ok) {
             return Status::CommunicationFailed;
@@ -170,7 +170,7 @@ Queue::Status Queue::send_front_isr(const ConstItem& item)
         portYIELD_FROM_ISR(higher_priority_woken);
         return res == pdFALSE ? Status::Unknown : Status::Ok;
     }
-    else if (_can_cross_core_access) {
+    else if (EnableDualCore && _can_cross_core_access) {
         auto status = nv::ipc::task::Task::handle_queue_data(item, id(), true);
 
         if (status != nv::ipc::task::Status::Ok) {

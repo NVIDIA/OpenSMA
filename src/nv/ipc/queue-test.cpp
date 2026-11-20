@@ -51,7 +51,9 @@ TEST(Queue, Core)
         auto  idx            = nv::common::to_underlying(id);
         auto& q              = Queue::make(id);
         auto& q_another_inst = Queue::make(id);
+        auto& q_get          = Queue::get(id);
         ensure::is_eq(&q, &q_another_inst);
+        ensure::is_eq(&q, &q_get);
 
         // check id
         ensure::is_eq(q.id(), id);

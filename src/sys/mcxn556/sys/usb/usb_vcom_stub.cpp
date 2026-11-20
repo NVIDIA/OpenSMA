@@ -7,8 +7,8 @@
  * USB hardware runs on Core1; Core0 uses IPC to communicate.
  *
  * Data flow:
- *   USB ACM RX: Core1 USB -> IPC (UsbAcm queue) -> usb_proxy task -> UbridgeRx queue -> Bridge
- * -> UART USB ACM TX: Core0 UART RX -> BridgeTask -> vcom_send() -> IPC (UbridgeTx) -> Core1
+ *   USB ACM RX: Core1 USB -> IPC (UsbAcm queue) -> usb_proxy task -> Ubridge0Rx queue -> Bridge
+ * -> UART USB ACM TX: Core0 UART RX -> vruart::Task -> vcom_send() -> IPC (Ubridge0Tx) -> Core1
  * USB
  */
 
@@ -29,7 +29,7 @@ namespace sys::usb {
 
 void Driver::set_vcom_rx_callback(VcomRxCallback /* callback */)
 {
-    // Dual-core NCSI mode: RX data arrives via UbridgeRx queue, no callback needed
+    // Dual-core NCSI mode: RX data arrives via Ubridge0Rx queue, no callback needed
 }
 
 void Driver::set_vcom_close_callback(VcomCloseCallback /* callback */)
@@ -57,7 +57,7 @@ bool Driver::vcom_send(void* handle, uint8_t* data, uint32_t length)
     // API: returns true if busy (caller should retry), false if done.
     nv::ipc::Queue::ConstItem item(data, length);
     auto                      status = nv::ipc::task::Task::handle_queue_data(
-        item, nv::ipc::QueueId::UbridgeTx, false);
+        item, nv::ipc::QueueId::Ubridge0Tx, false);
 
     // Returns true if busy (caller retries)
     return (status != nv::ipc::task::Status::Ok);

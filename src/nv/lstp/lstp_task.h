@@ -41,8 +41,8 @@ constexpr auto BuildLstpGpioIdxMap()
     for (auto& row : result) {
         row.fill(LstpGpioNum);
     }
-    for (size_t i = 0; i < LstpGpioNum; ++i) {
-        const auto& pin_info = PinConfigs.at(i);
+    for (size_t i = 0; i < PinConfigs.size(); ++i) {
+        const auto& pin_info = PinConfigs[i];
         if (pin_info.port == nv::gpio::vrPort) {
             result[sys::gpio::PortsNumber][pin_info.pin] = static_cast<GpioIndex>(i);
         }
@@ -96,7 +96,7 @@ public:
      * Sends IRQ event to LstpGpioIrq queue. Events sent async via
      * LstpRouter::send_gpio. Drops event if queue is full.
      */
-    static void submit_gpio_irq(GpioIndex gpio_idx);
+    static void submit_gpio_irq(GpioIndex gpio_idx, GpioIrqSource source = GpioIrqSource::Pin);
 
 private:
     /** @brief Processes request from _req_pkt, fills _resp_payload, and sends

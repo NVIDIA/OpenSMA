@@ -44,6 +44,25 @@ enum class CsPins : uint8_t
     Cs1 = 1,
 };
 
+/// Identifies which check or transfer stage produced a logged SPI error.
+enum class SpiErrorReason : uint8_t
+{
+    None                 = 0,
+    RequestTooLarge      = 1,   ///< read or write length exceeds BufferSize
+    AsymmetricLength     = 2,   ///< write-then-read requested with mismatched lengths
+    InvalidCs            = 3,   ///< selected CS slot holds the invalid-GPIO sentinel
+    XferStartFail        = 4,   ///< LPSPI rejected the initial transfer
+    ReadStartFail        = 5,   ///< LPSPI rejected the read that follows the GPIO wait
+    XferComplete         = 6,   ///< transfer completed with a non-Ok status
+    WaitGpioReadyTimeout = 7,   ///< READY_N did not assert low before the read
+    GpioBusy             = 8,   ///< write rejected because READY_N was still low
+    WaitGpioIdleTimeout  = 9,   ///< READY_N did not deassert high after the read
+    UnexpectedWrite      = 10,  ///< WRITE while a forwarded request is outstanding
+    UnexpectedRead       = 11,  ///< READ while idle (no paired request)
+    RecoveryReadyTimeout = 12,  ///< READY_N did not assert low during recovery
+    InvalidReadyGpio     = 13,  ///< READY_N GPIO mapping is missing or invalid
+};
+
 enum SpiFlags : uint8_t
 {
     NoFlag     = 0x00U,

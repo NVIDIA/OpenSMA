@@ -30,8 +30,6 @@
 #include "nv/logger/common.h"
 #include "nv/logger/log.h"
 #include "corepdk/platforms/mcxn236/pldm-fd/src/pldm_wrap.h"
-#include "nv/vrot/ap_background_copy.h"
-#include "sys/flash/flash_config.h"
 #include NV_IPC_CONFIG_H
 
 using namespace std::chrono_literals;
@@ -56,21 +54,40 @@ namespace nv::pldm {
 
 namespace {
 
-pldm::Status record_background_copy_component(uint16_t component_id)
+void recover_stale_mcu_update_state(const PldmContextRecord& pldm_context)
 {
-    if (flash::Flash::set_data(flash::Key::NpdsBackgroundCopyComponentId,
-                               static_cast<flash::Data>(component_id))
-        != flash::Status::Ok) {
-        return pldm::Status::Unknown;
+    if (pldm_context.pldm_state != NV_PLDM_STATE_IDLE) {
+        return;
     }
-    return pldm::Status::Ok;
+
+    flash::Data update_state{};
+    if (flash::Flash::get_data(flash::Key::PdsUpdateState, update_state) != flash::Status::Ok
+        || update_state != static_cast<flash::Data>(bootloader::Driver::State::InProgress)) {
+        return;
+    }
+
+    const auto status = flash::Flash::set_data(
+        flash::Key::PdsUpdateState, static_cast<flash::Data>(bootloader::Driver::State::Idle));
+    if (status != flash::Status::Ok) {
+        nv::info("Failed to recover stale PLDM update state: %d\n", status);
+        return;
+    }
 }
 
 }  // namespace
 
 void Task::make()
 {
-    constexpr auto StackSize = std::max(2144, int(configMINIMAL_STACK_SIZE));
+    // Static analysis only found 6368/7552 B (928 B margin) via the
+    // is_background_copy_automatic -> Flash::get_data path. Hardware has faulted (STKOF) twice,
+    // both times exactly 516 B past this task's own stack base -- i.e. real usage is ~8068 B,
+    // well beyond what the analyzer found. The gap is a confirmed blind spot: Task::main()
+    // calls into the Ada/SPARK PLDM firmware-update state machine (ada_pldmfw_state_runner,
+    // corepdk/modules/pldm-fd), which handles up to NV_PLDM_MAX_PAYLOAD_SIZE (4 KB) transfer
+    // chunks and calls back into C++ via Pldm_Hook_* hooks -- none of it visible to the
+    // C++-only stack-usage analyzer. Sized generously above the observed overflow point plus 1
+    // KB margin until validated against uxTaskGetStackHighWaterMark() on hardware.
+    constexpr auto StackSize = std::max(2560, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     NV_TASK_DATA static Task                       task;
 
@@ -195,6 +212,7 @@ Task::Task()
     PldmBaseContextRecord pldm_base_context = {};
     ada_pldmfw_context_init(&pldm_context);
     ada_init_pldm_base_ctx(&pldm_base_context);
+    recover_stale_mcu_update_state(pldm_context);
 
     auto wait_bits = []() {
         if constexpr (nv::common::build::IsStreamBoot) {
@@ -204,8 +222,6 @@ Task::Task()
                        Task::PldmEventBits::PldmTaskRx4kBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
                        Task::PldmEventBits::TimerBit)
-                 | static_cast<std::underlying_type_t<PldmEventBits>>(
-                       Task::PldmEventBits::ApBgStartBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
                        Task::PldmEventBits::WdtEventBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
@@ -220,8 +236,6 @@ Task::Task()
                        Task::PldmEventBits::TimerBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
                        Task::PldmEventBits::BgStartBit)
-                 | static_cast<std::underlying_type_t<PldmEventBits>>(
-                       Task::PldmEventBits::ApBgStartBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
                        Task::PldmEventBits::WdtEventBit)
                  | static_cast<std::underlying_type_t<PldmEventBits>>(
@@ -353,19 +367,10 @@ Task::Task()
             ada_pldmfw_timeout_handler(&pldm_context);
         }
         if (event & Task::PldmEventBits::BgStartBit) {
-            if (record_background_copy_component(sys::flash::config::McuComponentId)
-                != pldm::Status::Ok) {
-                nv::info("record MCU bg component failed\n");
-            }
-
             flash::Data update_state{};
             flash::Data allow_bg_copy{};
             const bool  is_bgcopy_automatic = is_background_copy_automatic(true);
-            bool        ap_bg_in_progress   = false;
-            if constexpr (!nv::vrot::ApList.empty()) {
-                ap_bg_in_progress = nv::vrot::ap_background_copy::is_in_progress();
-            }
-            auto flash_status = flash::Flash::get_data(flash::Key::PdsUpdateState,
+            auto        flash_status        = flash::Flash::get_data(flash::Key::PdsUpdateState,
                                                        update_state);
             if (flash_status != flash::Status::Ok) {
                 update_state = static_cast<flash::Data>(bootloader::Driver::State::Invalid);
@@ -377,11 +382,10 @@ Task::Task()
             nv::flash::ProgressPercent progress{};
             flash_status = flash::Flash::background_copy_query(progress);
 
-            if (!ap_bg_in_progress
-                && update_state != static_cast<flash::Data>(bootloader::Driver::State::Stage)
-                && pldm_context.pldm_state == 0 &&  // idle
-                ((is_bgcopy_automatic || allow_bg_copy == 1)
-                 && flash_status != flash::Status::BackgroundCopyInprogress)) {
+            if (update_state != static_cast<flash::Data>(bootloader::Driver::State::Stage)
+                && pldm_context.pldm_state == NV_PLDM_STATE_IDLE
+                && ((is_bgcopy_automatic || allow_bg_copy == 1)
+                    && flash_status != flash::Status::BackgroundCopyInprogress)) {
                 nv::info("bg init\n");
                 // clean AllowInitBackgroundCopy
                 (void)flash::Flash::set_data(flash::Key::NpdsAllowInitBackgroundCopy, 0);
@@ -411,31 +415,6 @@ Task::Task()
 
             _event.clear(Task::PldmEventBits::BgStartBit);
         }
-        if constexpr (nv::vrot::ApList.size() > 0) {
-            if (event & Task::PldmEventBits::ApBgStartBit) {
-                _event.clear(Task::PldmEventBits::ApBgStartBit);
-                if (pldm_context.pldm_state != 0) {
-                    nv::vrot::ap_background_copy::cancel(true);
-                    pldm_context.is_backup_in_progress = false;
-                    nv::info("ap bg canceled: PLDM busy\n");
-                }
-                else {
-                    pldm_context.is_backup_in_progress = true;
-                    const auto copy_status = nv::vrot::ap_background_copy::service();
-                    const bool in_progress = copy_status
-                                          == nv::flash::Status::BackgroundCopyInprogress;
-                    pldm_context.is_backup_in_progress = in_progress;
-                    if (in_progress) {
-                        auto event_status = _event.set(Task::PldmEventBits::ApBgStartBit);
-                        if (event_status != Event::Status::Ok) {
-                            nv::info("set event ApBgStartBit fail 0x%x\n", event_status);
-                            nv::vrot::ap_background_copy::cancel(true);
-                            pldm_context.is_backup_in_progress = false;
-                        }
-                    }
-                }
-            }
-        }
         if (event & Task::PldmEventBits::BgEndBit) {
             nv::flash::ProgressPercent progress{};
             auto                       status = flash::Flash::background_copy_query(progress);
@@ -460,20 +439,6 @@ Task::Task()
                     case RequestType::AuthMcuFinish: {
                         uint8_t verify_cc = 0;
                         get_mcu_authentication_result(request.buffer[0], verify_cc);
-                        ada_pldmfw_authenticate_handler(&pldm_context, verify_cc);
-                    } break;
-                    case RequestType::AuthApFinish: {
-                        if (request.length < 2) {
-                            break;
-                        }
-                        const auto auth_request_id = request.buffer[1];
-                        if (auth_request_id
-                            != static_cast<uint8_t>(pldm_context.auth_request_id)) {
-                            break;
-                        }
-                        uint8_t verify_cc = 0;
-                        get_ap_authentication_result(
-                            pldm_context.comp_id, request.buffer[0], verify_cc);
                         ada_pldmfw_authenticate_handler(&pldm_context, verify_cc);
                     } break;
                     default: break;
@@ -515,13 +480,6 @@ nv::pldm::Status Task::pldm_tx(const nv::mctp::Packet& packet)
 
 pldm::Status Task::pldm_bg_start()
 {
-    if constexpr (!nv::vrot::ApList.empty()) {
-        if (nv::vrot::ap_background_copy::is_in_progress()) {
-            nv::info("MCU bg rejected: AP bg in progress\n");
-            return pldm::Status::Unknown;
-        }
-    }
-
     ipc::Event& event        = Event::make(EventId::PldmTask);
     auto        event_status = event.set(Task::PldmEventBits::BgStartBit);
 
@@ -530,43 +488,6 @@ pldm::Status Task::pldm_bg_start()
     }
 
     return pldm::Status::Ok;
-}
-
-pldm::Status Task::pldm_ap_bg_start([[maybe_unused]] uint16_t component_id)
-{
-    if constexpr (nv::vrot::ApList.empty()) {
-        return pldm::Status::Unknown;
-    }
-
-    nv::flash::ProgressPercent progress{};
-    if (flash::Flash::background_copy_query(progress)
-        == flash::Status::BackgroundCopyInprogress) {
-        nv::info("AP bg rejected: MCU bg in progress\n");
-        return pldm::Status::Unknown;
-    }
-
-    if (const auto status = record_background_copy_component(component_id);
-        status != pldm::Status::Ok) {
-        return status;
-    }
-
-    ipc::Event& event        = Event::make(EventId::PldmTask);
-    auto        event_status = event.set(Task::PldmEventBits::ApBgStartBit);
-    if (event_status != Event::Status::Ok) {
-        return pldm::Status::EventSetFail;
-    }
-
-    return pldm::Status::Ok;
-}
-
-uint16_t Task::latest_background_copy_component_id()
-{
-    flash::Data component_id{};
-    if (flash::Flash::get_data(flash::Key::NpdsBackgroundCopyComponentId, component_id)
-        != flash::Status::Ok) {
-        return sys::flash::config::McuComponentId;
-    }
-    return static_cast<uint16_t>(component_id);
 }
 
 void Task::on_timer([[maybe_unused]] ipc::Timer& id)

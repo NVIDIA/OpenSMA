@@ -10,7 +10,7 @@ product: Peripherals v15.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.09.10
+processor_version: 26.03.20
 functionalGroups:
 - name: BOARD_InitPeripherals
   UUID: 78304674-57e7-4c05-895d-e21c08633a8a
@@ -869,60 +869,6 @@ static void LP_FLEXCOMM2_init(void) {
 }
 
 /***********************************************************************************************************************
- * I3C1 initialization code
- **********************************************************************************************************************/
-/* clang-format off */
-/* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
-instance:
-- name: 'I3C1'
-- type: 'i3c'
-- mode: 'polling'
-- custom_name_enabled: 'false'
-- type_id: 'i3c_2.12.0'
-- functional_group: 'BOARD_InitPeripherals'
-- peripheral: 'I3C1'
-- config_sets:
-  - fsl_i3c:
-    - i3c_mode: 'master'
-    - clock_config_master:
-      - clockSource: 'FunctionClock'
-      - clockSourceFreq: 'ClocksTool_DefaultInit'
-    - clock_config_slave:
-      - clockSource: 'SlowClock'
-      - clockSourceFreq: 'ClocksTool_DefaultInit'
-    - master_config:
-      - enableMaster: 'kI3C_MasterOn'
-      - disableTimeout: 'false'
-      - hKeep: 'kI3C_MasterHighKeeperNone'
-      - enableOpenDrainStop: 'true'
-      - enableOpenDrainHigh: 'true'
-      - baudRate_Hz:
-        - i3cPushPullBaud: '12500000'
-        - i3cOpenDrainBaud: '2500000'
-        - i2cBaud: '400000'
-    - quick_selection: 'QS_I3C_1'
- * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
-/* clang-format on */
-const i3c_master_config_t I3C1_master_config = {
-  .enableMaster = kI3C_MasterOn,
-  .disableTimeout = false,
-  .hKeep = kI3C_MasterHighKeeperNone,
-  .enableOpenDrainStop = true,
-  .enableOpenDrainHigh = true,
-  .baudRate_Hz = {
-    .i3cPushPullBaud = 12500000UL,
-    .i3cOpenDrainBaud = 2500000UL,
-    .i2cBaud = 400000UL
-  },
-  .slowClock_Hz = I3C1_SLOW_CLOCK_SOURCE,
-};
-
-static void I3C1_init(void) {
-  /* Initialization function */
-  I3C_MasterInit(I3C1_PERIPHERAL, &I3C1_master_config, I3C1_CLOCK_SOURCE_MASTER);
-}
-
-/***********************************************************************************************************************
  * LP_FLEXCOMM9 initialization code
  **********************************************************************************************************************/
 /* clang-format off */
@@ -1051,7 +997,6 @@ void BOARD_InitPeripherals(void)
   LP_FLEXCOMM6_init();
   LP_FLEXCOMM4_init();
   LP_FLEXCOMM2_init();
-  I3C1_init();
   LP_FLEXCOMM9_init();
 }
 

@@ -60,7 +60,7 @@ void LstpRouter::send_error(std::span<uint8_t>& buffer, LstpStatus status)
     // request without waiting for response - protocol violation, acceptable to drop
     // Exception: GPIO interrupts - GPIO channel implementation should handle queueing
     if ((status != LstpStatus::Success) && (status != LstpStatus::SilentDrop)
-        && (req_hdr.channel_id < nv::lstp::LstpNumChannels)
+        && (req_hdr.channel_id < nv::lstp::project_lstp_channels().size())
         && !USB_IS_LSTP_TX_PENDING(g_lstp, req_hdr.channel_id)
         && (g_lstp.tx_busy_ch_id != req_hdr.channel_id)) {
         auto& tx_buf             = g_lstp.tx_buffers[req_hdr.channel_id];
@@ -82,9 +82,19 @@ LstpStatus LstpRouter::receive_spi(std::span<uint8_t>& buffer)
     // LSTP allows only one outstanding request per channel, so the SPI port
     // should never be busy here. If the host violates that, silently drop the
     // packet rather than racing a Busy response against the real in-flight
-    // response.
+    // response. A held READY-release result still owns the channel response
+    // slot; recovery remains a separate Busy condition.
     auto&      req_hdr = from<LstpHdr>(buffer.data());
-    const auto port = static_cast<nv::spi::Port>(LstpChannels.at(req_hdr.channel_id).info.id);
+    const auto port    = static_cast<nv::spi::Port>(
+        project_lstp_channels()[req_hdr.channel_id].info.id);
+    if constexpr (nv::spi::WaitGpioSpiWar) {
+        if (nv::spi::bm::SpiManager::is_awaiting_ready_release(port)) {
+            return LstpStatus::SilentDrop;
+        }
+        if (nv::spi::bm::SpiManager::is_recovery(port)) {
+            return LstpStatus::Busy;
+        }
+    }
     if (nv::spi::bm::SpiManager::is_busy(port)) {
         return LstpStatus::SilentDrop;
     }
@@ -103,17 +113,18 @@ LstpStatus LstpRouter::receive_spi(std::span<uint8_t>& buffer)
 
 void LstpRouter::send_spi(nv::spi::Port port)
 {
-    uint8_t channel_id;
+    const auto channels = project_lstp_channels();
+    uint8_t    channel_id;
     for (channel_id = static_cast<uint8_t>(LstpChannelType::Management);
-         channel_id < LstpNumChannels;
+         channel_id < channels.size();
          channel_id++) {
-        const auto& channel_info = LstpChannels.at(channel_id).info;
+        const auto& channel_info = channels[channel_id].info;
         if ((channel_info.type == LstpChannelType::Spi)
             && (static_cast<nv::spi::Port>(channel_info.id) == port)) {
             break;
         }
     }
-    if (channel_id >= LstpNumChannels) {
+    if (channel_id >= channels.size()) {
         return;
     }
 

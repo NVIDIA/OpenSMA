@@ -53,17 +53,15 @@ private:
     std::array<uint8_t, edmaXferBufSize> edmaXferRxBuffer{};
 
     lpuart_edma_handle_t edmaLpuartHandle{};
-    lpuart_transfer_t    edmaLpuartXferTx{.data     = edmaXferTxBuffer.data(),
-                                          .dataSize = edmaXferTxBuffer.size()};
-    lpuart_transfer_t    edmaLpuartXferRx{.data     = edmaXferRxBuffer.data(),
-                                          .dataSize = edmaXferRxBuffer.size()};
+    lpuart_transfer_t    edmaLpuartXferTx{};
+    lpuart_transfer_t    edmaLpuartXferRx{};
 
     volatile bool edmaTxOngoing{false};
     volatile bool edmaRxOngoing{false};
 
 protected:
     Status init_clock(nv::vruart::Instance instance);
-    Status init_lpuart(nv::vruart::Baudrate baudrate);
+    Status init_lpuart(nv::vruart::Baudrate baudrate, uint32_t srcClockHz);
     Status init_signal(const nv::vruart::Signal& tx, const nv::vruart::Signal& rx);
     Status init_edma(nv::vruart::EdmaInst edmaInstance,
                      nv::vruart::EdmaChn  edmaTxChn,

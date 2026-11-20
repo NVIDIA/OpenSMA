@@ -140,7 +140,8 @@ public:
     // Task interface
     void               bind(nv::i2c::Port      i2c_bus,
                             nv::gpio::GpioPort alert_port_id,
-                            nv::gpio::GpioPin  alert_pin_id);
+                            nv::gpio::GpioPin  alert_pin_id,
+                            uint8_t            lstp_channel_id);
     void               start();
     std::span<uint8_t> get_tx_buffer();
     bool               handle_tx();
@@ -193,6 +194,10 @@ private:
     nv::i2c::Port  _i2c_bus;
     gpio::GpioPort _alert_port_id;
     gpio::GpioPin  _alert_pin_id;
+
+    // LSTP channel this engine belongs to. Stamped into every response so the host can tell
+    // which interface a reply came from.
+    uint8_t _lstp_channel_id;
 
     // Private helpers for I2C slave event handling (ISR context)
     bool i2c_ack_bmc(bool is_read);

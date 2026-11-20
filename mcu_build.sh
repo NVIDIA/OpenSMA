@@ -3,13 +3,14 @@
 # print the usage of the script
 for arg in "$@"; do
     if [[ "$arg" == "-h" || "$arg" == "--help" || "$arg" == "help" ]]; then
-        echo "Usage: $0 [PROJECT=project] [PLATFORM=platform] [BOARD=board] [MODE=mode] [SIGN_KEYSET=keyset] [VERSION=version] [STREAMBOOT=1] [RUN_LOCAL=1] [BUILD_ONLY=1]"
+        echo "Usage: $0 [PROJECT=project] [PLATFORM=platform] [BOARD=board] [MODE=mode] [SIGN_KEYSET=keyset] [VERSION=version] [FMC_ORDINAL_NUMBER=1..99999] [STREAMBOOT=1] [RUN_LOCAL=1] [BUILD_ONLY=1]"
         echo "PROJECT: project name (for example: pg540)"
         echo "PLATFORM: platform name (for example: mcxn236)"
-        echo "BOARD: board name (for example: pg540). For px9me/pd4a4/pd4b4 the FRDM-MCXN947 devkit variant is BOARD=devkit."
+        echo "BOARD: board name (for example: pg540). For px9me/pd4a4/pd4b4/bf41 the FRDM-MCXN947 devkit variant is BOARD=devkit."
         echo "MODE: mode name (for example: dev)"
         echo "SIGN_KEYSET: keyset name (for example: S0). If using local signing, use 'local' or 'local-debug' for debug signing, or 'local-prod' for prod sign."
         echo "VERSION: firmware version (for example: 02.0010.0000)"
+        echo "FMC_ORDINAL_NUMBER: 1..1000 use the NVIDIA template; 1001..99999 use the OpenSMA template"
         echo "STREAMBOOT: set to 1 to generate multi-binary files (for example: STREAMBOOT=1)"
         echo "RUN_LOCAL: set to 1 to execute local without docker (for example: RUN_LOCAL=1)"
         echo "BUILD_ONLY: set to 1 to only build without signing and downloading (for example: BUILD_ONLY=1)"
@@ -26,6 +27,7 @@ for ARG in "$@"; do
         SIGN_KEYSET=*) SIGN_KEYSET="${ARG#*=}" ;;
         VERSION=*) VERSION="${ARG#*=}" ;;
         CODE_GROUP_INDEX=*) CODE_GROUP_INDEX="${ARG#*=}" ;;
+        FMC_ORDINAL_NUMBER=*) FMC_ORDINAL_NUMBER="${ARG#*=}" ;;
         STREAMBOOT=*) STREAMBOOT="${ARG#*=}" ;;
         RUN_LOCAL=*) RUN_LOCAL="${ARG#*=}" ;;
         BUILD_ONLY=*) BUILD_ONLY="${ARG#*=}" ;;
@@ -40,9 +42,22 @@ MODE="${MODE:-$MODE_ENV}"
 SIGN_KEYSET="${SIGN_KEYSET:-$SIGN_KEYSET_ENV}"
 VERSION="${VERSION:-$VERSION_ENV}"
 CODE_GROUP_INDEX="${CODE_GROUP_INDEX:-$CODE_GROUP_INDEX_ENV}"
+FMC_ORDINAL_NUMBER="${FMC_ORDINAL_NUMBER:-$FMC_ORDINAL_NUMBER_ENV}"
 BUILD_ONLY="${BUILD_ONLY:-$BUILD_ONLY_ENV}"
 export MCU_TOOLCHAIN_ROOT="${MCU_TOOLCHAIN_ROOT:-/toolchain}"
 UBS_DOCKER="${UBS_DOCKER:-gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:latest}"
+
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then
+    if [[ ! "$FMC_ORDINAL_NUMBER" =~ ^[0-9]{1,5}$ ]]; then
+        echo "FMC_ORDINAL_NUMBER must be a decimal integer in the range 1..99999."
+        exit 1
+    fi
+    FMC_ORDINAL_NUMBER=$((10#$FMC_ORDINAL_NUMBER))
+    if ((FMC_ORDINAL_NUMBER < 1)); then
+        echo "FMC_ORDINAL_NUMBER must be a decimal integer in the range 1..99999."
+        exit 1
+    fi
+fi
 
 run_objcopy() {
     local input_file="$1"
@@ -78,6 +93,10 @@ run_build_flow() {
         env_vars+=(CODE_GROUP_INDEX="$CODE_GROUP_INDEX")
     fi
 
+    if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then
+        env_vars+=(FMC_ORDINAL_NUMBER="$FMC_ORDINAL_NUMBER")
+    fi
+
     if [[ -n "$RUN_LOCAL" ]]; then
         env_vars+=(RUN_LOCAL="$RUN_LOCAL")
     fi
@@ -92,12 +111,14 @@ run_build_flow() {
 }
 
 # Generate individual core platforms from "both" platforms
-if [[ "$PLATFORM" == "mcxn547-both" || "$PLATFORM" == "mcxn556-both" ]]; then
+if [[ "$PLATFORM" == "mcxn547-both" || "$PLATFORM" == "mcxn556-both" || "$PLATFORM" == "mcxn557-both" ]]; then
     # Extract base platform name
     if [[ "$PLATFORM" == "mcxn547-both" ]]; then
         BASE_PLATFORM="mcxn547"
     elif [[ "$PLATFORM" == "mcxn556-both" ]]; then
         BASE_PLATFORM="mcxn556"
+    elif [[ "$PLATFORM" == "mcxn557-both" ]]; then
+        BASE_PLATFORM="mcxn557"
     else
         echo "Error: Invalid platform $PLATFORM"
         exit 1
@@ -108,12 +129,26 @@ if [[ "$PLATFORM" == "mcxn547-both" || "$PLATFORM" == "mcxn556-both" ]]; then
 
     run_build_flow "$CORE1_PLATFORM"
 
-    REAL_PROJECT="${PROJECT%-coverage}" # this is a workaround to get project name without -coverage suffix
+    REAL_PROJECT="${PROJECT%-coverage}" # artifact basename — strips -coverage suffix
+    # SRC_PROJECT is the source-tree directory name. Defaults to REAL_PROJECT,
+    # but a project .mk can redirect to another project's tree via:
+    #     override PROJECT := <other_project>
+    # Used by *_lite variants that reuse another project's sources while
+    # producing their own build artifacts under a distinct PROJECT name.
+    SRC_PROJECT="$REAL_PROJECT"
+    PROJ_MK="etc/projects/${REAL_PROJECT}.mk"
+    if [[ -f "$PROJ_MK" ]]; then
+        OVERRIDE_VAL=$(grep -E '^[[:space:]]*override[[:space:]]+PROJECT[[:space:]]*:?=' "$PROJ_MK" | head -1 | sed -E 's/^[[:space:]]*override[[:space:]]+PROJECT[[:space:]]*:?=[[:space:]]*//' | awk '{print $1}')
+        if [[ -n "$OVERRIDE_VAL" ]]; then
+            SRC_PROJECT="$OVERRIDE_VAL"
+            echo "Project ${REAL_PROJECT} reuses source tree from ${SRC_PROJECT} (override PROJECT in ${PROJ_MK})"
+        fi
+    fi
     CORE1_ELF="build/${PROJECT}-${CORE1_PLATFORM}-${MODE}/${REAL_PROJECT}.elf"
     CORE1_BIN="build/${PROJECT}-${CORE1_PLATFORM}-${MODE}/${REAL_PROJECT}.bin"
     CORE1_READELF="build/${PROJECT}-${CORE1_PLATFORM}-${MODE}/${REAL_PROJECT}.readelf"
-    CORE1_C="src/projects/${REAL_PROJECT}/core0/core1_image.c"
-    CORE1_LD="src/projects/${REAL_PROJECT}/core0/sys/${BASE_PLATFORM}/generated_core1.ld"
+    CORE1_C="src/projects/${SRC_PROJECT}/core0/core1_image.c"
+    CORE1_LD="src/projects/${SRC_PROJECT}/core0/sys/${BASE_PLATFORM}/generated_core1.ld"
 
     # Generate binary file from ELF
     if [[ -f "$CORE1_ELF" ]]; then
@@ -183,8 +218,8 @@ EOF
     } >> "$CORE1_LD"
 
     # Fix any incorrect INCLUDE line in the linker script
-    LINKER_SCRIPT="src/projects/${REAL_PROJECT}/core0/sys/${BASE_PLATFORM}/linker_script.ld"
-    CORRECT_INCLUDE="INCLUDE \"src/projects/${REAL_PROJECT}/core0/sys/${BASE_PLATFORM}/generated_core1.ld\""
+    LINKER_SCRIPT="src/projects/${SRC_PROJECT}/core0/sys/${BASE_PLATFORM}/linker_script.ld"
+    CORRECT_INCLUDE="INCLUDE \"src/projects/${SRC_PROJECT}/core0/sys/${BASE_PLATFORM}/generated_core1.ld\""
     
     if [[ -f "$LINKER_SCRIPT" ]]; then
         # Replace any INCLUDE line (regardless of what path it contains) with the correct path
@@ -215,6 +250,7 @@ if [[ -n "$BOARD" ]]; then BUILD_CMD+=" BOARD=$BOARD"; fi
 if [[ -n "$MODE" ]]; then BUILD_CMD+=" MODE=$MODE"; fi
 if [[ -n "$VERSION" ]]; then BUILD_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then BUILD_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then BUILD_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
 if [[ -n "$STREAMBOOT" ]]; then BUILD_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then BUILD_CMD+=" run_local=$RUN_LOCAL"; fi
 if [[ "$BUILD_ONLY" == "1" ]]; then BUILD_CMD+=" BUILD_ONLY=1"; fi
@@ -236,6 +272,7 @@ if [[ "$STREAMBOOT" == "1" ]]; then
     if [[ -n "$MODE" ]]; then MULTI_BIN_CMD+=" MODE=$MODE"; fi
     if [[ -n "$SIGN_KEYSET" ]]; then MULTI_BIN_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
     if [[ -n "$VERSION" ]]; then MULTI_BIN_CMD+=" VERSION=$VERSION"; fi
+    if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then MULTI_BIN_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
     if [[ -n "$STREAMBOOT" ]]; then MULTI_BIN_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
     if [[ -n "$RUN_LOCAL" ]]; then MULTI_BIN_CMD+=" run_local=$RUN_LOCAL"; fi
     if [[ "$BUILD_ONLY" == "1" ]]; then MULTI_BIN_CMD+=" BUILD_ONLY=1"; fi
@@ -255,9 +292,33 @@ if [[ "$BUILD_ONLY" == "1" ]]; then
     exit 0
 fi
 
-if [[ "$PLATFORM" == "mcxn547-core1" || "$PLATFORM" == "mcxn556-core1" ]]; then
+if [[ "$PLATFORM" == "mcxn547-core1" || "$PLATFORM" == "mcxn556-core1" || "$PLATFORM" == "mcxn557-core1" ]]; then
     echo "Platform $PLATFORM is not supported for signing."
     exit 0
+fi
+
+# Per-PROJECT signing-parameter overrides.
+# etc/plugins/sign-request.mk normally derives SIGN_MBI_CFG / SIGN_SB_CFG from
+# $(PATH_PROJECT)/sign-parameters_<type>_$(CHIP).json. When a project .mk uses
+# `override PROJECT := <other>` to reuse another project's source tree, that
+# path resolves into the donor project, so the donor's signing params get used.
+# Allow per-variant overrides by placing JSONs at:
+#   src/projects/${REAL_PROJECT}/core0/sign-parameters_<type>_<chip>.json
+# When found, pass them through as make-variable overrides on the
+# `./ubs local-sign` and `./ubs sign-request-*` command lines. Block runs
+# ahead of both the local-sign and 3S-sign branches so both pick it up.
+REAL_PROJECT="${PROJECT%-coverage}"
+SIGN_CHIP="${PLATFORM%-*}"
+SIGN_PARAM_DIR="src/projects/${REAL_PROJECT}/core0"
+SIGN_MBI_OVERRIDE=""
+SIGN_SB_OVERRIDE=""
+if [[ -f "${SIGN_PARAM_DIR}/sign-parameters_mbi_${SIGN_CHIP}.json" ]]; then
+    SIGN_MBI_OVERRIDE=" SIGN_MBI_CFG=${SIGN_PARAM_DIR}/sign-parameters_mbi_${SIGN_CHIP}.json"
+    echo "Using per-PROJECT signing params: ${SIGN_PARAM_DIR}/sign-parameters_mbi_${SIGN_CHIP}.json"
+fi
+if [[ -f "${SIGN_PARAM_DIR}/sign-parameters_sb_${SIGN_CHIP}.json" ]]; then
+    SIGN_SB_OVERRIDE=" SIGN_SB_CFG=${SIGN_PARAM_DIR}/sign-parameters_sb_${SIGN_CHIP}.json"
+    echo "Using per-PROJECT signing params: ${SIGN_PARAM_DIR}/sign-parameters_sb_${SIGN_CHIP}.json"
 fi
 
 # Local signing
@@ -281,16 +342,18 @@ if [[ "$SIGN_KEYSET" == "local"* ]]; then
     if [[ -n "$BOARD" ]]; then LOCAL_SIGN_CMD+=" BOARD=$BOARD"; fi
     if [[ -n "$MODE" ]]; then LOCAL_SIGN_CMD+=" MODE=$MODE"; fi
     if [[ -n "$VERSION" ]]; then LOCAL_SIGN_CMD+=" VERSION=$VERSION"; fi
+    if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then LOCAL_SIGN_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
     if [[ -n "$CODE_GROUP_INDEX" ]]; then LOCAL_SIGN_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
     if [[ -n "$STREAMBOOT" ]]; then LOCAL_SIGN_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
     if [[ -n "$RUN_LOCAL" ]]; then LOCAL_SIGN_CMD+=" run_local=$RUN_LOCAL"; fi
     
-    # Add UBS_DOCKER argument for mcxn556 platforms
-    if [[ "$PLATFORM" == mcxn556* ]]; then
+    # Add UBS_DOCKER argument for mcxn556/mcxn557 platforms
+    if [[ "$PLATFORM" == mcxn556* || "$PLATFORM" == mcxn557* ]]; then
         UBS_556_DOCKER_IMAGE="${UBS_556_DOCKER_IMAGE:-gitlab-master.nvidia.com:5005/gfw/chips/mcu/mcxn236/ubs-556:0.0.3}"
         LOCAL_SIGN_CMD+=" UBS_DOCKER=${UBS_556_DOCKER_IMAGE}"
         echo "Assign UBS_DOCKER for mcxn556 platform local signing"
     fi
+    LOCAL_SIGN_CMD+="$SIGN_MBI_OVERRIDE$SIGN_SB_OVERRIDE"
 
     echo "Running: $LOCAL_SIGN_CMD"
     eval $LOCAL_SIGN_CMD
@@ -310,8 +373,10 @@ if [[ -n "$MODE" ]]; then SIGN_REQ_MBI_CMD+=" MODE=$MODE"; fi
 if [[ -n "$SIGN_KEYSET" ]]; then SIGN_REQ_MBI_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
 if [[ -n "$VERSION" ]]; then SIGN_REQ_MBI_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_REQ_MBI_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then SIGN_REQ_MBI_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
 if [[ -n "$STREAMBOOT" ]]; then SIGN_REQ_MBI_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then SIGN_REQ_MBI_CMD+=" run_local=$RUN_LOCAL"; fi
+SIGN_REQ_MBI_CMD+="$SIGN_MBI_OVERRIDE"
 
 echo "Running: $SIGN_REQ_MBI_CMD"
 eval $SIGN_REQ_MBI_CMD
@@ -328,6 +393,7 @@ if [[ -n "$BOARD" ]]; then SIGN_DL_MBI_CMD+=" BOARD=$BOARD"; fi
 if [[ -n "$MODE" ]]; then SIGN_DL_MBI_CMD+=" MODE=$MODE"; fi
 if [[ -n "$VERSION" ]]; then SIGN_DL_MBI_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_DL_MBI_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then SIGN_DL_MBI_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
 if [[ -n "$STREAMBOOT" ]]; then SIGN_DL_MBI_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then SIGN_DL_MBI_CMD+=" run_local=$RUN_LOCAL"; fi
 
@@ -347,8 +413,10 @@ if [[ -n "$MODE" ]]; then SIGN_REQ_SB_CMD+=" MODE=$MODE"; fi
 if [[ -n "$SIGN_KEYSET" ]]; then SIGN_REQ_SB_CMD+=" SIGN_KEYSET=$SIGN_KEYSET"; fi
 if [[ -n "$VERSION" ]]; then SIGN_REQ_SB_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_REQ_SB_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then SIGN_REQ_SB_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
 if [[ -n "$STREAMBOOT" ]]; then SIGN_REQ_SB_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then SIGN_REQ_SB_CMD+=" run_local=$RUN_LOCAL"; fi
+SIGN_REQ_SB_CMD+="$SIGN_SB_OVERRIDE"
 
 echo "Running: $SIGN_REQ_SB_CMD"
 eval $SIGN_REQ_SB_CMD
@@ -365,6 +433,7 @@ if [[ -n "$BOARD" ]]; then SIGN_DL_SB_CMD+=" BOARD=$BOARD"; fi
 if [[ -n "$MODE" ]]; then SIGN_DL_SB_CMD+=" MODE=$MODE"; fi
 if [[ -n "$VERSION" ]]; then SIGN_DL_SB_CMD+=" VERSION=$VERSION"; fi
 if [[ -n "$CODE_GROUP_INDEX" ]]; then SIGN_DL_SB_CMD+=" CODE_GROUP_INDEX=$CODE_GROUP_INDEX"; fi
+if [[ -n "$FMC_ORDINAL_NUMBER" ]]; then SIGN_DL_SB_CMD+=" GD_FMC_ORDINAL_NUMBER=$FMC_ORDINAL_NUMBER"; fi
 if [[ -n "$STREAMBOOT" ]]; then SIGN_DL_SB_CMD+=" STREAMBOOT=$STREAMBOOT"; fi
 if [[ -n "$RUN_LOCAL" ]]; then SIGN_DL_SB_CMD+=" run_local=$RUN_LOCAL"; fi
 

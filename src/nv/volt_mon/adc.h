@@ -121,7 +121,7 @@ public:
      * Timer-driven implementation API. These are defined by volt_mon/timer and are
      * unused by the legacy ISR-driven implementation.
      */
-    static void trigger_sampling(AdcInstance adcId);
+    static void trigger_sampling(AdcInstance adcId, uint32_t triggerMask);
     static bool pop_result(AdcInstance adcId, sys::adc::ADC::AdcConvResult& result);
 
     static const char* to_float_string(uint16_t value);

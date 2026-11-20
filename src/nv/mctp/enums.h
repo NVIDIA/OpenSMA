@@ -50,6 +50,42 @@ using PacketType = pdk::mctp::app::PacketType;
 
 using VdmCmd = pdk::mctp::platforms::VdmCmd;
 
+enum class I2cFreqOp : uint8_t
+{
+    Get = 0x01,
+    Set = 0x02,
+};
+
+enum class I2cFreqCode : uint8_t
+{
+    Default = 0x00,  ///< board default, never overridden at runtime
+    F100k   = 0x01,
+    F400k   = 0x02,
+    F1M     = 0x03,
+};
+
+constexpr uint32_t i2c_freq_code_to_hz(I2cFreqCode code)
+{
+    switch (code) {
+        case I2cFreqCode::F100k: return 100000U;
+        case I2cFreqCode::F400k: return 400000U;
+        case I2cFreqCode::F1M  : return 1000000U;
+        default                : return 0U;
+    }
+}
+
+enum class BusModeOp : uint8_t
+{
+    Get = 0x01,
+    Set = 0x02,
+};
+
+// I2CS master bus selection for the bus mode VDM (bug 6478775)
+enum class BusType : uint8_t
+{
+    I2c = 0x00,  ///< MCU I2C as I2CS master
+    I3c = 0x01,  ///< MCU I3C as I2CS master
+};
 // Common Status Codes to be used in NSM message handlers.
 enum class NsmStatus : uint8_t
 {
@@ -385,8 +421,9 @@ enum class NsmPlatEnvCmdCode : uint8_t
     GetCurrentPowerDraw        = 0x03,
     GetInventoryInformation    = 0x0C,
     GetVoltage                 = 0x0F,
-    GetLeakDetectionInfo       = 0x17,
     SetLeakDetectionThresholds = 0x16,
+    GetLeakDetectionInfo       = 0x17,
+    GetCurrent                 = 0x19,
 };
 
 // NVIDIA TYPE 4 Device Diagnostics Command Code
@@ -397,8 +434,8 @@ enum class NsmDevDiagCmdCode : uint8_t
     GetDeviceHscAlert            = 0x64,
     EnableDisableWriteProtection = 0x65,
     ClearHscFaults               = 0x6D,
-    GetCpldRegisterTable         = 0x6E,
-    BridgePortRecovery           = 0x70,
+    // 0x6E is reserved.
+    BridgePortRecovery = 0x70,
 };
 
 // NVIDIA TYPE 5 Device Configuration Command Code
@@ -454,8 +491,7 @@ enum class DeviceModeIndex : uint32_t
     SoCPowerBrakeEnabled             = 0x0A,
     NcsiMac                          = 0x11,
     SoCThermBrakeEnabled             = 0x12,
-    ProgramCpldFeatureRow            = 0x15,
-    OtpCpldFeatureRow                = 0x16,
+    // 0x15 and 0x16 are reserved.
 };
 
 /** Sensors used in Type 3 - Get Temperature Reading */
@@ -547,8 +583,21 @@ enum T3Voltage : uint8_t
     Voltage_Hsc_Sby_Vin  = 202,  // Fractal HSC SBY voltage input
     Voltage_Hscc_Vout    = 208,  // HSCC voltage output, Fractal North HSCC
     Voltage_Hscc_Vout_2  = 209,  // HSCC voltage output 2, Fractal South HSCC
+    PorImon0             = 220,  // POR-only IMON voltage 0
+    PorImon1             = 221,  // POR-only IMON voltage 1
+    PorImon2             = 222,  // POR-only IMON voltage 2
+    PorImon3             = 223,  // POR-only IMON voltage 3
     Voltage_Hscc_Vin     = 224,  // HSCC voltage input, Fractal North HSCC
     Voltage_Hscc_Vin_2   = 225,  // HSCC voltage input 2, Fractal South HSCC
+};
+
+// NSM Type 3 Get Current sensor IDs
+enum T3Current : uint8_t
+{
+    Current_0 = 0,
+    Current_1 = 1,
+    Current_2 = 2,
+    Current_3 = 3,
 };
 
 enum NsmPlatEnvLeakSensors : uint8_t
@@ -557,6 +606,9 @@ enum NsmPlatEnvLeakSensors : uint8_t
     NsmPlatEnvLeakSensorManifold  = 1,
     NsmPlatEnvLeakSensorOrchidCPX = 2,
     NsmPlatEnvLeakSensorBF4       = 3,
+    NsmPlatEnvLeakSensorBase1     = 1,
+    NsmPlatEnvLeakSensorBase2     = 4,
+    NsmPlatEnvLeakSensorBase3     = 5,
     NsmPlatEnvLeakSensorsSize
 };
 
@@ -736,6 +788,19 @@ enum GpioEventSource : uint8_t
     PhysicalGpio = 0,
     VirtualGpio  = 1,
     SpoofingGpio = 2,
+};
+
+// ----- NSM T5 Write Protection Settings response
+// Bit positions within byte 0 of the WP Settings response (data_index 0x00)
+// per NSM MCU Usage Specification v0.5 section 7.1.4. The actual supported-
+// function list is product-specific and is declared in each project's
+// config.h via the response_bit_pos field of WriteProtectionGpioConfig.
+enum class T5SmaBaseboardWpResponseBit : uint8_t
+{
+    FruEeprom  = 1,  // bit 1: WP_BASEBOARD_FRU_EEPROM
+    NvswQm4Spi = 3,  // bit 3: WP_NVSW_QM4_SPI
+    Cx9Spi     = 4,  // bit 4: WP_CX9_SPI
+    GpuSpi     = 7,  // bit 7: WP_GPU_SPI
 };
 
 }  // namespace nv::mctp

@@ -25,7 +25,7 @@ using namespace nv::ipc;
 Event& Event::make(EventId id)
 {
     // pre-conditions
-    nv::always_assert(common::is_in_range(id));
+    NV_ALWAYS_ASSERT_NO_LOG(common::is_in_range(id));
 
     auto obj_mem = Supervisor::inst().memory_for(id);
     if (obj_mem->obj_is_allocated) {

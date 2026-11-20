@@ -69,7 +69,7 @@ bool FaultLogger::fault(Fault fault, const FaultBuffer& data, uint8_t size, uint
         FaultEntryStart + index * FaultEntrySize, nv::bootloader::Driver::current_boot_index());
     nv::flash::Flash::write_phrase(Address, item.to_span());
 
-    auto driver = nv::uart::Driver(static_cast<nv::uart::Port>(nv::ipc::UartInstance));
+    auto driver = nv::uart::Driver(nv::uart::console_port());
     std::array<uint8_t, sizeof(FaultItem) + 2> dump_buffer{};
     dump_buffer.at(0)  = DumpHeadMagicFault;
     dump_buffer.back() = DumpTailMagicFault;

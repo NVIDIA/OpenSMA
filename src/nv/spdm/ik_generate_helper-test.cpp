@@ -19,6 +19,9 @@
 
 #include "nv/ut/unittest.h"
 
+#include <algorithm>
+#include <string_view>
+
 using namespace nv::spdm::ik;
 using namespace ut;
 
@@ -29,8 +32,9 @@ uint8_t certificate_tbs_length_lsb(DevIkCertificateProfile profile,
 {
     DevIkRequest req{};
     req.fmc_ordinal_number = fmc_ordinal;
+    const auto fmc_profile = nv::spdm::cert::certificate_profile_from_fmc_ordinal(fmc_ordinal);
 
-    DevIkHelper                  helper(req, profile);
+    DevIkHelper                  helper(req, profile, fmc_profile);
     nv::spdm::certlib::CertArray certificate{};
     std::span<uint8_t>           certificate_span(certificate);
     helper.construct_cert(certificate_span);
@@ -39,36 +43,51 @@ uint8_t certificate_tbs_length_lsb(DevIkCertificateProfile profile,
     return certificate.at(TbsLengthLsbOffset);
 }
 
-nv::spdm::certlib::CertArray make_certificate(DevIkCertificateProfile profile, bool is_fmc_v3)
+constexpr std::array<uint8_t, 5>
+ordinal_for_profile(nv::spdm::cert::FmcCertificateProfile profile)
+{
+    if (profile == nv::spdm::cert::FmcCertificateProfile::LegacyV3) {
+        return {'0', '0', '0', '0', '3'};
+    }
+    if (profile == nv::spdm::cert::FmcCertificateProfile::OpenSmaV4) {
+        return {'0', '1', '0', '0', '1'};
+    }
+    return {'0', '0', '0', '0', '4'};
+}
+
+nv::spdm::certlib::CertArray make_certificate(
+    DevIkCertificateProfile profile, nv::spdm::cert::FmcCertificateProfile fmc_profile)
 {
     DevIkRequest req{};
-    req.fmc_ordinal_number = is_fmc_v3 ? std::array<uint8_t, 5>{'0', '0', '0', '0', '3'}
-                                       : std::array<uint8_t, 5>{'0', '0', '0', '0', '4'};
+    req.fmc_ordinal_number = ordinal_for_profile(fmc_profile);
 
-    DevIkHelper                  helper(req, profile);
+    DevIkHelper                  helper(req, profile, fmc_profile);
     nv::spdm::certlib::CertArray certificate{};
     std::span<uint8_t>           certificate_span(certificate);
     helper.construct_cert(certificate_span);
     return certificate;
 }
 
-TemplateComparisonError compare_equal_templates(DevIkCertificateProfile profile, bool is_fmc_v3)
+TemplateComparisonError compare_equal_templates(
+    DevIkCertificateProfile profile, nv::spdm::cert::FmcCertificateProfile fmc_profile)
 {
-    const auto  certificate   = make_certificate(profile, is_fmc_v3);
-    const auto& layout        = get_dev_ik_template_layout(profile, is_fmc_v3);
+    const auto  certificate   = make_certificate(profile, fmc_profile);
+    const auto& layout        = get_dev_ik_template_layout(profile, fmc_profile);
     const auto  template_span = std::span<const uint8_t>(certificate)
                                    .first(layout.template_size);
     return check_two_template_is_same(template_span, template_span, layout);
 }
 
 TemplateComparisonError
-compare_with_byte_changed(DevIkCertificateProfile profile, bool is_fmc_v3, size_t offset)
+compare_with_byte_changed(DevIkCertificateProfile                profile,
+                          nv::spdm::cert::FmcCertificateProfile fmc_profile,
+                          size_t                                offset)
 {
-    const auto expected  = make_certificate(profile, is_fmc_v3);
+    const auto expected  = make_certificate(profile, fmc_profile);
     auto       actual    = expected;
     actual.at(offset)   ^= 0x01;
 
-    const auto& layout = get_dev_ik_template_layout(profile, is_fmc_v3);
+    const auto& layout = get_dev_ik_template_layout(profile, fmc_profile);
     return check_two_template_is_same(
         std::span<const uint8_t>(expected).first(layout.template_size),
         std::span<const uint8_t>(actual).first(layout.template_size),
@@ -77,16 +96,17 @@ compare_with_byte_changed(DevIkCertificateProfile profile, bool is_fmc_v3, size_
 
 struct TemplateTestCase
 {
-    DevIkCertificateProfile profile;
-    bool                    is_fmc_v3;
+    DevIkCertificateProfile                profile;
+    nv::spdm::cert::FmcCertificateProfile fmc_profile;
 };
 
-constexpr std::array<TemplateTestCase, 4> TemplateTestCases{
+constexpr std::array<TemplateTestCase, 5> TemplateTestCases{
     {
-     {DevIkCertificateProfile::Legacy, true},
-     {DevIkCertificateProfile::Legacy, false},
-     {DevIkCertificateProfile::EdgeLock2Go, true},
-     {DevIkCertificateProfile::EdgeLock2Go, false},
+     {DevIkCertificateProfile::Legacy, nv::spdm::cert::FmcCertificateProfile::LegacyV3},
+     {DevIkCertificateProfile::Legacy, nv::spdm::cert::FmcCertificateProfile::NvidiaV4},
+     {DevIkCertificateProfile::EdgeLock2Go, nv::spdm::cert::FmcCertificateProfile::LegacyV3},
+     {DevIkCertificateProfile::EdgeLock2Go, nv::spdm::cert::FmcCertificateProfile::NvidiaV4},
+     {DevIkCertificateProfile::EdgeLock2Go, nv::spdm::cert::FmcCertificateProfile::OpenSmaV4},
      }
 };
 
@@ -101,25 +121,26 @@ void expect_region_mismatch(const TemplateTestCase&       test_case,
                             TemplateComparisonError       expected_error,
                             bool                          compare_last_byte)
 {
-    const auto& layout = get_dev_ik_template_layout(test_case.profile, test_case.is_fmc_v3);
+    const auto& layout = get_dev_ik_template_layout(test_case.profile, test_case.fmc_profile);
     const auto& region = comparison_region(layout, region_id);
     ensure::is_eq(
-        compare_with_byte_changed(test_case.profile, test_case.is_fmc_v3, region.offset),
+        compare_with_byte_changed(test_case.profile, test_case.fmc_profile, region.offset),
         expected_error);
     if (compare_last_byte) {
         ensure::is_eq(compare_with_byte_changed(test_case.profile,
-                                                test_case.is_fmc_v3,
+                                                test_case.fmc_profile,
                                                 region.offset + region.size - 1),
                       expected_error);
     }
 }
 
 template<typename TemplateType>
-void expect_layout_matches_type(DevIkCertificateProfile profile, bool is_fmc_v3)
+void expect_layout_matches_type(DevIkCertificateProfile                profile,
+                                nv::spdm::cert::FmcCertificateProfile fmc_profile)
 {
     TemplateType typed_template{};
     const auto*  template_begin = reinterpret_cast<const uint8_t*>(&typed_template);
-    const auto&  layout         = get_dev_ik_template_layout(profile, is_fmc_v3);
+    const auto&  layout         = get_dev_ik_template_layout(profile, fmc_profile);
     const auto   byte_offset    = [template_begin](const auto& member) {
         return static_cast<uint16_t>(reinterpret_cast<const uint8_t*>(&member)
                                      - template_begin);
@@ -171,7 +192,7 @@ void expect_layout_matches_type(DevIkCertificateProfile profile, bool is_fmc_v3)
                         typed_template.extension_fields.authority_key_identifier,
                         false);
 
-    if constexpr (TemplateType::CertificateProfile == DevIkCertificateProfile::EdgeLock2Go) {
+    if constexpr (TemplateType::DdaProfile == DevIkCertificateProfile::EdgeLock2Go) {
         const auto& region = comparison_region(
             layout, DevIkTemplateComparisonRegion::AuthorityInformationAccess);
         ensure::is_eq(
@@ -199,9 +220,10 @@ void expect_layout_matches_type(DevIkCertificateProfile profile, bool is_fmc_v3)
 }
 
 template<typename TemplateType>
-void expect_vendor_offsets_match_type(DevIkCertificateProfile profile, bool is_fmc_v3)
+void expect_vendor_offsets_match_type(DevIkCertificateProfile                profile,
+                                      nv::spdm::cert::FmcCertificateProfile fmc_profile)
 {
-    const auto&  layout = get_dev_ik_template_layout(profile, is_fmc_v3);
+    const auto&  layout = get_dev_ik_template_layout(profile, fmc_profile);
     TemplateType typed_template{};
     auto         raw_template = std::span<uint8_t>(reinterpret_cast<uint8_t*>(&typed_template),
                                            sizeof(typed_template));
@@ -233,13 +255,22 @@ void fill_pattern(std::array<uint8_t, Size>& value, uint8_t seed)
 }
 
 template<typename TemplateType>
-void expect_generated_template_matches_type(DevIkCertificateProfile profile, bool is_fmc_v3)
+bool template_contains(std::string_view value)
+{
+    const TemplateType templ{};
+    const auto bytes = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&templ),
+                                                sizeof(templ));
+    return std::search(bytes.begin(), bytes.end(), value.begin(), value.end()) != bytes.end();
+}
+
+template<typename TemplateType>
+void expect_generated_template_matches_type(
+    DevIkCertificateProfile profile, nv::spdm::cert::FmcCertificateProfile fmc_profile)
 {
     DevIkRequest request{};
     fill_pattern(request.serial_number, 0x10);
     fill_pattern(request.dda_ordinal_number, 0x20);
-    request.fmc_ordinal_number = is_fmc_v3 ? std::array<uint8_t, 5>{'0', '0', '0', '0', '3'}
-                                           : std::array<uint8_t, 5>{'0', '0', '0', '0', '4'};
+    request.fmc_ordinal_number = ordinal_for_profile(fmc_profile);
     fill_pattern(request.public_key, 0x30);
     fill_pattern(request.subject_serial_number, 0x40);
     fill_pattern(request.authority_key_identifier, 0x50);
@@ -260,7 +291,7 @@ void expect_generated_template_matches_type(DevIkCertificateProfile profile, boo
     expected.total_certificate.length_msb = WholeCertLength >> 8u;
     expected.total_certificate.length_lsb = WholeCertLength % 256;
 
-    DevIkHelper                  helper(request, profile);
+    DevIkHelper                  helper(request, profile, fmc_profile);
     nv::spdm::certlib::CertArray certificate{};
     std::span<uint8_t>           certificate_span(certificate);
     helper.construct_cert(certificate_span);
@@ -284,6 +315,7 @@ TEST(DevIkHelper, select_all_template_combinations)
 {
     constexpr std::array<uint8_t, 5> FmcV3Ordinal = {'0', '0', '0', '0', '3'};
     constexpr std::array<uint8_t, 5> FmcV4Ordinal = {'0', '0', '0', '0', '4'};
+    constexpr std::array<uint8_t, 5> OpenSmaOrdinal = {'0', '1', '0', '0', '1'};
 
     ensure::is_eq(certificate_tbs_length_lsb(DevIkCertificateProfile::Legacy, FmcV3Ordinal),
                   0x1F);
@@ -293,47 +325,71 @@ TEST(DevIkHelper, select_all_template_combinations)
                   0x1B);
     ensure::is_eq(
         certificate_tbs_length_lsb(DevIkCertificateProfile::EdgeLock2Go, FmcV4Ordinal), 0x1A);
+    ensure::is_eq(
+        certificate_tbs_length_lsb(DevIkCertificateProfile::EdgeLock2Go, OpenSmaOrdinal),
+        0x1B);
+    ensure::is_false(is_supported_template_combination(
+        DevIkCertificateProfile::Legacy,
+        nv::spdm::cert::FmcCertificateProfile::OpenSmaV4));
 };
 
 TEST(DevIkHelper, compare_all_template_combinations)
 {
-    ensure::is_eq(compare_equal_templates(DevIkCertificateProfile::Legacy, true),
-                  TemplateComparisonError::Success);
-    ensure::is_eq(compare_equal_templates(DevIkCertificateProfile::Legacy, false),
-                  TemplateComparisonError::Success);
-    ensure::is_eq(compare_equal_templates(DevIkCertificateProfile::EdgeLock2Go, true),
-                  TemplateComparisonError::Success);
-    ensure::is_eq(compare_equal_templates(DevIkCertificateProfile::EdgeLock2Go, false),
-                  TemplateComparisonError::Success);
+    for (const auto& test_case : TemplateTestCases) {
+        ensure::is_eq(compare_equal_templates(test_case.profile, test_case.fmc_profile),
+                      TemplateComparisonError::Success);
+    }
 };
 
 TEST(DevIkHelper, layout_matches_all_template_types)
 {
-    expect_layout_matches_type<DevIkTemplate>(DevIkCertificateProfile::Legacy, false);
-    expect_layout_matches_type<DevIkTemplateV3>(DevIkCertificateProfile::Legacy, true);
+    using nv::spdm::cert::FmcCertificateProfile;
+    expect_layout_matches_type<DevIkTemplate>(DevIkCertificateProfile::Legacy,
+                                              FmcCertificateProfile::NvidiaV4);
+    expect_layout_matches_type<DevIkTemplateV3>(DevIkCertificateProfile::Legacy,
+                                                FmcCertificateProfile::LegacyV3);
     expect_layout_matches_type<EdgeLock2GoDevIkTemplate>(DevIkCertificateProfile::EdgeLock2Go,
-                                                         false);
+                                                         FmcCertificateProfile::NvidiaV4);
     expect_layout_matches_type<EdgeLock2GoDevIkTemplateV3>(DevIkCertificateProfile::EdgeLock2Go,
-                                                           true);
+                                                           FmcCertificateProfile::LegacyV3);
+    expect_layout_matches_type<OpenSmaEdgeLock2GoDevIkTemplate>(
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::OpenSmaV4);
 
-    expect_vendor_offsets_match_type<DevIkTemplate>(DevIkCertificateProfile::Legacy, false);
-    expect_vendor_offsets_match_type<DevIkTemplateV3>(DevIkCertificateProfile::Legacy, true);
+    expect_vendor_offsets_match_type<DevIkTemplate>(DevIkCertificateProfile::Legacy,
+                                                    FmcCertificateProfile::NvidiaV4);
+    expect_vendor_offsets_match_type<DevIkTemplateV3>(DevIkCertificateProfile::Legacy,
+                                                      FmcCertificateProfile::LegacyV3);
     expect_vendor_offsets_match_type<EdgeLock2GoDevIkTemplate>(
-        DevIkCertificateProfile::EdgeLock2Go, false);
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::NvidiaV4);
     expect_vendor_offsets_match_type<EdgeLock2GoDevIkTemplateV3>(
-        DevIkCertificateProfile::EdgeLock2Go, true);
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::LegacyV3);
+    expect_vendor_offsets_match_type<OpenSmaEdgeLock2GoDevIkTemplate>(
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::OpenSmaV4);
 };
 
 TEST(DevIkHelper, generated_bytes_match_all_template_types)
 {
+    using nv::spdm::cert::FmcCertificateProfile;
     expect_generated_template_matches_type<DevIkTemplate>(DevIkCertificateProfile::Legacy,
-                                                          false);
+                                                          FmcCertificateProfile::NvidiaV4);
     expect_generated_template_matches_type<DevIkTemplateV3>(DevIkCertificateProfile::Legacy,
-                                                            true);
+                                                            FmcCertificateProfile::LegacyV3);
     expect_generated_template_matches_type<EdgeLock2GoDevIkTemplate>(
-        DevIkCertificateProfile::EdgeLock2Go, false);
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::NvidiaV4);
     expect_generated_template_matches_type<EdgeLock2GoDevIkTemplateV3>(
-        DevIkCertificateProfile::EdgeLock2Go, true);
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::LegacyV3);
+    expect_generated_template_matches_type<OpenSmaEdgeLock2GoDevIkTemplate>(
+        DevIkCertificateProfile::EdgeLock2Go, FmcCertificateProfile::OpenSmaV4);
+};
+
+TEST(DevIkHelper, separates_nvidia_and_opensma_edgelock2go_formats)
+{
+    ensure::is_true(
+        template_contains<EdgeLock2GoDevIkTemplate>("http://ocsp.ndis.nvidia.com"));
+    ensure::is_true(template_contains<OpenSmaEdgeLock2GoDevIkTemplate>(
+        "http://ocsp.ndis.opensm.com"));
+    ensure::is_true(template_contains<EdgeLock2GoDevIkTemplate>("NVIDIA"));
+    ensure::is_true(template_contains<OpenSmaEdgeLock2GoDevIkTemplate>("OpenSMA"));
 };
 
 TEST(DevIkHelper, report_each_template_mismatch)
@@ -384,25 +440,26 @@ TEST(DevIkHelper, report_each_template_mismatch)
 TEST(DevIkHelper, preserve_ignored_dynamic_fields)
 {
     for (const auto& test_case : TemplateTestCases) {
-        const auto& layout = get_dev_ik_template_layout(test_case.profile, test_case.is_fmc_v3);
+        const auto& layout = get_dev_ik_template_layout(test_case.profile,
+                                                        test_case.fmc_profile);
 
         if (test_case.profile == DevIkCertificateProfile::EdgeLock2Go) {
             ensure::is_eq(compare_with_byte_changed(test_case.profile,
-                                                    test_case.is_fmc_v3,
+                                                    test_case.fmc_profile,
                                                     layout.serial_number_value_offset),
                           TemplateComparisonError::Success);
         }
         const auto& authority_key_identifier = comparison_region(
             layout, DevIkTemplateComparisonRegion::AuthorityKeyIdentifier);
         ensure::is_eq(compare_with_byte_changed(test_case.profile,
-                                                test_case.is_fmc_v3,
+                                                test_case.fmc_profile,
                                                 authority_key_identifier.offset
                                                     + authority_key_identifier.size),
                       TemplateComparisonError::Success);
         const auto& signature = comparison_region(layout,
                                                   DevIkTemplateComparisonRegion::Signature);
         ensure::is_eq(compare_with_byte_changed(test_case.profile,
-                                                test_case.is_fmc_v3,
+                                                test_case.fmc_profile,
                                                 signature.offset + signature.size),
                       TemplateComparisonError::Success);
     }
@@ -410,10 +467,10 @@ TEST(DevIkHelper, preserve_ignored_dynamic_fields)
 
 TEST(DevIkHelper, reject_short_template_spans)
 {
-    constexpr auto Profile     = DevIkCertificateProfile::Legacy;
-    constexpr bool IsFmcV3     = false;
-    const auto     certificate = make_certificate(Profile, IsFmcV3);
-    const auto&    layout      = get_dev_ik_template_layout(Profile, IsFmcV3);
+    constexpr auto Profile    = DevIkCertificateProfile::Legacy;
+    constexpr auto FmcProfile = nv::spdm::cert::FmcCertificateProfile::NvidiaV4;
+    const auto     certificate = make_certificate(Profile, FmcProfile);
+    const auto&    layout      = get_dev_ik_template_layout(Profile, FmcProfile);
 
     ensure::is_eq(
         check_two_template_is_same(

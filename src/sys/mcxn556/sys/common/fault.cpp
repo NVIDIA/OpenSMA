@@ -26,6 +26,7 @@
 
 #include "nv/watchdog/runtime.h"
 #include "sys/common/c2c_fault.h"
+#include "sys/common/stack_protect.h"
 #include "sys/ipc/mcmgr_wrapper.h"
 #include "mcmgr.h"
 #include "nv/ipc/driver.h"
@@ -151,8 +152,9 @@ bool HandleSecurityViolation(void)
 void Log_Fault(nv::logger::Fault fault, uint32_t lr_value, uint32_t msp)
 {
     // TODO Check sec fault from core 1 also
-    auto cur_core                   = nv::ipc::get_current_core();
-    bool is_core1_trigger_sec_fault = false;
+    auto cur_core = nv::ipc::get_current_core();
+    // Only read on dual-core builds; HandleSecurityViolation() is still called for its logging.
+    [[maybe_unused]] bool is_core1_trigger_sec_fault = false;
     if (fault == nv::logger::Fault::Secure) {
         // Both core in fault state
         if (cur_core == nv::ipc::CoreId::Core0) {
@@ -165,22 +167,26 @@ void Log_Fault(nv::logger::Fault fault, uint32_t lr_value, uint32_t msp)
         }
     }
 
-    if (!is_core1_trigger_sec_fault) {
-        if (c2c_fault::is_trigger_by_another_core_fault()) {
-            c2c_fault::notify_another_core_ready();
+    // Single-core builds have no peer to hand the fault off to, so this handshake would only
+    // signal an absent core and then block for AnotherCoreFaultDumpReadyTimeUs.
+    if constexpr (nv::ipc::EnableDualCore) {
+        if (!is_core1_trigger_sec_fault) {
+            if (c2c_fault::is_trigger_by_another_core_fault()) {
+                c2c_fault::notify_another_core_ready();
+            }
+            else {
+                // coverity[dead_error_line] - dual core
+                auto event_type = cur_core == nv::ipc::CoreId::Core0
+                                    ? nv::ipc::task::EventType::Core0Fault
+                                    : nv::ipc::task::EventType::Core1Fault;
+                (void)sys::ipc::task::Mcmgr::trigger_event_force(
+                    nv::ipc::get_peer_core(), event_type, 0);
+                c2c_fault::wait_another_core_ready();
+            }
         }
         else {
-            // coverity[dead_error_line] - dual core
-            auto event_type = cur_core == nv::ipc::CoreId::Core0
-                                ? nv::ipc::task::EventType::Core0Fault
-                                : nv::ipc::task::EventType::Core1Fault;
-            (void)sys::ipc::task::Mcmgr::trigger_event_force(
-                nv::ipc::get_peer_core(), event_type, 0);
-            c2c_fault::wait_another_core_ready();
+            c2c_fault::notify_another_core_ready();
         }
-    }
-    else {
-        c2c_fault::notify_another_core_ready();
     }
 
     // coverity[cert_int36_c_violation] casting PSP to uint32_t*
@@ -290,20 +296,26 @@ void Log_Fault(nv::logger::Fault fault, uint32_t lr_value, uint32_t msp)
     // Core 0: Wait core 1 dump and dump both core
     // Core 1: Dump self to buffer
     if (cur_core == nv::ipc::CoreId::Core0) {
-        c2c_fault::wait_core1_dump_ready(
-            nv::ipc::task::Driver::get_shared_memory_base_address());
+        if constexpr (nv::ipc::EnableDualCore) {
+            c2c_fault::wait_core1_dump_ready(
+                nv::ipc::task::Driver::get_shared_memory_base_address());
+        }
 
         nv::logger::FaultBuffer fault_buffer{};
         copy_dump_info_with_buffer(fault_buffer.data(), fault, stack_ptr);
         nv::logger::FaultLogger::fault(fault, fault_buffer, nv::logger::FaultDataSize);
 
-        c2c_fault::dump_core1_fault_info();
+        if constexpr (nv::ipc::EnableDualCore) {
+            c2c_fault::dump_core1_fault_info();
+        }
     }
     // coverity[dead_error_line] - dual core
     else if (cur_core == nv::ipc::CoreId::Core1) {
-        nv::logger::FaultBuffer fault_buffer{};
-        copy_dump_info_with_buffer(fault_buffer.data(), fault, stack_ptr);
-        c2c_fault::core_1_write_fault_info(fault_buffer.data(), fault, true);
+        if constexpr (nv::ipc::EnableDualCore) {
+            nv::logger::FaultBuffer fault_buffer{};
+            copy_dump_info_with_buffer(fault_buffer.data(), fault, stack_ptr);
+            c2c_fault::core_1_write_fault_info(fault_buffer.data(), fault, true);
+        }
     }
 }
 
@@ -348,6 +360,28 @@ void SEC_VIO_IRQHandler(void)
     lr_value          = (uint32_t)__builtin_return_address(0);
     uint32_t msp      = (uint32_t)__get_MSP();
     Log_Fault(nv::logger::Fault::Secure, lr_value, msp);
+    if constexpr (nv::ipc::EnableRuntimeWdt) {
+        sys::watchdog::WwdtDriver::trigger_wdt_reset_if_enabled(sys::watchdog::wwdt1);
+    }
+    // coverity[no_escape] suppress warning for Infinite loop with no exit
+    while (1) {};
+}
+
+// Set by __stack_chk_fail (stack_protect.cpp); the return address of the frame whose canary
+// was smashed.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NV_SHARED_BSS volatile uint32_t g_stack_chk_return_addr = 0;
+
+// Software-triggered by __stack_chk_fail. Runs in handler mode on the MSP, so (a) the logging
+// happens on a fresh stack rather than the corrupted task stack, and (b) the flash-write path
+// takes its privileged direct branch (IPSR != 0) instead of issuing a nested SVC.
+void Reserved85_IRQHandler(void)
+{
+    const uint32_t          return_address = g_stack_chk_return_addr;
+    nv::logger::FaultBuffer fault_buffer{};
+    memcpy(fault_buffer.data(), &return_address, sizeof(return_address));
+    nv::logger::FaultLogger::fault(
+        nv::logger::Fault::StackChkFail, fault_buffer, nv::logger::FaultDataSize);
     if constexpr (nv::ipc::EnableRuntimeWdt) {
         sys::watchdog::WwdtDriver::trigger_wdt_reset_if_enabled(sys::watchdog::wwdt1);
     }

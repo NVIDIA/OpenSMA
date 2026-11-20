@@ -17,6 +17,9 @@
  */
 
 #include "sys/i2c/utils.h"
+
+#include <array>
+
 #include "nv/common/utils.h"
 #include "nv/i2c/port.h"
 
@@ -53,4 +56,26 @@ bool is_slave_enabled([[maybe_unused]] nv::i2c::Port port)
     return false;
 }
 
+namespace {
+// NOLINTNEXTLINE(*-non-const-global-variables)
+std::array<uint32_t, nv::common::to_underlying(nv::i2c::Port::End)> g_master_baud_hz{};
+}  // namespace
+
+nv::i2c::I2cStatus set_master_frequency(nv::i2c::Port port, uint32_t baud_hz)
+{
+    const size_t index = nv::common::to_underlying(port);
+    if (index >= g_master_baud_hz.size() || baud_hz == 0U) {
+        return nv::i2c::I2cStatus::Error;
+    }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    g_master_baud_hz[index] = baud_hz;
+    return nv::i2c::I2cStatus::Ok;
+}
+
+uint32_t get_master_frequency_hz(nv::i2c::Port port)
+{
+    const size_t index = nv::common::to_underlying(port);
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+    return index < g_master_baud_hz.size() ? g_master_baud_hz[index] : 0U;
+}
 }  // namespace sys::i2c

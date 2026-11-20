@@ -21,6 +21,7 @@
 #include "sys/common/utils.h"
 #include "nv/common/build.h"
 #include "nv/spdm/ik_generate_helper.h"
+#include "sys/flash/flash_config.h"
 
 namespace nv {
 namespace spdm {
@@ -38,7 +39,7 @@ constexpr uint16_t MaxCertChainLength         = 4096;
 constexpr uint16_t MaxSingleCertLength        = nv::spdm::certlib::MaxCertSize;
 constexpr uint16_t PrivateKeyLength           = 48;
 constexpr uint32_t DevUuidRamAddr             = 0x01100000u;
-constexpr uint32_t L3CertPhyAddr              = 0xec000;
+constexpr uint32_t L3CertPhyAddr              = sys::flash::config::L3CertAddress;
 constexpr uint32_t L4CertRamAddr              = 0x20000060u;
 constexpr uint32_t L4PubKeyRamAddr            = 0x20000000u;
 constexpr uint32_t AkCertRamAddr0             = 0x200008F0u;
@@ -402,14 +403,15 @@ void     erase_l5_cert_svc();
 
 enum class DevIkGenerateErrorCode : uint8_t
 {
-    DdaNumberNotFound         = 0x01,
-    DdaNumberReadEfuseFail    = 0x02,
-    DdaNumberMismatch         = 0x03,
-    L3CertNotFound            = 0x04,
-    SignatureReadEfuseFail    = 0x05,
-    VerifySignatureFail       = 0x06,
-    DdaNumberReadNpdsFail     = 0x07,
-    SerialNumberReadEfuseFail = 0x08,
+    DdaNumberNotFound             = 0x01,
+    DdaNumberReadEfuseFail        = 0x02,
+    DdaNumberMismatch             = 0x03,
+    L3CertNotFound                = 0x04,
+    SignatureReadEfuseFail        = 0x05,
+    VerifySignatureFail           = 0x06,
+    DdaNumberReadNpdsFail         = 0x07,
+    SerialNumberReadEfuseFail     = 0x08,
+    UnsupportedCertificateProfile = 0x09,
 };
 
 enum class DevAkGenerateErrorCode : uint8_t

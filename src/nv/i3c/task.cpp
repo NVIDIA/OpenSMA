@@ -27,9 +27,12 @@
 #include "nv/gpio/driver.h"
 #include "nv/i2c/helper.h"
 #include "nv/i2c/task.h"
+#include "nv/ipc/mctp_bridge_config.h"
 #include "nv/i3c/topology_info.h"
 #include "nv/logger/log.h"
+#include "nv/lstp/lstp_router.h"
 #include "nv/mctp/driver.h"
+#include "nv/mctp/enums.h"
 #include "nv/nv.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/usb/task.h"
@@ -37,6 +40,42 @@
 #include "sys/i2c/utils.h"
 
 using namespace nv::i3c;
+
+namespace {
+// The UsI3c CPU-liveness check is a strict refinement of I3CPullUpCheck: it reads
+// the very pin that flag selects, so it cannot be enabled on its own.
+constexpr bool UsI3cReadyGpioCheck = nv::ipc::MctpBridgeConfig<>::EnableUsI3cReadyGpioCheck;
+static_assert(!UsI3cReadyGpioCheck || nv::ipc::I3CPullUpCheck,
+              "EnableUsI3cReadyGpioCheck requires I3CPullUpCheck to select the GPIO");
+
+// DSP0236 12.5 puts the endpoint's EID in the Get Endpoint ID response payload,
+// and the bus owner compares it against the EID it handed out. The CPU answers
+// with its real EID, so rewriting only the transport header makes the BMC see
+// 29 where it expects the alias 83 and tear the alias route down.
+//
+// The only call sits in an if constexpr (UsI3cBridgeMode) arm, so every
+// non-bridge product discards it and leaves this internal-linkage function
+// unused. Without the attribute clang-tidy fails the lint build there.
+[[maybe_unused]] void rewrite_get_eid_response_payload(nv::mctp::Packet& packet,
+                                                       uint8_t           alias_eid)
+{
+    constexpr uint16_t MinResponseLen = sizeof(nv::mctp::Header)
+                                      + nv::mctp::Control::HeaderSizeResponse + 1U;
+
+    if (packet.hdr.som == 0 || packet.priv.packet_length < MinResponseLen) {
+        return;
+    }
+    if (nv::mctp::Control::get_packet_type(packet) != nv::mctp::PacketType::Response) {
+        return;
+    }
+    auto& res = nv::mctp::Control::PktRes::from(packet);
+    if (res.msg_type != nv::mctp::MsgType::Control || res.command_code != nv::mctp::Cmd::GetEpId
+        || res.completion_code != nv::mctp::Ccode::Success) {
+        return;
+    }
+    res.data[0] = alias_eid;
+}
+}  // namespace
 
 uint8_t __attribute__((weak))
 nv::i3c::initial_endpoint_status([[maybe_unused]] nv::mctp::Client client)
@@ -46,7 +85,8 @@ nv::i3c::initial_endpoint_status([[maybe_unused]] nv::mctp::Client client)
 
 void Task::make(Config config)
 {
-    constexpr auto StackSize = std::max(1024, int(configMINIMAL_STACK_SIZE));
+    // leave ~256 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(832, int(configMINIMAL_STACK_SIZE));
     switch (config.port_id) {
         case Driver::Port::Zero: {
             NV_TASK_DATA static Task                       task0(config);
@@ -88,6 +128,7 @@ nv::i3c::Task::Status nv::i3c::Task::tx(const nv::mctp::Packet& packet)
     switch (packet.priv.packet_interface) {
         case static_cast<uint8_t>(Client::DsI3c0): queue_id = QueueId::I3c0; break;
         case static_cast<uint8_t>(Client::DsI3c1): queue_id = QueueId::I3c1; break;
+        case static_cast<uint8_t>(Client::UsI3c) : queue_id = QueueId::I3c1; break;
         default                                  : return Status::InvalidInterface;
     }
     Request request{.type = RequestType::Transmit};
@@ -131,6 +172,7 @@ nv::i3c::Task::Status nv::i3c::Task::update_routing_table(nv::mctp::Client clien
     switch (client) {
         case Client::DsI3c0: queue_id = QueueId::I3c0; break;
         case Client::DsI3c1: queue_id = QueueId::I3c1; break;
+        case Client::UsI3c : queue_id = QueueId::I3c1; break;
         default            : return Status::InvalidInterface;
     }
     /// prepare I3C request
@@ -219,6 +261,7 @@ nv::i3c::Task::Status nv::i3c::Task::init_bus(nv::mctp::Client client, bool init
     switch (client) {
         case Client::DsI3c0: queue_id = QueueId::I3c0; break;
         case Client::DsI3c1: queue_id = QueueId::I3c1; break;
+        case Client::UsI3c : queue_id = QueueId::I3c1; break;
         default            : return Status::InvalidInterface;
     }
     /// prepare I3C request
@@ -401,6 +444,14 @@ void Task::on_ibi(uint8_t address, std::span<volatile uint8_t> data)
     Request           request{};
     // dispatch interrupt
     if (data.size() == 1 && data[0] == PendingReadId) {
+        if constexpr (nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+            logger::Logger::add_from_isr(logger::Event::I3CIbiReceivedV2.unique_id,
+                                         logger::Level::Info,
+                                         {static_cast<uint8_t>(_driver.port()),
+                                          address,
+                                          static_cast<uint8_t>(data.size()),
+                                          static_cast<uint8_t>(data[0])});
+        }
         perf_mon::Driver::log_pkt_latency(perf_mon::Driver::LatencyEvent::I3cTaskRecvRxIsr);
         request.type      = RequestType::MctpIbi;
         request.length    = 1;
@@ -416,11 +467,13 @@ void Task::on_ibi(uint8_t address, std::span<volatile uint8_t> data)
     else {
         // nv::info("ibi does not support\n");
         constexpr uint8_t ByteMask = 0xFF;
-        logger::Logger::add_from_isr(logger::Event::I3CUnknownIBIV2.unique_id,
-                                     logger::Level::Info,
-                                     {static_cast<uint8_t>(_driver.port()),
-                                      static_cast<uint8_t>(data.size() & ByteMask),
-                                      data[0]});
+        logger::Logger::add_from_isr(
+            logger::Event::I3CUnknownIBIV3.unique_id,
+            logger::Level::Info,
+            {static_cast<uint8_t>(_driver.port()),
+             address,
+             static_cast<uint8_t>(data.size() & ByteMask),
+             data.empty() ? static_cast<uint8_t>(0) : static_cast<uint8_t>(data[0])});
         return;
     }
     auto item = Queue::Item(std::bit_cast<uint8_t*>(&request), sizeof(request));
@@ -458,6 +511,21 @@ void Task::handle_mctp_ibi(std::span<uint8_t> buffer)
                                                                                  // address
     auto result = _driver.read(
         data[0] >> 1, std::span<uint8_t>(data.data() + 1, data.size() - 1), length);
+
+    // Diagnostic: record what the CPU actually returned for every pending-read
+    // IBI, including empty/short reads (dropped silently in handle_rx) and read
+    // failures. Log the RAW first bytes of the private read (data[1..7]) with no
+    // offset assumptions, so the true MCTP framing can be decoded: normally
+    // data[1]=hdr version(0x01), [2]=dst_eid, [3]=src_eid, [4]=flags/seq,
+    // [5]=msg type, [6]=control Rq/D/InstanceID, [7]=command code. length==0 (or
+    // all-zero bytes) indicates a failed/empty read.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+        if (_client == mctp::Client::UsI3c) {
+            logger::info(
+                logger::Event::I3CIbiReadV2,
+                {length, data[1], data[2], data[3], data[4], data[5], data[6], data[7]});
+        }
+    }
 
     if (result) {
         handle_rx(std::span<uint8_t>(data.data(), length + 1));
@@ -513,6 +581,7 @@ void Task::handle_wdt_event()
     switch (_client) {
         case mctp::Client::DsI3c0: index = watchdog::TaskMonitorIndex::I3c0; break;
         case mctp::Client::DsI3c1: index = watchdog::TaskMonitorIndex::I3c1; break;
+        case mctp::Client::UsI3c : index = watchdog::TaskMonitorIndex::I3c1; break;
         default                  : return;
     }
 
@@ -604,7 +673,7 @@ void Task::handle_update_routing_table()
         // enumerated
         if ((_timer.id() != ipc::TimerId::Ap1Status && _timer.id() != ipc::TimerId::Ap2Status)
             || _ap_status == APStatus::ApUpNotEnumerated || _ap_status == APStatus::Querying) {
-            auto  myep    = nv::mctp::Control::get_routing_index(_client);
+            auto  myep    = mctp_endpoint_index();
             auto& myentry = _routing_table.at(myep);
             if (myentry.is_enumerated) {
                 // Set EID success
@@ -647,10 +716,24 @@ void Task::handle_i2c_request(std::span<uint8_t> buffer)
     else {
         result = _driver.i2c(request.address, write_buffer_span, read_buffer_span);
     }
-    if (request.src_id == static_cast<uint8_t>(ipchandler::Id::Usb)) {
-        std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
-        usb::Task::to_usb(
-            this->_ipchandler_id, static_cast<uint16_t>(ReadLength), item, result);
+    std::span<uint8_t> item(read_buffer.data(), read_buffer.size());
+
+    switch (request.src_id) {
+        case static_cast<uint8_t>(ipchandler::Id::Usb):
+            usb::Task::to_usb(
+                this->_ipchandler_id, static_cast<uint16_t>(ReadLength), item, result);
+            break;
+        // A project may expose an I3C bus to the host as an LSTP I2c channel whose handler id
+        // is this task (see LstpRouter::receive_i2c). send_i2c finds the channel by handler id,
+        // so the reply needs no channel information here. Mirrors
+        // i2c::Task::handle_i2c_request.
+        case static_cast<uint8_t>(ipchandler::Id::Lstp):
+            if constexpr (nv::lstp::EnableI2c) {
+                nv::lstp::LstpRouter::send_i2c(
+                    this->_ipchandler_id, static_cast<uint16_t>(ReadLength), item, result);
+            }
+            break;
+        default: break;
     }
 }
 
@@ -712,7 +795,12 @@ void Task::handle_init(std::span<uint8_t> buffer)
             }
             else {
                 _driver.init();
-                handle_cxx_reset(false);
+                if (_client == mctp::Client::UsI3c) {
+                    (void)recover_cpu_i3c_bus(false);
+                }
+                else {
+                    (void)handle_cxx_reset(false);
+                }
             }
         }
     }
@@ -742,78 +830,241 @@ bool Task::pull_up_status()
     }
 }
 
-void Task::handle_ap_status(APStatus set_status)
+bool Task::sample_i3c_ready()
 {
-    bool     result = false;
-    APStatus status = _ap_status;
+    const bool ready = pull_up_status();
 
-    if (set_status == APStatus::Querying) {
-        // Query for status
-        if (status == APStatus::Querying || status == APStatus::ApDown) {
-            if constexpr (ipc::I3CPullUpCheck) {
-                if (!pull_up_status()) {
-                    _driver.deinit();
-                }
-                else {
-                    _driver.init();
-                }
-            }
-            // if at startup or ping failed on last check, restart daa
-            result = handle_cxx_reset((status == APStatus::ApDown));
-            status = result ? APStatus::ApUpNotEnumerated : APStatus::ApDown;
+    // One of the bridge debug traces this switch covers; other products aim their
+    // I3CPullUpCheck pin at a power-good rail and must not start logging its edges.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+        if (!_pull_up_status_initialized || ready != _last_pull_up_status) {
+            logger::info(logger::Event::I3CPullUpStatusV2,
+                         {static_cast<uint8_t>(mctp_endpoint_index()),
+                          static_cast<uint8_t>(ready ? 1U : 0U),
+                          static_cast<uint8_t>(_ap_status)});
+            _last_pull_up_status        = ready;
+            _pull_up_status_initialized = true;
         }
-        else {
-            // if link is up, ping for status
-            if (_address_pool.size()) {
-                // only support single AP on bus for now
-                auto     addr    = _address_pool[0];
-                uint16_t dstatus = 0;
-                result           = _driver.get_status(addr, dstatus);
-                switch (status) {
-                    case APStatus::ApUpNotEnumerated:
-                    case APStatus::ApDown:
-                    default:
-                        status = (result ? APStatus::ApUpNotEnumerated : APStatus::ApDown);
-                        break;
-                    case APStatus::ApUpEnumerated:
-                        status = (result ? APStatus::ApUpEnumerated : APStatus::ApDown);
-                        break;
-                }
-            }
+    }
+    return ready;
+}
+
+Task::I3cReadyState Task::debounced_i3c_ready()
+{
+    const bool ready = pull_up_status();
+
+    I3cReadyState state = I3cReadyState::Pending;
+    uint8_t       count = 0;
+    if (ready) {
+        _i3c_not_ready_count = 0;
+        if (_i3c_ready_count < I3cReadyDebounce) {
+            _i3c_ready_count++;
+        }
+        count = _i3c_ready_count;
+        if (count >= I3cReadyDebounce) {
+            state = I3cReadyState::Ready;
         }
     }
     else {
-        // Set status
-        status = set_status;
-        // reset status timer since we just forced a status change
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status) {
+        _i3c_ready_count = 0;
+        if (_i3c_not_ready_count < I3cNotReadyDebounce) {
+            _i3c_not_ready_count++;
+        }
+        count = _i3c_not_ready_count;
+        if (count >= I3cNotReadyDebounce) {
+            state = I3cReadyState::NotReady;
+        }
+    }
+
+    // Log every sample while the level is in doubt, including the one that settles
+    // it, then stay quiet until the pin moves again. A glitch shows up as the
+    // counter restarting instead of being hidden by an edge-only log.
+    if (state == I3cReadyState::Pending || state != _i3c_ready_settled) {
+        logger::info(logger::Event::GpioI3cReadyDebounce,
+                     {static_cast<uint8_t>(mctp_endpoint_index()),
+                      static_cast<uint8_t>(ready ? 1U : 0U),
+                      static_cast<uint8_t>(_ap_status),
+                      count,
+                      static_cast<uint8_t>(state)});
+    }
+    if (state != I3cReadyState::Pending) {
+        _i3c_ready_settled = state;
+    }
+    return state;
+}
+
+bool Task::is_ap_status_timer() const
+{
+    return _timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status;
+}
+
+void Task::handle_ap_status(APStatus set_status)
+{
+    if constexpr (ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        // If the I3C ISR broke a SLVSTART interrupt storm (IRQ disabled), recover the
+        // controller now in task context and force a fresh CPU-link bring-up.
+        if (_client == mctp::Client::UsI3c && _driver.recover_irq_storm_if_pending()) {
+            _ap_status = APStatus::ApDown;
+        }
+    }
+
+    if (set_status != APStatus::Querying) {
+        // Status was resolved out of band, so restart the poll period and commit it.
+        if (is_ap_status_timer()) {
             _timer.reset();
         }
+        commit_ap_status(set_status);
+        return;
     }
 
-    // update and log on status change
-    if (status != _ap_status) {
-        auto myep = nv::mctp::Control::get_routing_index(_client);
-        logger::info(logger::Event::I3CApStatusUpdate,
-                     {static_cast<uint8_t>(myep),
-                      static_cast<uint8_t>(_ap_status),
-                      static_cast<uint8_t>(status)});
+    // The CPU bridge link and the downstream AP link share only the state machine in
+    // commit_ap_status(); their probes have nothing in common. Keeping them in separate
+    // functions is what guarantees a bridge-side change cannot reach the downstream
+    // behavior that every other product ships.
+    if constexpr (ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (_client == mctp::Client::UsI3c) {
+            commit_ap_status(query_us_i3c_link());
+            return;
+        }
+    }
+    commit_ap_status(query_ds_ap_link());
+}
 
-        // update mctp driver with status for enumeration if I3C is running the timer
-        if (_timer.id() == ipc::TimerId::Ap1Status || _timer.id() == ipc::TimerId::Ap2Status) {
-            if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
-                nv::mctp::Driver::endpoint_status_change(
-                    myep, (status == APStatus::ApUpNotEnumerated));
-                // If I2C downstream is enabled, update I2C status as well
-                if (ipc::DownStreamNum > 3) {
-                    constexpr uint8_t ByteMask = 0xFF;
-                    nv::mctp::Driver::endpoint_status_change(
-                        (myep + 1) & ByteMask, (status == APStatus::ApUpNotEnumerated));
-                }
+Task::APStatus Task::query_ds_ap_link()
+{
+    const APStatus status = _ap_status;
+
+    if (status == APStatus::Querying || status == APStatus::ApDown) {
+        if constexpr (ipc::I3CPullUpCheck) {
+            // The pin is a board power-good rail on this product, so one sample per
+            // tick keeps gating DAA as before.
+            if (!sample_i3c_ready()) {
+                _driver.deinit();
+            }
+            else {
+                _driver.init();
             }
         }
-        _ap_status = status;
+        // if at startup or ping failed on last check, restart daa
+        return handle_cxx_reset(status == APStatus::ApDown) ? APStatus::ApUpNotEnumerated
+                                                            : APStatus::ApDown;
     }
+
+    // if link is up, ping for status. Only a single AP per bus is supported for now.
+    if (_address_pool.empty()) {
+        return status;
+    }
+    uint16_t dstatus = 0;
+    if (!_driver.get_status(_address_pool[0], dstatus)) {
+        return APStatus::ApDown;
+    }
+    return (status == APStatus::ApUpEnumerated) ? APStatus::ApUpEnumerated
+                                                : APStatus::ApUpNotEnumerated;
+}
+
+Task::APStatus Task::query_us_i3c_link()
+{
+    const APStatus status = _ap_status;
+
+    if (status == APStatus::Querying || status == APStatus::ApDown) {
+        bool ready = true;
+        if constexpr (ipc::I3CPullUpCheck) {
+            if constexpr (UsI3cReadyGpioCheck) {
+                // Only a debounced high starts DAA on the CPU link. A high that is
+                // not confirmed yet counts as not ready here, so the bus stays
+                // powered down and the next tick re-checks.
+                ready = debounced_i3c_ready() == I3cReadyState::Ready;
+            }
+            else {
+                ready = sample_i3c_ready();
+            }
+            if (!ready) {
+                // I3C readiness pin is low: the CPU/bus cannot service DAA yet. Power
+                // down our controller and skip RSTDAA/DAA - issuing it on a not-ready
+                // bus hangs the bus and the long blocking recovery can starve the task
+                // watchdog. The AP status timer re-checks on the next tick.
+                _driver.deinit();
+            }
+            else {
+                _driver.init();
+            }
+        }
+        if (!ready) {
+            return APStatus::ApDown;
+        }
+        // Stop the periodic timer while one CPU bus recovery is in progress. Restarting
+        // it afterwards guarantees that the next recovery is scheduled one full period
+        // later instead of consuming timer events queued during this recovery.
+        (void)_timer.stop();
+        const bool result = recover_cpu_i3c_bus(status == APStatus::ApDown);
+        (void)_timer.start();
+        return result ? APStatus::ApUpNotEnumerated : APStatus::ApDown;
+    }
+
+    if (_address_pool.empty()) {
+        return status;
+    }
+    // The periodic AP status check to the CPU (GETSTATUS over I3C) is intentionally
+    // disabled: the probe shares the I3C bus with the CPU's own MCTP/IBI traffic and can
+    // contend with it. Where the readiness GPIO is wired up it takes over as the CPU
+    // liveness signal and a debounced low declares the link down; without it there is no
+    // CPU-down detection here at all and the link is only torn down from elsewhere (e.g.
+    // on_us_i3c_status_change).
+    if constexpr (UsI3cReadyGpioCheck) {
+        if (debounced_i3c_ready() == I3cReadyState::NotReady) {
+            _driver.deinit();
+            return APStatus::ApDown;
+        }
+    }
+    if (status == APStatus::ApUpEnumerated) {
+        return status;
+    }
+    // Link is up but the CPU has not finished MCTP enumeration - its real EID was never
+    // learned, so the CPU aliases stay hidden. Re-prod the CPU to re-run enumeration by
+    // re-sending DiscoveryNotify each tick until it reaches ApUpEnumerated.
+    (void)mctp::Driver::mctp_send_cmd(mctp::Driver::CmdCode::DiscoveryNotify, 1);
+    return APStatus::ApUpNotEnumerated;
+}
+
+void Task::commit_ap_status(APStatus status)
+{
+    if (status == _ap_status) {
+        return;
+    }
+
+    const uint8_t myep = mctp_endpoint_index();
+    logger::info(logger::Event::I3CApStatusUpdate,
+                 {static_cast<uint8_t>(myep),
+                  static_cast<uint8_t>(_ap_status),
+                  static_cast<uint8_t>(status)});
+
+    // update mctp driver with status for enumeration if I3C is running the timer
+    if (is_ap_status_timer()) {
+        if (status == APStatus::ApUpNotEnumerated || status == APStatus::ApDown) {
+            nv::mctp::Driver::endpoint_status_change(myep,
+                                                     (status == APStatus::ApUpNotEnumerated));
+            // If I2C downstream is enabled, update I2C status as well
+            if (ipc::DownStreamNum > 3) {
+                constexpr uint8_t ByteMask = 0xFF;
+                nv::mctp::Driver::endpoint_status_change(
+                    (myep + 1) & ByteMask, (status == APStatus::ApUpNotEnumerated));
+            }
+        }
+    }
+    _ap_status = status;
+}
+
+uint8_t Task::mctp_endpoint_index() const
+{
+    if constexpr (ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (_client == mctp::Client::UsI3c) {
+            constexpr uint8_t UsI3cRoutingSlot = ipc::DownStreamNum + 2U;
+            if constexpr (UsI3cRoutingSlot < ipc::RoutingTableSize) {
+                return UsI3cRoutingSlot;
+            }
+        }
+    }
+    return nv::mctp::Control::get_routing_index(_client);
 }
 
 void Task::handle_ocp_addr(std::span<uint8_t> buffer)
@@ -836,10 +1087,40 @@ void Task::forward(nv::mctp::Packet& packet)
     bool is_routed        = false;
     bool is_usi2c_eid_set = false;
 
+    // Trace every MCTP packet received from the CPU I3C bus (before EID
+    // translation), so CPU -> BMC traffic can be correlated with the bus state.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode
+                  && nv::ipc::MctpBridgeConfig<>::EnableUsI3cDebugLog) {
+        if (_client == mctp::Client::UsI3c) {
+            logger::info(logger::Event::I3CRxFromCpuV2,
+                         {packet.hdr.dst_eid,
+                          packet.hdr.src_eid,
+                          packet.msg[0],
+                          packet.msg[1],
+                          packet.msg[2]});
+        }
+    }
+
     for (auto& entry : _routing_table) {
         if (entry.is_enumerated == true) {
             if (entry.assigned_eid == packet.hdr.dst_eid) {
                 if (entry.client == mctp::Client::UsUsb) {
+                    // Only the CPU-bridge products alias the CPU endpoints, and
+                    // bridge_real_eid is written non-zero solely under this flag,
+                    // so the translation is dead code everywhere else.
+                    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+                        if (entry.bridge_real_eid != 0) {
+                            packet.hdr.dst_eid = entry.bridge_real_eid;
+                        }
+                        for (auto& alias : _routing_table) {
+                            if (alias.is_enumerated && alias.bridge_real_eid != 0
+                                && alias.bridge_real_eid == packet.hdr.src_eid) {
+                                rewrite_get_eid_response_payload(packet, alias.assigned_eid);
+                                packet.hdr.src_eid = alias.assigned_eid;
+                                break;
+                            }
+                        }
+                    }
                     perf_mon::Driver::log_pkt_latency(
                         perf_mon::Driver::LatencyEvent::I3cTaskSendToUsb);
                     auto status = usb::Task::usb_tx(item);
@@ -862,10 +1143,19 @@ void Task::forward(nv::mctp::Packet& packet)
                         }
                         is_routed = true;
                     }
+                    if (entry.client == mctp::Client::UsI3c) {
+                        packet.priv.packet_interface = static_cast<uint8_t>(entry.client);
+                        auto status                  = nv::i3c::Task::tx(packet);
+                        if (status != nv::i3c::Task::Status::Ok) {
+                            nv::info("i3c_us_tx fail 0x%x\n", status);
+                        }
+                        is_routed = true;
+                    }
                 }
             }
             if constexpr (nv::ipc::I2cTransparent) {
-                if (entry.client == mctp::Client::UsI2c) {
+                if (entry.client == mctp::Client::UsI2c
+                    || entry.client == mctp::Client::UsI3c) {
                     is_usi2c_eid_set = true;
                 }
             }
@@ -1001,26 +1291,136 @@ bool Task::handle_cxx_reset(bool ping)
     using namespace std::chrono_literals;
 
     const constexpr uint32_t DelayInit = 2000;
-    bool                     result    = false;
 
     for (uint8_t i = 0; i < DaaRetry; i++) {
-        // detect cxx
-        result = _driver.reset_daa(ping);
-        if (result) {
-            // NBU team requests to add a delay bewteen RSTDAA and ENTDAA
-            if constexpr (nv::ipc::EnableDelayInI3CInit) {
-                nv::ctimer::Driver::delay_for_us(DelayInit);
-            }
-            result = _driver.process_daa(_address_pool);
-            if (result) {
-                // delay 100ms to allow time for MCTP thread to be ready for SetEID request
-                delay(100ms);
-                return result;
-            }
+        if (!_driver.reset_daa(ping)) {
+            delay(100ms);
+            continue;
+        }
+        // NBU team requests a delay between RSTDAA and ENTDAA.
+        if constexpr (nv::ipc::EnableDelayInI3CInit) {
+            nv::ctimer::Driver::delay_for_us(DelayInit);
+        }
+        if (_driver.process_daa(_address_pool)) {
+            // Allow the MCTP task to become ready for the SetEID request.
+            delay(100ms);
+            return true;
         }
         delay(100ms);
     }
     return false;
+}
+
+bool Task::recover_cpu_i3c_bus(bool ping)
+{
+    // Gated at compile time rather than on _client alone: the CCC primitives
+    // this sequence needs (force_bus_idle/disec) exist only in the bridge
+    // platform's driver, so a runtime-only guard would still odr-use them and
+    // fail to link on mcxn236/x86.
+    if constexpr (!nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        return false;
+    }
+    else {
+        // This recovery sequence is valid only for the CPU-facing UsI3c link.
+        if (_client != mctp::Client::UsI3c || _address_pool.empty()) {
+            return false;
+        }
+
+        constexpr uint8_t RetryLimit      = 3U;
+        auto              execute_message = [this](auto&& message) {
+            for (uint8_t retry = 0; retry <= RetryLimit; retry++) {
+                if (message()) {
+                    return Driver::Status::Success;
+                }
+
+                const Driver::Status status = _driver.last_status();
+                if (status == Driver::Status::Success) {
+                    return Driver::Status::Error;
+                }
+                // A CPU Slave-Start/IBI that preempts a bring-up CCC surfaces as
+                // Busy (EDMA refused to start) or Timeout (a blocking CCC frame
+                // stalled). Both are recoverable: force_bus_idle() drains the
+                // pending IBI at the controller (AutoIbi + ACK + read) regardless of
+                // whether the CCC used the EDMA or blocking path, so retry the same
+                // CCC after draining. Any other error is not retried here.
+                const bool recoverable = status == Driver::Status::Busy
+                                      || status == Driver::Status::Timeout;
+                if (!recoverable || retry == RetryLimit) {
+                    return status;
+                }
+                (void)_driver.force_bus_idle();
+            }
+            return Driver::Status::Error;
+        };
+
+        // try_recover() stops resetting the controller for good once it has burned
+        // MaxConsecutiveRecoveries, and only a successful transfer clears that count -
+        // which a wedged data path can never produce. Re-arm it here so that this
+        // higher-level bring-up remains a way back out.
+        _driver.reset_recovery_count();
+
+        for (uint8_t attempt = 0; attempt < DaaRetry; attempt++) {
+            // Clear any Slave-Start left pending from before this attempt. The CPU
+            // still holds the dynamic address and the ENINT it was granted before
+            // the MCU reset, so it is genuinely entitled to an IBI here and
+            // force_bus_idle() deliberately ACKs and reads it: a NACK is ignored by
+            // the CPU, which then retries into a Slave-Start storm.
+            if (!_driver.force_bus_idle()) {
+                continue;
+            }
+
+            if (execute_message([this]() { return _driver.disec(); })
+                != Driver::Status::Success) {
+                continue;
+            }
+
+            if (execute_message([this, ping]() { return _driver.reset_daa(ping); })
+                != Driver::Status::Success) {
+                continue;
+            }
+
+            if (execute_message([this]() { return _driver.process_daa(_address_pool); })
+                != Driver::Status::Success) {
+                continue;
+            }
+
+            const uint8_t address = _address_pool[0];
+            // DISEC above cleared ENINT/ENCR/ENHJ and RSTDAA took the dynamic
+            // address away, so no target can arbitrate an IBI between here and
+            // ENEC. The IBI response policy is irrelevant for the CCCs in between.
+            if (execute_message([this, address]() { return _driver.set_mrl_mwl(address); })
+                != Driver::Status::Success) {
+                continue;
+            }
+            // Register the CPU IBI address before ENEC so the very first IBI the CPU
+            // is allowed to raise already has a matching record to land in.
+            if (!_driver.register_ibi(address)) {
+                continue;
+            }
+            // enec() owns the IBI response policy across its own frame: the CPU
+            // becomes entitled to an IBI the instant the directed ENINT byte lands,
+            // and ACKing that IBI mid-frame stalls the transfer. It NACKs for the
+            // duration and leaves AckMandatory behind on every exit, so the steady
+            // state below is already correct whether ENEC succeeded or failed.
+            if (execute_message([this, address]() { return _driver.enec(address); })
+                != Driver::Status::Success) {
+                continue;
+            }
+
+            // No bring-up GETSTATUS here: ENEC lets the CPU raise an IBI immediately,
+            // which can hold the shared EDMA handle busy before a GETSTATUS frame gets
+            // submitted. DAA plus the CCCs above already establish the link well enough
+            // to proceed with DiscoveryNotify.
+
+            if (mctp::Driver::mctp_send_cmd(mctp::Driver::CmdCode::DiscoveryNotify, 1)
+                != mctp::Status::Ok) {
+                continue;
+            }
+            return true;
+        }
+
+        return false;
+    }
 }
 
 bool Task::to_i2c(ipchandler::Id    src_id,
@@ -1036,7 +1436,14 @@ bool Task::to_i2c(ipchandler::Id    src_id,
     }
 
     using namespace nv::ipc;
-    static_assert(sizeof(nv::i2c::I2cRequest) <= Driver::BufferSize);
+    // Request::buffer only has room for an I2cRequest when the project puts an I2C bus behind
+    // an I3C controller. Every caller resolves the handler id through usb::i2c_addr_mapping()
+    // or an LSTP channel, so this is already unreachable otherwise; returning early keeps the
+    // overlay below out of the build rather than relying on that.
+    static_assert(!EnableI2cOverI3c || sizeof(nv::i2c::I2cRequest) <= Driver::BufferSize);
+    if constexpr (!EnableI2cOverI3c) {
+        return false;
+    }
     Request request{
         .type   = RequestType::I2cRequest,
         .length = sizeof(nv::i2c::I2cRequest),

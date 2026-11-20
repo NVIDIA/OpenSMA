@@ -27,6 +27,9 @@
 #include "sys/common/c2c_fault.h"
 using namespace nv::ipc::task;
 
+static_assert(!nv::ipc::EnableDualCore || (configUSE_STREAM_BUFFERS == 1),
+              "Core-to-core communication requires configUSE_STREAM_BUFFERS == 1");
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
@@ -320,6 +323,11 @@ NV_PRIVILEGED_FUNCTION nv::ipc::task::Status
 sys::ipc::task::Driver::write_queue_request_impl(const nv::ipc::task::Request&    request,
                                                  const nv::ipc::Queue::ConstItem& item)
 {
+    // The FreeRTOS syscall table always references this path, so drop it at compile time.
+    if constexpr (!nv::ipc::EnableDualCore) {
+        return nv::ipc::task::Status::C2CHandleNotSet;
+    }
+
     // Check if the size of the item will cause overflow
     if (nv::common::align_to(item.size(), sys::ipc::StreamBufferSendAlignment)
         > UINT32_MAX - (sizeof(size_t) + sizeof(request) + sizeof(size_t))) {
@@ -390,6 +398,11 @@ sys::ipc::task::Driver::write_event_request_svc(const nv::ipc::task::Request& re
 NV_PRIVILEGED_FUNCTION nv::ipc::task::Status
 sys::ipc::task::Driver::write_event_request_impl(const nv::ipc::task::Request& request)
 {
+    // The FreeRTOS syscall table always references this path, so drop it at compile time.
+    if constexpr (!nv::ipc::EnableDualCore) {
+        return nv::ipc::task::Status::C2CHandleNotSet;
+    }
+
     // Check if there is enough space for one c2c send
     // only one message buffer send, will write size_t first, then request
     auto status = wait_for_enough_space(

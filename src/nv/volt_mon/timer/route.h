@@ -20,7 +20,7 @@
  * @file route.h
  * @brief Shared compile-time ADC route table types for the timer-driven volt_mon.
  *
- * Each consumer module (leak_detect, busbar_temp, pgood_volt, mcu_internal_temp)
+ * Each consumer module (leak_detect, busbar_temp, pgood_volt, imon, mcu_internal_temp)
  * provides a small `*_route.h` header that declares its handler(s) and a
  * `register_routes()` (or `register_route()` for singletons) function that
  * populates an `AdcRouteTable`. `timer/volt_mon.cpp` builds the table once at
@@ -52,16 +52,33 @@ using AdcResult = sys::adc::ADC::AdcConvResult;
  */
 using AdcRouteHandler = void (*)(AdcInstance, const AdcResult&);
 
+/**
+ * Pre-trigger handler signature: invoked right before `trigger_read()` for
+ * first command in a trigger chain. This is meant for cases where some
+ * additional setup is required before a conversion.
+ */
+using AdcPreTriggerHandler = void (*)(AdcInstance);
+
+/**
+ * Post-drain handler signature: invoked right after all results of the ADC
+ * instance are drained for first command in a trigger chain. This is meant
+ * for cases where some additional teardown is required after a conversion.
+ */
+using AdcPostDrainHandler = void (*)(AdcInstance);
+
 struct AdcRoute
 {
-    AdcInstance     adcId;
-    AdcCommand      command;
-    AdcRouteHandler handler;
+    AdcInstance          adcId;
+    AdcCommand           command;
+    AdcRouteHandler      handler;
+    AdcPreTriggerHandler pre_trigger = nullptr;
+    AdcPostDrainHandler  post_drain  = nullptr;
 };
 
-constexpr AdcRoute InvalidAdcRoute{AdcInstance::Invalid, AdcCommand::Invalid, nullptr};
-constexpr size_t   AdcInstanceCount = static_cast<size_t>(AdcInstance::Total);
-constexpr size_t   AdcCommandCount  = static_cast<size_t>(AdcCommand::Invalid);
+constexpr AdcRoute InvalidAdcRoute{
+    AdcInstance::Invalid, AdcCommand::Invalid, nullptr, nullptr, nullptr};
+constexpr size_t AdcInstanceCount = static_cast<size_t>(AdcInstance::Total);
+constexpr size_t AdcCommandCount  = static_cast<size_t>(AdcCommand::Invalid);
 
 using AdcRouteTable = std::array<std::array<AdcRoute, AdcCommandCount>, AdcInstanceCount>;
 

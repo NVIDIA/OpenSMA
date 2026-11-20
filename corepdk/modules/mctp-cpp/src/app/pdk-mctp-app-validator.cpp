@@ -49,6 +49,16 @@ bool Validator::validate(const Packet& pkt, platforms::Interface interface)
         }
     }
 
+    // The dst-EID check above follows DSP0236 (NULL, broadcast, or one of our
+    // assigned EIDs). A product may still need a point-to-point exception: after
+    // reset the bus owner can keep using an EID we no longer have, and dropping
+    // those Control packets makes it retry (IBI storm). The platform predicate
+    // selects that exception; this file does not name a specific interface.
+    if (platforms::interface_accepts_any_dst_control(interface)
+        && (ctl.msg_type == MsgType::Control)) {
+        eid_ok = true;
+    }
+
     // Single packet Control message
     if ((ctl.msg_type == MsgType::Control) && ctl.som && ctl.eom) {
         if (!eid_ok) {

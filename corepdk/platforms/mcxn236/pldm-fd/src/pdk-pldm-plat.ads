@@ -46,10 +46,6 @@ is
       constant ARR_NvU8_IDX32 (0 .. 4) :=
          [16#41#, 16#50#, 16#53#, 16#4b#, 16#55#];
 
-   Pldm_Vendor_Defined_Descriptor_Title_String_Axsku :
-      constant ARR_NvU8_IDX32 (0 .. 4) :=
-         [16#41#, 16#58#, 16#53#, 16#4b#, 16#55#];
-
    Pldm_Enterprise_Id : constant ARR_NvU8_IDX32 (0 .. 3) :=
          [16#47#, 16#16#, 16#00#, 16#00#];
 
@@ -91,16 +87,6 @@ is
        convention   => CPP, 
        external_name => "ada_populate_stamp";
 
-   procedure Populate_Ap_Stamp (Major    : NvU16;
-                                Minor    : NvU8;
-                                Patch    : NvU16;
-                                Build    : NvU16;
-                                Stamp    : out NvU32)
-     with
-       export       => True, 
-       convention   => CPP, 
-       external_name => "ada_populate_ap_stamp";
-
    procedure Populate_Version_String (Major          : NvU16;
                                       Minor          : NvU8;
                                       Patch          : NvU16;
@@ -116,14 +102,6 @@ is
    procedure Get_Pending_Stamp (Stamp : out NvU32);
 
    procedure Get_Pending_Version_String (Version_String : out Array_Version_String;
-                                                   Length         : out NvU8);
-
-   procedure Get_Ap_Active_Stamp (Stamp : in out NvU32);
-   procedure Get_Ap_Active_Version_String (Version_String : out Array_Version_String;
-                                                  Length         : out NvU8);
-
-   procedure Get_Ap_Pending_Stamp (Stamp : in out NvU32);
-   procedure Get_Ap_Pending_Version_String (Version_String : out Array_Version_String;
                                                    Length         : out NvU8);
 
    --  @todo should remove this

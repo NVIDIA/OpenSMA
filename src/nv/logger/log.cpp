@@ -194,6 +194,24 @@ void Logger::string_console(AsciiArr& ascii)
     Task::request(ascii);
 }
 
+Status
+Logger::add_from_core(EventId event, Level level, EventData data, footprint::Id footprint)
+{
+    const auto [footprint_msb, footprint_lsb] = footprint_mask(footprint);
+
+    const Item request{.timestamp     = nv::ipc::Supervisor::get_os_ticks(),
+                       .direction     = OutputDirection::Both,
+                       .event         = event,
+                       .level         = level,
+                       .footprint_msb = footprint_msb,
+                       .data          = data,
+                       .footprint_lsb = footprint_lsb,
+                       .core_id       = 1,
+                       .wait          = false};
+    Item       response{};
+    return Task::request(request, response, false, nv::ipc::Queue::Usecs(0));
+}
+
 // API
 Status Logger::add_from_isr(
     EventId event, Level level, EventData data, OutputDirection output, const footprint::Id fid)

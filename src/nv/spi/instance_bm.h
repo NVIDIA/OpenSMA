@@ -17,6 +17,7 @@
  */
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include NV_IPC_CONFIG_H
@@ -25,6 +26,14 @@
 
 namespace nv::spi::bm {
 
+/**
+ * Bare-metal SPI manager.
+ *
+ * Driver slots are allocated at runtime by bind(). get() looks up the bound
+ * port → slot map. Envelope config only needs SpiNumInstances (max slots);
+ * product-specific port/CS tables live with the caller (e.g. SpiInstances for
+ * single-product images, or product_spi_instances() for multi-product images).
+ */
 class SpiManager
 {
 public:
@@ -33,7 +42,7 @@ public:
                      nv::ecm_bm::AppEvent                                  event_bit,
                      std::array<nv::ipc::Gpios, nv::spi::bm::SpiMaxCsPins> cs_pins)
     {
-        get(port).bind(port, event, event_bit, cs_pins);
+        get_or_allocate(port).bind(port, event, event_bit, cs_pins);
     }
 
     static SpiStatus transfer(nv::spi::Port            port,
@@ -63,16 +72,51 @@ public:
         return get(port).is_gpio_wait_pending();
     }
 
+    static void poll_gpio_war(nv::spi::Port port,
+                              uint32_t      now_ms,
+                              uint32_t      ready_timeout_ms,
+                              uint32_t      idle_timeout_ms,
+                              uint32_t      recovery_timeout_ms)
+    {
+        get(port).poll_gpio_war(now_ms, ready_timeout_ms, idle_timeout_ms, recovery_timeout_ms);
+    }
+
+    static bool is_recovery(nv::spi::Port port) { return get(port).is_recovery(); }
+
+    static bool is_awaiting_ready_release(nv::spi::Port port)
+    {
+        return get(port).is_awaiting_ready_release();
+    }
+
     static bool is_busy(nv::spi::Port port) { return get(port).is_busy(); }
 
 private:
-    static inline std::array<sys::spi::bm::Driver, SpiNumInstances> _drivers;
+    static inline std::array<sys::spi::bm::Driver, SpiNumInstances> _drivers{};
+    static inline std::array<nv::spi::Port, SpiNumInstances>        _ports{};
+    static inline std::array<bool, SpiNumInstances>                 _bound{};
 
-    static constexpr sys::spi::bm::Driver& get(nv::spi::Port port)
+    static sys::spi::bm::Driver& get_or_allocate(nv::spi::Port port)
     {
         for (size_t i = 0; i < SpiNumInstances; ++i) {
-            if (SpiInstances.at(i).port == port) {
-                return _drivers.at(i);
+            if (_bound[i] && _ports[i] == port) {
+                return _drivers[i];
+            }
+        }
+        for (size_t i = 0; i < SpiNumInstances; ++i) {
+            if (!_bound[i]) {
+                _bound[i] = true;
+                _ports[i] = port;
+                return _drivers[i];
+            }
+        }
+        __builtin_unreachable();
+    }
+
+    static sys::spi::bm::Driver& get(nv::spi::Port port)
+    {
+        for (size_t i = 0; i < SpiNumInstances; ++i) {
+            if (_bound[i] && _ports[i] == port) {
+                return _drivers[i];
             }
         }
         __builtin_unreachable();

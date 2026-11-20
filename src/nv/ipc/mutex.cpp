@@ -25,7 +25,7 @@ using namespace nv::ipc;
 Mutex& Mutex::make(MutexId id)
 {
     // pre-conditions
-    nv::always_assert(common::is_in_range(id));
+    NV_ALWAYS_ASSERT(common::is_in_range(id));
 
     auto obj_mem = Supervisor::inst().memory_for(id);
     if (obj_mem->obj_is_allocated) {

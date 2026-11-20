@@ -20,8 +20,24 @@
 #include "fsl_debug_console.h"
 
 #include "nv/nv.h"
+#include NV_IPC_CONFIG_H
 
 using namespace nv::uart;
+
+namespace {
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+Port g_console_port = static_cast<Port>(nv::ipc::UartInstance);
+}  // namespace
+
+void nv::uart::set_console_port(Port port)
+{
+    g_console_port = port;
+}
+
+Port nv::uart::console_port()
+{
+    return g_console_port;
+}
 
 Driver::Driver(Port port) : sys::uart::Driver()
 {

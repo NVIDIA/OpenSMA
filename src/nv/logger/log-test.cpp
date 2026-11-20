@@ -126,3 +126,42 @@ TEST_F(LOGGER, Add)
     ensure::is_eq(entry_data, LogData);
     ensure::is_eq(level, logger::Level::Error);
 };
+
+TEST_F(LOGGER, AddFromCore)
+{
+    Clean_log();
+    constexpr footprint::Id Footprint = 0x0ABC;
+    const EventData         LogData{1, 2, 3, 4, 5, 6, 7, 8};
+
+    auto status = Logger::add_from_core(
+        logger::Event::IpcTaskInitSuccess.unique_id, Level::Info, LogData, Footprint);
+    ensure::is_eq(status, Status::Ok);
+
+    Dlreq req{.session = LogSessionMax};
+    status = Logger::download(req);
+    ensure::is_eq(status, Status::Ok);
+    LogDLHdr header      = *std::bit_cast<LogDLHdr*>(req.data.data());
+    uint32_t delay_count = 10;
+    while (header.event_size == 0 && delay_count > 0) {
+        vTaskDelay(100);
+        req.session = LogSessionMax;
+        status      = Logger::download(req);
+        ensure::is_eq(status, Status::Ok);
+        header = *std::bit_cast<LogDLHdr*>(req.data.data());
+        delay_count--;
+    }
+    const uint16_t event_size = header.event_size;
+    ensure::is_eq(event_size, uint16_t{1});
+
+    status = Logger::download(req);
+    ensure::is_eq(status, Status::Ok);
+    const Entry entry = *std::bit_cast<Entry*>(req.data.data());
+    const auto  level = static_cast<Level>(std::to_underlying(entry.level) & 0x07);
+    const auto  footprint = static_cast<footprint::Id>(
+        (static_cast<footprint::Id>(entry.footprint_msb) << 7) | entry.footprint_lsb);
+    ensure::is_eq(entry.event, logger::Event::IpcTaskInitSuccess.unique_id);
+    ensure::is_eq(level, Level::Info);
+    ensure::is_eq(entry.data, LogData);
+    ensure::is_eq(footprint, Footprint);
+    ensure::is_eq(entry.coreId, 1);
+};

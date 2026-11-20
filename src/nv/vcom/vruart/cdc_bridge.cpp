@@ -51,6 +51,13 @@ CdcBridge& CdcBridge::inst()
     return cdc_bridge;
 }
 
+CdcBridge& CdcBridge::inst(uint8_t index)
+{
+    NV_ASSERT(index == 0);
+    (void)index;
+    return cdc_bridge;
+}
+
 // UART interface - forward to uart_impl
 Status CdcBridge::init(Instance      uartInstance,
                        const Signal& tx,
@@ -113,26 +120,32 @@ uint8_t CdcBridge::usb_rx_callback(uint8_t* data, uint32_t length)
 // Event::set() automatically handles ISR context via xPortIsInsideInterrupt()
 void CdcBridge::set_usb_rx_done_event()
 {
-    auto& event = Event::make(EventId::UartBridgeEvent);
+    auto& event = Event::make(EventId::Uart0BridgeEvent);
     (void)event.set(UsbRxDoneBit);
 }
 
 void CdcBridge::set_uart_rx_done_event()
 {
-    auto& event = Event::make(EventId::UartBridgeEvent);
+    auto& event = Event::make(EventId::Uart0BridgeEvent);
     (void)event.set(UartRxDoneBit);
 }
 
 void CdcBridge::set_uart_tx_done_event()
 {
-    auto& event = Event::make(EventId::UartBridgeEvent);
+    auto& event = Event::make(EventId::Uart0BridgeEvent);
     (void)event.set(UartTxDoneBit);
+}
+
+void CdcBridge::set_uart_tx_done_event(const void* uart_obj)
+{
+    (void)uart_obj;
+    set_uart_tx_done_event();
 }
 
 // Flush pending TX queue (called when USB port is closed to avoid stale data)
 void CdcBridge::flush_tx_queue()
 {
-    auto&            queue = Queue::make(QueueId::UbridgeTx);
+    auto&            queue = Queue::make(QueueId::Ubridge0Tx);
     ipc::Queue::Item item;
     // Drain all pending items from the queue
     while (queue.recv(item, 0ms) == Queue::Status::Ok) {
@@ -156,7 +169,7 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
     std::memcpy(buf.data() + 2, data, length);
     std::memcpy(buf.data(), &length, sizeof(uint16_t));
 
-    auto&                       queue = Queue::make(QueueId::UbridgeTx);
+    auto&                       queue = Queue::make(QueueId::Ubridge0Tx);
     const ipc::Queue::ConstItem item(buf.data(), buf.size());
 
     // Note: Both send_isr() and set_uart_rx_done_event() call portYIELD_FROM_ISR(),
@@ -182,11 +195,17 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
     return 0;
 }
 
+uint8_t CdcBridge::enqueue(const void* uart_obj, const uint8_t* data, uint32_t length)
+{
+    (void)uart_obj;
+    return enqueue(data, length);
+}
+
 // Event-driven task loop
 [[noreturn]] void CdcBridge::main()
 {
-    auto&            tx_queue = Queue::make(QueueId::UbridgeTx);
-    auto&            event    = Event::make(EventId::UartBridgeEvent);
+    auto&            tx_queue = Queue::make(QueueId::Ubridge0Tx);
+    auto&            event    = Event::make(EventId::Uart0BridgeEvent);
     ipc::Queue::Item tx_item(std::bit_cast<uint8_t*>(&tx_buf), tx_buf.size());
 
     constexpr uint32_t WaitBits = UsbRxDoneBit | UartRxDoneBit | UartTxDoneBit | UsbTxDoneBit;
@@ -206,7 +225,7 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
             if constexpr (ipc::EnableNcsi) {
                 // Dual-core: dequeue at most ONE ACM packet per UART TX window.
                 if (!uart_impl.txongoing()) {
-                    auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
+                    auto&            rx_queue = Queue::make(QueueId::Ubridge0Rx);
                     ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
                     if (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
                         uint16_t len = 0;
@@ -233,9 +252,9 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
                 // Dual-core: UART TX just completed. If UART is still busy, the
                 // UsbRxDoneBit handler above started a new TX in this same
                 // event-wait iteration; defer everything to the next UartTxDoneBit.
-                // Otherwise dequeue at most ONE packet from UbridgeRx and start
+                // Otherwise dequeue at most ONE packet from Ubridge0Rx and start
                 if (!uart_impl.txongoing()) {
-                    auto&            rx_queue = Queue::make(QueueId::UbridgeRx);
+                    auto&            rx_queue = Queue::make(QueueId::Ubridge0Rx);
                     ipc::Queue::Item rx_item(rx_buf.data(), rx_buf.size());
                     bool             started_next = false;
                     if (rx_queue.recv(rx_item, 0ms) == Queue::Status::Ok) {
@@ -300,7 +319,7 @@ uint8_t CdcBridge::enqueue(const uint8_t* data, uint32_t length)
 }  // namespace nv::vruart
 
 // Fixed hooks consumed by sys::usb (no runtime callback registration)
-// Single-core only: in dual-core (NCSI_ENABLE=1), ACM data arrives via IPC UbridgeRx
+// Single-core only: in dual-core (NCSI_ENABLE=1), ACM data arrives via IPC Ubridge0Rx
 // queue from Core1 and nv_usb_vcom_rx is never called on Core0.
 #if !NCSI_ENABLE
 extern "C" uint8_t nv_usb_vcom_rx(uint8_t* data, uint32_t length)

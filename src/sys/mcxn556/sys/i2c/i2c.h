@@ -59,9 +59,12 @@ public:
         /// shared per port, so on a standalone read buffer[2] may hold
         /// another slave function's stale traffic)
         bool rx_seen = false;
+        // For SlaveFunction::Emulation
+        void* emul_task;
+        bool  new_transaction = true;
     };
 
-    void bind(nv::i2c::Port port, void* task);
+    void bind(nv::i2c::Port port, void* task, void* emul_task);
     void init();
     void start(bool enable_target);
     bool write(std::span<uint8_t> data);
@@ -127,6 +130,9 @@ private:
     static void target_callback_i2c_forward(LPI2C_Type*             base,
                                             lpi2c_slave_transfer_t* transfer,
                                             void*                   user_data);
+    static void target_callback_emulation(LPI2C_Type*             base,
+                                          lpi2c_slave_transfer_t* transfer,
+                                          void*                   user_data);
 };
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data);

@@ -33,6 +33,8 @@ constexpr Address RemapSize          = 0x80000;
 constexpr Address MaxAddress         = 0x100000;
 constexpr Address LoggerStartAddress = 0x70000;
 constexpr Address FirmwareMaxSize    = 0x60000;
+constexpr Address LogEntryFlashSize  = 0xC000;
+constexpr Address L3CertAddress      = 0xEC000;
 
 constexpr Address FmcFwAddress = 0x1008000;
 constexpr Address FmcFwSize    = 0x8000;

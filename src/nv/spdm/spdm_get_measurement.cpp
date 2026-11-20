@@ -25,7 +25,6 @@
 #include "nv/spdm/task.h"
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "sys/spdm/platform_measurement.h"
-#include "nv/spdm/spdm_ap_measurement.h"
 using namespace nv;
 
 // for importing the funciton of ada pldm library
@@ -429,69 +428,48 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
                 copy_identity_view.begin(), copy_identity_view.end(), output_buffer.begin());
 
         } break;
-        case MeasAp1FirmwareHash:
-        case MeasAp2FirmwareHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            const auto ap_id = index == MeasAp1FirmwareHash ? nv::vrot::ApId::AP0
-                                                            : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_firmware_hash(ap_id, hash_data);
-        } break;
-        case MeasApRollbackFuses: {
-            auto& ap_rollback_fuse_value = *std::bit_cast<uint32_t*>(buffer);
-            nv::spdm::ap_measurement::get_ap_rollback_fuses(ap_rollback_fuse_value);
-        } break;
-        case MeasApKeyRevocationFuses: {
-            auto& key_revocation_fuse_value = *std::bit_cast<uint32_t*>(buffer);
-            nv::spdm::ap_measurement::get_ap_key_revocation_fuses(key_revocation_fuse_value);
-        } break;
-        case MeasAp1MetadataHash:
-        case MeasAp2MetadataHash: {
-            auto& hash_data = *std::bit_cast<
-                std::array<uint8_t, nv::spdm::crypto::Sha384HashSize>*>(buffer);
-            const auto ap_id = index == MeasAp1MetadataHash ? nv::vrot::ApId::AP0
-                                                            : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_metadata_hash(ap_id, hash_data);
-        } break;
-        case MeasAp1FirmwareSecurityVersion:
-        case MeasAp2FirmwareSecurityVersion: {
-            auto&      security_version = *std::bit_cast<uint64_t*>(buffer);
-            const auto ap_id = index == MeasAp1FirmwareSecurityVersion ? nv::vrot::ApId::AP0
-                                                                       : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_firmware_security_version(ap_id, security_version);
-        } break;
-        case MeasAp1FirmwareVersion:
-        case MeasAp2FirmwareVersion: {
-            auto& firmware_version = *std::bit_cast<nv::fw_parser::ap::ApFwVersion*>(buffer);
-            const auto ap_id       = index == MeasAp1FirmwareVersion ? nv::vrot::ApId::AP0
-                                                                     : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_firmware_version(ap_id, firmware_version);
-        } break;
-        case MeasAp1BootStatus:
-        case MeasAp2BootStatus: {
-            auto&      boot_status = *std::bit_cast<uint8_t*>(buffer);
-            const auto ap_id       = index == MeasAp1BootStatus ? nv::vrot::ApId::AP0
-                                                                : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_boot_status(ap_id, boot_status);
-        } break;
-        case MeasAp1ChipId:
-        case MeasAp2ChipId: {
-            auto&      chip_id = *std::bit_cast<nv::vrot::ApMeasurementChipId*>(buffer);
-            const auto ap_id   = index == MeasAp1ChipId ? nv::vrot::ApId::AP0
-                                                        : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_chip_id(ap_id, chip_id);
-        } break;
-        case MeasAp1FuseMask:
-        case MeasAp2FuseMask: {
-            auto&      fuse_mask = *std::bit_cast<uint32_t*>(buffer);
-            const auto ap_id     = index == MeasAp1FuseMask ? nv::vrot::ApId::AP0
-                                                            : nv::vrot::ApId::AP1;
-            nv::spdm::ap_measurement::get_ap_fuse_mask(ap_id, fuse_mask);
-        } break;
-
-        case MeasApType: {
-            auto& ap_type = *std::bit_cast<std::array<uint8_t, 4>*>(buffer);
-            nv::spdm::ap_measurement::get_ap_type(ap_type);
+        case MeasReservedIndex2: {
+            // This index has reported "NON" on every build of this firmware line.
+            auto& reserved_4 = *std::bit_cast<std::array<uint8_t, 4>*>(buffer);
+            reserved_4       = {'N', 'O', 'N', 0x00};
+            break;
+        }
+        case MeasReservedIndex16: {
+            auto& reserved_value = *std::bit_cast<uint32_t*>(buffer);
+            if (nv::flash::Flash::read_secure_fw_version(reserved_value,
+                                                         nv::flash::KeyRollbackSelect::Reserved)
+                != nv::flash::Status::Ok) {
+                reserved_value = std::numeric_limits<uint32_t>::max();
+            }
+            break;
+        }
+        case MeasReservedIndex17: {
+            auto& reserved_value = *std::bit_cast<uint32_t*>(buffer);
+            if (nv::flash::Flash::read_key_revoke(reserved_value,
+                                                  nv::flash::KeyRollbackSelect::Reserved)
+                != nv::flash::Status::Ok) {
+                reserved_value = std::numeric_limits<uint32_t>::max();
+            }
+            break;
+        }
+        case MeasReservedIndex21:
+        case MeasReservedIndex22:
+        case MeasReservedIndex27:
+        case MeasReservedIndex28:
+        case MeasReservedIndex35:
+        case MeasReservedIndex36: {
+            // These indexes keep the all-ones value they have always reported.
+            std::fill_n(std::bit_cast<uint8_t*>(buffer),
+                        MeasInfos.at(index).meas_size,
+                        std::numeric_limits<uint8_t>::max());
+            break;
+        }
+        case MeasReservedIndex41:
+        case MeasReservedIndex42:
+        case MeasReservedIndex44:
+        case MeasReservedIndex45: {
+            // These indexes keep the zero value they have always reported.
+            std::fill_n(std::bit_cast<uint8_t*>(buffer), MeasInfos.at(index).meas_size, 0);
             break;
         }
         case MeasReservedIndex38:
@@ -522,10 +500,14 @@ void spdm_get_measurement(MeasNumT index, void* buffer)
         case MeasReservedIndex6:
         case MeasReservedIndex7:
         case MeasReservedIndex8:
+        case MeasReservedIndex9:
+        case MeasReservedIndex10:
         case MeasReservedIndex11:
         case MeasReservedIndex12:
         case MeasReservedIndex29:
         case MeasReservedIndex30:
+        case MeasReservedIndex31:
+        case MeasReservedIndex32:
         case MeasReservedIndex33:
         case MeasReservedIndex46:
         case MeasReservedIndex47:

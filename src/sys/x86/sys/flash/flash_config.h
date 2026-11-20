@@ -35,6 +35,9 @@ constexpr Address FmcFwAddress = 0x1008000;
 constexpr Address FmcFwSize    = 0x8000;
 
 constexpr Address LoggerStartAddress = 0x70000;
+constexpr Address LogEntryFlashSize  = 0xC000;
+
+constexpr Address L3CertAddress = 0xEC000;
 
 constexpr Address PdsAddressStart = 0xF0000;
 

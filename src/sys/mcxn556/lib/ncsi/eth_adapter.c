@@ -39,7 +39,8 @@
 // Buffer descriptors for high throughput
 #define ENET_RXBD_NUM    (16)
 #define ENET_TXBD_NUM    (16)
-#define ENET_RXBUFF_SIZE (ENET_FRAME_MAX_FRAMELEN)
+// DMA buffer sized with margin (VLAN frames are 1518 bytes without FCS)
+#define ENET_RXBUFF_SIZE (ENET_FRAME_MAX_FRAMELEN + 4U)
 
 // DMA burst length for high throughput
 #define ENET_DMA_BURST_LEN kENET_BurstLen16
@@ -403,7 +404,7 @@ static eth_adapter_err_t ETH_ADAPTER_MAC_Init(void)
     // - Rx checksum offload: reduce CPU overhead
     // - Promiscuous mode: accept all frames (needed for NCSI/bridge mode)
     config.specialControl |= kENET_StoreAndForward | kENET_DescDoubleBuffer
-                           | kENET_RxChecksumOffloadEnable | kENET_PromiscuousEnable;
+                           | kENET_PromiscuousEnable;
 
 #if defined(NCSI_USE_PHY_MDIO) && (NCSI_USE_PHY_MDIO > 0)
     // Devkit: use the speed/duplex negotiated by the LAN8741 PHY (populated
@@ -632,7 +633,8 @@ eth_adapter_err_t ETH_ADAPTER_SendFrame(eth_adapter_frame_buf_t* buffer)
         .txConfig    = {
                         .intEnable    = true,
                         .tsEnable     = false,
-                        .txOffloadOps = kENET_TxOffloadAll,  // Enable TX checksum offload
+                        .txOffloadOps = kENET_TxOffloadDisable,  // Disable HW checksum/CRC offload to avoid
+                                                     // silent drops
         }
     };
 

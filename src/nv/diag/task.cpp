@@ -52,7 +52,7 @@ Task::Task() noexcept
 
 void Task::make()
 {
-    constexpr auto StackSize = std::max(2080, int(configMINIMAL_STACK_SIZE));
+    constexpr auto StackSize = std::max(256, int(configMINIMAL_STACK_SIZE));
 
     NV_TASK_DATA static Task                       task;
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;

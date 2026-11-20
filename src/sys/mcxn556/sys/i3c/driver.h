@@ -37,4 +37,9 @@ protected:
     nv::i2c::I2cStatus       to_status(status_t status);
 };
 
+// Enable/disable an I3C instance's NVIC interrupt. Used to break a SLVSTART
+// interrupt storm (disable to stop the ISR re-firing, re-enable after the
+// controller has been recovered in task context).
+void set_irq_enabled(uint8_t instance, bool enable);
+
 }  // namespace sys::i3c

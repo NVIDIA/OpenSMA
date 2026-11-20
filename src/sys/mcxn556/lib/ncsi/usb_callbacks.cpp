@@ -110,7 +110,8 @@ static struct usb_hid_bufs g_hid = {};
 static struct usb_acm_bufs g_acm = {};
 #endif /* USB_DEVICE_CONFIG_CDC_ACM */
 #if USB_CONFIG_LSTP
-static struct usb_lstp_bufs g_lstp = {.tx_busy_ch_id = nv::lstp::LstpNumChannels};
+// Keep the packet buffers in BSS; initialize the idle channel before USB starts.
+static struct usb_lstp_bufs g_lstp = {};
 #endif /* USB_CONFIG_LSTP */
 
 static void clear_in_endpoint_busy(void)
@@ -658,17 +659,19 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void* 
             }
 #endif
 #if USB_CONFIG_LSTP
-            else if (interface == USB_LSTP_INTERFACE_INDEX) {
+            else if (interface == ECM_USB_GetLstpInterfaceNumber()) {
                 status = kStatus_USB_Success;
             }
 #endif
 #if USB_DEVICE_CONFIG_CDC_ECM
-            else if (interface == USB_DEVICE_CDC_ECM_COMM_INTERFACE_NUMBER) {
+            else if (interface == USB_DEVICE_CDC_ECM_COMM_INTERFACE_NUMBER
+                     && ecm.handle->cdcEcmHandle != nullptr) {
                 if (altSetting < USB_DEVICE_CDC_ECM_COMM_INTERFACE_ALTERNATE_COUNT) {
                     status = kStatus_USB_Success;
                 }
             }
-            else if (interface == USB_DEVICE_CDC_ECM_DATA_INTERFACE_NUMBER) {
+            else if (interface == USB_DEVICE_CDC_ECM_DATA_INTERFACE_NUMBER
+                     && ecm.handle->cdcEcmHandle != nullptr) {
                 if (altSetting < USB_DEVICE_CDC_ECM_DATA_INTERFACE_ALTERNATE_COUNT) {
                     status = kStatus_USB_Success;
 
@@ -690,12 +693,12 @@ usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event, void* 
             }
 #endif /* USB_DEVICE_CONFIG_CDC_ECM */
 #if USB_DEVICE_CONFIG_CDC_ACM
-            else if (interface == USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER) {
+            else if (interface == ECM_USB_GetAcmCommInterfaceNumber()) {
                 if (altSetting < USB_DEVICE_CDC_ACM_COMM_INTERFACE_ALTERNATE_COUNT) {
                     status = kStatus_USB_Success;
                 }
             }
-            else if (interface == USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER) {
+            else if (interface == ECM_USB_GetAcmDataInterfaceNumber()) {
                 if (altSetting < USB_DEVICE_CDC_ACM_DATA_INTERFACE_ALTERNATE_COUNT) {
                     status = kStatus_USB_Success;
                 }
@@ -1000,6 +1003,7 @@ void ecm_usb_init(EcmNicHandle* handle, volatile uint32_t* app_event)
     auto& ecm    = ctx();
     ecm.handle   = handle;
     ecm.appEvent = app_event;
+    clear_in_endpoint_busy();
 
 #if USB_DEVICE_CONFIG_CDC_ECM
     // Hide ECM interface when core1_cfg_data has no valid NCSI MAC

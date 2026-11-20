@@ -45,4 +45,39 @@ constexpr std::array<app::MsgType, 4> SupportedType = {
 };
 constexpr uint8_t SupportedTypeNum = static_cast<uint8_t>(SupportedType.size());
 
+// x86 test platform has no point-to-point bus-owner bridge link, so control
+// messages are always validated strictly. See the mcxn236 platform config for
+// the product-gated (UsI3cBridgeMode) version. The common validator only
+// queries this predicate.
+constexpr bool interface_accepts_any_dst_control(Interface)
+{
+    return false;
+}
+
+// Single bus owner, so Allocate Endpoint ID latches the first interface to
+// allocate and Routing Information Update reports the first problem back to the
+// owner. See the mcxn236 platform config for the product-gated versions.
+constexpr bool allows_concurrent_bus_owners()
+{
+    return false;
+}
+
+constexpr bool tolerant_routing_info_update()
+{
+    return false;
+}
+
+constexpr bool is_us_i3c_interface(uint8_t packet_interface)
+{
+    return packet_interface == static_cast<uint8_t>(Interface::UsI3c);
+}
+
+// Interfaces whose Routing Information Update carries an address that Get Routing
+// Table Entry has to report back.
+constexpr bool should_store_additional_address(uint8_t packet_interface)
+{
+    return packet_interface == static_cast<uint8_t>(Interface::UsI2c)
+        || is_us_i3c_interface(packet_interface);
+}
+
 }  // namespace pdk::mctp::platforms

@@ -545,6 +545,36 @@ usb_device_class_struct_t g_acm_cdc_class = {
     (USB_COMPOSITE_CONFIG_DESC_LENGTH - USB_CDC_ECM_DESC_LENGTH)
 #define USB_COMPOSITE_INTERFACE_COUNT_NO_ECM                                                   \
     (USB_COMPOSITE_INTERFACE_COUNT - USB_CDC_ECM_INTERFACE_COUNT)
+/* Offset in no-ECM config buffer where the LSTP block begins.  With CDC-ECM removed,
+ * LSTP follows HID directly, i.e. at the offset the ECM block used to occupy. */
+#define USB_CONFIG_DESC_LSTP_OFFSET_NO_ECM (USB_DESC_OFFSET_CDC_ECM)
+/* LSTP follows MCTP and optional HID when CDC-ECM is removed. */
+#define USB_LSTP_INTERFACE_INDEX_NO_ECM    (USB_MCTP_INTERFACE_COUNT + USB_HID_INTERFACE_COUNT)
+/* Offset in no-ECM config buffer where ACM block begins (after config+MCTP+HID+LSTP). */
+#define USB_CONFIG_DESC_ACM_OFFSET_NO_ECM  (USB_DESC_OFFSET_CDC_ECM + USB_LSTP_DESC_LENGTH)
+/* ACM interface numbers after removing the CDC-ECM interfaces: shift each down by the
+ * ECM interface count (2 -> 0,1 vacated). Base is LSTP-relative, so without LSTP ACM's 4,5
+ * become 2,3; with LSTP present ACM's 5,6 become 3,4. */
+#define USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER_NO_ECM                                        \
+    (USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER - USB_CDC_ECM_INTERFACE_COUNT)
+#define USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER_NO_ECM                                        \
+    (USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER - USB_CDC_ECM_INTERFACE_COUNT)
+#endif
+
+#if USB_DEVICE_CONFIG_CDC_ACM
+/* CDC-ACM interface/endpoint numbers are computed relative to LSTP presence (see the header).
+ * Assert the invariants so a future block-ordering change or an undersized endpoint budget
+ * fails at compile time instead of producing a malformed descriptor. */
+static_assert(USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER
+                  == USB_MCTP_INTERFACE_COUNT + USB_HID_INTERFACE_COUNT
+                         + USB_CDC_ECM_INTERFACE_COUNT + USB_LSTP_INTERFACE_COUNT,
+              "CDC-ACM comm interface number must follow all preceding interface blocks");
+static_assert(USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER
+                  == USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER + 1U,
+              "CDC-ACM data interface must immediately follow the comm interface");
+static_assert(USB_DEVICE_CONFIG_ENDPOINTS > USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_NUMBER,
+              "USB_DEVICE_CONFIG_ENDPOINTS too small for the CDC-ACM data endpoint "
+              "(raise it or the EHCI driver cannot address this endpoint number)");
 #endif
 
 /*******************************************************************************
@@ -793,20 +823,20 @@ static const uint8_t s_config_descriptor[] = {
 #endif  // USB_CONFIG_LSTP
 
 #if USB_DEVICE_CONFIG_CDC_ACM
-    // ========== IAD for CDC-ACM (Interfaces 4-5) ==========
+    // ========== IAD for CDC-ACM (Interfaces 4-5, or 5-6 after LSTP) ==========
     USB_DESCRIPTOR_LENGTH_IAD,
     0x0BU,                                     // IAD descriptor type
-    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // First interface (4)
+    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // First interface
     USB_DEVICE_CDC_ACM_INTERFACE_COUNT,        // Interface count (2)
     USB_DEVICE_CDC_ACM_COMM_CLASS_CODE,        // 0x02 - Communications
     USB_DEVICE_CDC_ACM_COMM_SUBCLASS_CODE,     // 0x02 - Abstract Control Model
     USB_DEVICE_CDC_ACM_COMM_PROTOCOL_CODE,     // 0x00
     0x00U,
 
-    // ========== Interface 4: CDC-ACM Communication ==========
+    // ========== CDC-ACM Communication Interface (4, or 5 after LSTP) ==========
     USB_DESCRIPTOR_LENGTH_INTERFACE,
     USB_DESCRIPTOR_TYPE_INTERFACE,
-    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // 4
+    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // 4 (5 after LSTP)
     USB_DEVICE_CDC_ACM_COMM_INTERFACE_ALTERNATE,
     USB_DEVICE_CDC_ACM_COMM_ENDPOINT_NUMBER,  // 1
     USB_DEVICE_CDC_ACM_COMM_CLASS_CODE,
@@ -826,7 +856,7 @@ static const uint8_t s_config_descriptor[] = {
     USB_DEVICE_CDC_FUNC_TYPE_CS_INTERFACE,     // 0x24
     0x01U,                                     // Call Management subtype
     0x01U,                                     // bmCapabilities: device handles call management
-    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // Data interface (5)
+    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // Data interface (5, or 6 after LSTP)
 
     // CDC Abstract Control Management Functional Descriptor
     USB_DEVICE_CDC_ACM_FUNC_ACM_LENGTH,
@@ -838,10 +868,10 @@ static const uint8_t s_config_descriptor[] = {
     USB_DEVICE_CDC_ACM_FUNC_UNION_LENGTH,
     USB_DEVICE_CDC_FUNC_TYPE_CS_INTERFACE,     // 0x24
     USB_DEVICE_CDC_FUNC_SUBTYPE_UNION_FUNC,    // 0x06
-    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // Master interface (4)
-    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // Slave interface (5)
+    USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER,  // Master interface (4, or 5 after LSTP)
+    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // Slave interface (5, or 6 after LSTP)
 
-    // ACM Notification Endpoint (EP6)
+    // ACM Notification Endpoint (EP6, or EP7 after LSTP)
     USB_DESCRIPTOR_LENGTH_ENDPOINT,
     USB_DESCRIPTOR_TYPE_ENDPOINT,
     USB_DEVICE_CDC_ACM_COMM_INTERRUPT_IN_EP_NUMBER | (USB_IN << 7U),
@@ -850,10 +880,10 @@ static const uint8_t s_config_descriptor[] = {
     USB_SHORT_GET_HIGH(USB_DEVICE_CDC_ACM_COMM_INTERRUPT_IN_EP_MAXPKT_SIZE),
     USB_DEVICE_CDC_ACM_COMM_INTERRUPT_IN_EP_INTERVAL_FS,
 
-    // ========== Interface 5: CDC-ACM Data ==========
+    // ========== CDC-ACM Data Interface (5, or 6 after LSTP) ==========
     USB_DESCRIPTOR_LENGTH_INTERFACE,
     USB_DESCRIPTOR_TYPE_INTERFACE,
-    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // 5
+    USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER,  // 5 (6 after LSTP)
     USB_DEVICE_CDC_ACM_DATA_INTERFACE_ALTERNATE,
     USB_DEVICE_CDC_ACM_DATA_ENDPOINT_NUMBER,  // 2
     USB_DEVICE_CDC_ACM_DATA_CLASS_CODE,
@@ -861,7 +891,7 @@ static const uint8_t s_config_descriptor[] = {
     USB_DEVICE_CDC_ACM_DATA_PROTOCOL_CODE,
     0x00U,
 
-    // ACM Data Bulk IN Endpoint (EP7)
+    // ACM Data Bulk IN Endpoint (EP7, or EP8 after LSTP)
     USB_DESCRIPTOR_LENGTH_ENDPOINT,
     USB_DESCRIPTOR_TYPE_ENDPOINT,
     USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_NUMBER | (USB_IN << 7U),
@@ -870,7 +900,7 @@ static const uint8_t s_config_descriptor[] = {
     USB_SHORT_GET_HIGH(USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_MAXPKT_SIZE_HS),
     USB_DEVICE_CDC_ACM_DATA_BULK_IN_EP_INTERVAL,
 
-    // ACM Data Bulk OUT Endpoint (EP7)
+    // ACM Data Bulk OUT Endpoint (EP7, or EP8 after LSTP)
     USB_DESCRIPTOR_LENGTH_ENDPOINT,
     USB_DESCRIPTOR_TYPE_ENDPOINT,
     USB_DEVICE_CDC_ACM_DATA_BULK_OUT_EP_NUMBER | (USB_OUT << 7U),
@@ -1044,6 +1074,12 @@ ECM_USB_DeviceGetDeviceDescriptor(usb_device_handle                          han
 }
 
 /* When false, configuration descriptor and class list exclude CDC-ECM (no valid MAC). */
+#if USB_CONFIG_LSTP
+/* Runtime LSTP bInterfaceNumber; remapped when CDC-ECM is hidden (see prepare_config_buffer).
+ */
+static uint8_t s_lstp_interface_number = USB_LSTP_INTERFACE_INDEX;
+#endif
+
 #if USB_DEVICE_CONFIG_CDC_ECM
 static bool s_ecm_interface_visible = true;
 
@@ -1051,6 +1087,13 @@ static void prepare_config_buffer(void)
 {
     if (s_ecm_interface_visible) {
         std::memcpy(s_config_buffer, s_config_descriptor, USB_COMPOSITE_CONFIG_DESC_LENGTH);
+#if USB_CONFIG_LSTP
+        s_lstp_interface_number = USB_LSTP_INTERFACE_INDEX;
+#endif
+#if USB_DEVICE_CONFIG_CDC_ACM
+        s_acm_interfaces[0].interfaceNumber = USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER;
+        s_acm_interfaces[1].interfaceNumber = USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER;
+#endif
     }
     else {
         std::memcpy(s_config_buffer, s_config_descriptor, USB_DESC_OFFSET_CDC_ECM);
@@ -1060,6 +1103,51 @@ static void prepare_config_buffer(void)
         s_config_buffer[2] = USB_SHORT_GET_LOW(USB_COMPOSITE_CONFIG_DESC_LENGTH_NO_ECM);
         s_config_buffer[3] = USB_SHORT_GET_HIGH(USB_COMPOSITE_CONFIG_DESC_LENGTH_NO_ECM);
         s_config_buffer[4] = USB_COMPOSITE_INTERFACE_COUNT_NO_ECM;
+#if USB_CONFIG_LSTP
+        /* Remap the LSTP interface number: the block was copied verbatim from the full
+         * descriptor where LSTP sits at interface 4 (after CDC-ECM at 2,3).  With CDC-ECM
+         * absent the host sees bNumInterfaces=3, so LSTP's bInterfaceNumber must shift down
+         * by the ECM interface count (4 -> 2).  bInterfaceNumber is byte 2 of the LSTP
+         * interface descriptor, which now starts at USB_CONFIG_DESC_LSTP_OFFSET_NO_ECM. */
+        s_config_buffer[USB_CONFIG_DESC_LSTP_OFFSET_NO_ECM
+                        + 2U] = USB_LSTP_INTERFACE_INDEX_NO_ECM;
+        /* Keep the runtime interface-number tracking in sync with the remapped descriptor. */
+        s_lstp_interface_number = USB_LSTP_INTERFACE_INDEX_NO_ECM;
+#endif
+#if USB_DEVICE_CONFIG_CDC_ACM
+        /* Remap the CDC-ACM interface numbers down by the CDC-ECM interface count since
+         * CDC-ECM (interfaces 2,3) is absent at runtime.  The ACM block was copied verbatim
+         * from the full descriptor; without ECM the host sees a smaller bNumInterfaces, so the
+         * ACM interface numbers must shift down by 2 (e.g. 4,5→2,3, or 5,6→3,4 when LSTP is
+         * also present). Endpoint numbers need no remap — they may legally have gaps. */
+        uint8_t* const acm = s_config_buffer + USB_CONFIG_DESC_ACM_OFFSET_NO_ECM;
+        /* IAD: bFirstInterface (byte 2 of IAD) */
+        acm[2U] = USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER_NO_ECM;
+        /* CDC-ACM Comm Interface: bInterfaceNumber (byte 2 of interface descriptor) */
+        acm[USB_DESCRIPTOR_LENGTH_IAD + 2U] = USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER_NO_ECM;
+        /* CDC Call Management: bDataInterface (byte 4 of CM functional descriptor) */
+        acm[USB_DESCRIPTOR_LENGTH_IAD + USB_DESCRIPTOR_LENGTH_INTERFACE
+            + USB_DEVICE_CDC_ACM_FUNC_HEADER_LENGTH
+            + 4U] = USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER_NO_ECM;
+        /* CDC Union: bMasterInterface (byte 3) and bSlaveInterface (byte 4) */
+        acm[USB_DESCRIPTOR_LENGTH_IAD + USB_DESCRIPTOR_LENGTH_INTERFACE
+            + USB_DEVICE_CDC_ACM_FUNC_HEADER_LENGTH + USB_DEVICE_CDC_ACM_FUNC_CM_LENGTH
+            + USB_DEVICE_CDC_ACM_FUNC_ACM_LENGTH
+            + 3U] = USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER_NO_ECM;
+        acm[USB_DESCRIPTOR_LENGTH_IAD + USB_DESCRIPTOR_LENGTH_INTERFACE
+            + USB_DEVICE_CDC_ACM_FUNC_HEADER_LENGTH + USB_DEVICE_CDC_ACM_FUNC_CM_LENGTH
+            + USB_DEVICE_CDC_ACM_FUNC_ACM_LENGTH
+            + 4U] = USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER_NO_ECM;
+        /* CDC-ACM Data Interface: bInterfaceNumber (byte 2 of interface descriptor) */
+        acm[USB_DESCRIPTOR_LENGTH_IAD + USB_DESCRIPTOR_LENGTH_INTERFACE
+            + USB_DEVICE_CDC_ACM_FUNC_HEADER_LENGTH + USB_DEVICE_CDC_ACM_FUNC_CM_LENGTH
+            + USB_DEVICE_CDC_ACM_FUNC_ACM_LENGTH + USB_DEVICE_CDC_ACM_FUNC_UNION_LENGTH
+            + USB_DESCRIPTOR_LENGTH_ENDPOINT
+            + 2U] = USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER_NO_ECM;
+        /* Update the class driver's interface tracking to match the remapped numbers. */
+        s_acm_interfaces[0].interfaceNumber = USB_DEVICE_CDC_ACM_COMM_INTERFACE_NUMBER_NO_ECM;
+        s_acm_interfaces[1].interfaceNumber = USB_DEVICE_CDC_ACM_DATA_INTERFACE_NUMBER_NO_ECM;
+#endif
     }
 }
 
@@ -1079,6 +1167,25 @@ void ECM_USB_SetEcmInterfaceVisible(bool)
     std::memcpy(s_config_buffer, s_config_descriptor, USB_COMPOSITE_CONFIG_DESC_LENGTH);
 }
 #endif /* USB_DEVICE_CONFIG_CDC_ECM */
+
+#if USB_CONFIG_LSTP
+uint8_t ECM_USB_GetLstpInterfaceNumber(void)
+{
+    return s_lstp_interface_number;
+}
+#endif /* USB_CONFIG_LSTP */
+
+#if USB_DEVICE_CONFIG_CDC_ACM
+uint8_t ECM_USB_GetAcmCommInterfaceNumber(void)
+{
+    return s_acm_interfaces[0].interfaceNumber;
+}
+
+uint8_t ECM_USB_GetAcmDataInterfaceNumber(void)
+{
+    return s_acm_interfaces[1].interfaceNumber;
+}
+#endif /* USB_DEVICE_CONFIG_CDC_ACM */
 
 usb_status_t ECM_USB_DeviceGetConfigurationDescriptor(
     usb_device_handle                                 handle,

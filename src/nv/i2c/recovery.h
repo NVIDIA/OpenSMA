@@ -19,6 +19,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "nv/i2c/i2c_types.h"
 #include "port.h"
 
 namespace nv::i2c {
@@ -37,6 +38,6 @@ struct [[gnu::packed]] I2cRecoveryRequest
     uint8_t     src_id;
 };
 
-void quick_recovery(nv::i2c::Port port, uint8_t address);
-void bus_recovery(nv::i2c::Port port);
+void      quick_recovery(nv::i2c::Port port, uint8_t address);
+I2cStatus bus_recovery(nv::i2c::Port port);
 }  // namespace nv::i2c

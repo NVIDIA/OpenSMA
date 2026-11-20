@@ -62,10 +62,12 @@ uint8_t SmbusReadBlock::calculate_pec(uint8_t addr, uint8_t rx_cmd)
 
 void Ssif::bind(nv::i2c::Port      i2c_bus,
                 nv::gpio::GpioPort alert_port_id,
-                nv::gpio::GpioPin  alert_pin_id)
+                nv::gpio::GpioPin  alert_pin_id,
+                uint8_t            lstp_channel_id)
 {
-    _alert_port_id = alert_port_id;
-    _alert_pin_id  = alert_pin_id;
+    _alert_port_id   = alert_port_id;
+    _alert_pin_id    = alert_pin_id;
+    _lstp_channel_id = lstp_channel_id;
 
     const std::array<uint8_t, sys::i2c::NumI2cTargetAddresses> target_addresses{BmcAddress,
                                                                                 AraAddress};
@@ -102,7 +104,7 @@ bool Ssif::handle_tx()
 
 void Ssif::handle_rx()
 {
-    lstp::LstpRouter::send_ipmi(_buffer, _rx_size);
+    lstp::LstpRouter::send_ipmi(_lstp_channel_id, _buffer, _rx_size);
     _rx_size   = 0;
     _rx_offset = 0;
 }

@@ -47,4 +47,13 @@ namespace sys::common {
     __builtin_unreachable();
 }
 
+void ErrorInject::trigger_StackCheckFail()
+{
+    /**
+     * No-op on the x86 posix build: the __stack_chk_fail -> Reserved85_IRQHandler path
+     * being exercised is target-only, and smashing the canary here would abort the unit
+     * test process. Kept for parity with the target error-inject implementations.
+     */
+}
+
 }  // namespace sys::common

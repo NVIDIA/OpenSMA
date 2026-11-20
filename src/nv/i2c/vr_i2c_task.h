@@ -38,9 +38,12 @@ namespace nv::i2c {
 /** @brief Runtime pairing of an emulator instance with its 7-bit bus address. */
 struct VrI2cDeviceEntry
 {
-    std::reference_wrapper<nv::emulation::EmulationDevice> device;
-    uint8_t                                                address = 0;
+    std::optional<std::reference_wrapper<nv::emulation::EmulationDevice>> device;
+    uint8_t                                                               address = 0;
 };
+
+/** @brief Project hook to decide whether specific emulator should be enabled. */
+bool is_emulation_device_enabled(VrI2cDeviceId device_id);
 
 /**
  * @brief Virtual I2C task: serves emulated slaves on VrI2c0 / VrI2c1.
@@ -59,12 +62,28 @@ public:
         nv::ipc::BootedEventBits boot_event;
     };
 
-    VrI2cTask(Config config, std::span<const VrI2cDeviceEntry> devices) noexcept;
+    VrI2cTask(Config                            config,
+              std::span<const VrI2cDeviceEntry> devices,
+              nv::i2c::Port                     port) noexcept;
 
     static void       make(Config config);
     static void       entrypoint(void* params);
     static void       wdt_notify(nv::watchdog::TaskMonitorIndex task_id);
     [[noreturn]] void start();
+
+    void   i2c_write(uint8_t address, std::span<const uint8_t> i2c_buffer);
+    size_t i2c_read(uint8_t                                          address,
+                    std::span<uint8_t, sys::i2c::I2cSlaveBufferSize> i2c_buffer,
+                    bool                                             new_transaction);
+
+    bool has_device(uint8_t address) const;
+
+    static void i2c_callback(uint8_t&           address,
+                             bool               is_read,
+                             std::span<uint8_t> i2c_buffer,
+                             size_t&            i2c_size,
+                             void*              this_task_instance,
+                             bool               new_transaction);
 
 private:
     void handle_queued_i2c_request(std::span<uint8_t> buffer);
@@ -102,6 +121,7 @@ private:
     nv::ipc::BootedEventBits                           _boot_event;
     std::array<std::optional<DeviceRef>, AddressSpace> _device_map{};
     nv::i2c::I2cBuffer                                 _read_buffer{};
+    sys::i2c::I2CSlaveDriver<VrI2cTask>                _driver;
 };
 
 }  // namespace nv::i2c

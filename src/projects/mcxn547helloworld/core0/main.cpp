@@ -54,7 +54,6 @@
 #include "nv/gpio/driver.h"
 #include "nv/lstp/lstp_task.h"
 #include "nv/ssif/task.h"
-#include "nv/i3c/task.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/watchdog/boot.h"
@@ -63,7 +62,6 @@
 #include "nv/ipchandler/enums.h"
 #include <trustzone/resource_config.h>
 #include "sys/common/AHB_config.h"
-#include "sys/smartdma/driver.h"
 #include "nv/spi/flashrom_task.h"
 #include "nv/vcom/vruart/task.h"
 
@@ -77,8 +75,6 @@ static void make_i2c_task()
                 ipc::ClientInfos[static_cast<uint16_t>(ipc::DownStreamInfos[0].client)]),
             "I2C1",
             ipc::DownStreamInfos[0].client,
-            ipc::EventId::I2c1,
-            ipc::QueueId::I2c1,
             i2c::Port::Three,
             ipc::DownStreamInfos[0].port_address,
             ipc::BootedEventBits::I2c1};
@@ -94,8 +90,6 @@ static void make_i2c_task()
                 ipc::ClientInfos[static_cast<uint16_t>(ipc::DownStreamInfos[1].client)]),
             "I2C2",
             ipc::DownStreamInfos[1].client,
-            ipc::EventId::I2c2,
-            ipc::QueueId::I2c2,
             i2c::Port::One,
             ipc::DownStreamInfos[1].port_address,
             ipc::BootedEventBits::I2c2};
@@ -111,8 +105,6 @@ static void make_i2c_task()
             std::get<1>(ipc::ClientInfos[static_cast<uint16_t>(mctp::Client::UsI2c)]),
             "I2C0",
             mctp::Client::UsI2c,
-            ipc::EventId::I2c0,
-            ipc::QueueId::I2c0,
             i2c::Port::Zero,
             i2c::Task::DynAddr,
             ipc::BootedEventBits::I2c0};
@@ -127,8 +119,6 @@ static void make_i2c_task()
         constexpr auto config = i2c::Task::Config{ipc::TaskId::I2c3,
                                                   "I2C3",
                                                   mctp::Client::End,
-                                                  ipc::EventId::I2c3,
-                                                  ipc::QueueId::I2c3,
                                                   i2c::Port::Six,
                                                   i2c::Task::DynAddr,
                                                   ipc::BootedEventBits::I2c3,
@@ -139,32 +129,6 @@ static void make_i2c_task()
             NVIC_EnableIRQ(sys::i2c::Driver::get_irq(config.port_id));
             i2c::make_task_by_port<i2c::Port::Six>(config);
         }
-    }
-}
-
-static void make_i3c_task()
-{
-    using namespace nv;
-    const nv::i3c::Task::Config config{
-        std::get<1>(ipc::ClientInfos[static_cast<uint16_t>(mctp::Client::DsI3c0)]),
-        "I3C",
-        mctp::Client::DsI3c0,
-        ipc::EventId::I3c0,
-        ipc::QueueId::I3c0,
-        i3c::Driver::Port::One,
-        ipc::BootedEventBits::I3c0,
-        {400000U, 1000000U, 12500000U},
-        true,
-        0x6c,
-        0x4c,
-        ipc::TimerId::Gpu1Seneor,
-        {0, telemetry::TelemId::Gpu1Temp},
-        {nv::gpio::InvalidGpioPort, nv::gpio::InvalidGpioPin},
-        nv::ipchandler::Id::I3c0,
-        {nv::i2c::Port::One, 0x50},
-    };
-    if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
-        nv::i3c::Task::make(config);
     }
 }
 
@@ -207,16 +171,7 @@ static void make_lstp_task()
 
 static void make_ssif_task()
 {
-    using namespace nv;
-    ssif::Task::Config config{ipc::TaskId::Ssif,
-                              "SSIF",
-                              ipc::EventId::Ssif,
-                              i2c::Port::Two,
-                              nv::ipc::CPU0_SSIF_PORT,
-                              nv::ipc::CPU0_SSIF_PIN};
-    if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
-        ssif::Task::make(config);
-    }
+    nv::ssif::Task::make_all();
 }
 
 void SystemInitHook(void)
@@ -270,13 +225,9 @@ int main()
     flash::Task::make();
     usb::Task::make();
     make_i2c_task();
-    if constexpr (ipc::EnableSmartDMA) {
-        sys::smartdma::Driver::init();
-    }
-    make_i3c_task();
     make_spi_task();
     logger::Task::make();
-    vruart::BridgeTask::make();
+    vruart::Task::make();
     bootloader::Driver::set_stack_cookie();
     bootloader::Driver::boot_init();
     ctimer::Driver::init();
@@ -286,11 +237,6 @@ int main()
     }
     make_lstp_task();
 
-    // Set SSIF alert pin to high (inactive)
-    gpio::Driver::init_pin(nv::ipc::CPU0_SSIF_PORT,
-                           nv::ipc::CPU0_SSIF_PIN,
-                           gpio::Direction::Output,
-                           gpio::GpioState::High);
     make_ssif_task();
 
     perf_mon::Driver::init();

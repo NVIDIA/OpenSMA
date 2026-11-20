@@ -81,7 +81,7 @@ void BackgroundCopy::next(Driver& driver)
     }
 
     const Address ReadAddress  = current_offset;
-    const Address WriteAddress = nv::common::add(current_offset, RemapSize);
+    const Address WriteAddress = nv::common::add(current_offset, Slot1Offset);
     if (WriteAddress % SectorSize == 0) {
         auto erase_status = driver.erase(WriteAddress);
         nv::info("Bg erase at 0x%x\n", WriteAddress);

@@ -28,14 +28,30 @@ void pdk::mctp::platforms::on_enumerate_plat()
     pdk::cmn::log::here().info("MCTP: Enumerate");
 }
 
-void pdk::mctp::platforms::on_routing_info_update_plat(uint8_t requester_eid,
-                                                       uint8_t requester_interface,
-                                                       uint8_t update_eid)
+void pdk::mctp::platforms::on_routing_info_update_plat(uint8_t /*requester_eid*/,
+                                                       uint8_t /*requester_interface*/,
+                                                       uint8_t /*update_eid*/)
 {
-    pdk::cmn::log::here().info(
-        "MCTP: Update Routing Table, requester_eid: %d, requester_interface: %d, "
-        "update_eid: %d",
-        requester_eid,
-        requester_interface,
-        update_eid);
+    pdk::cmn::log::here().info("MCTP: Update Routing Table");
+}
+
+bool pdk::mctp::platforms::should_allocate_downstream_pool(uint8_t /*packet_interface*/)
+{
+    return true;
+}
+
+uint8_t pdk::mctp::platforms::get_upstream_routing_index(uint8_t /*packet_interface*/)
+{
+    return EidPoolSize;
+}
+
+uint8_t pdk::mctp::platforms::get_reported_eid_pool_size(uint8_t /*packet_interface*/)
+{
+    return EidPoolSize;
+}
+
+uint8_t pdk::mctp::platforms::get_downstream_pool_eid(uint8_t start_eid, uint8_t index)
+{
+    const uint16_t eid = static_cast<uint16_t>(start_eid) + index;
+    return (eid > UINT8_MAX) ? UINT8_MAX : static_cast<uint8_t>(eid);
 }

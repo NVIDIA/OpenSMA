@@ -85,8 +85,9 @@ Task::Task() : ipc::Task(ipc::TaskId::GpioMon, "GpioMon") {}
 
 void Task::make()
 {
-    auto&          task      = inst();
-    constexpr auto StackSize = std::max(1024, int(configMINIMAL_STACK_SIZE));
+    auto& task = inst();
+    // leave ~264 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(192, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -212,28 +213,36 @@ void Task::write_full_io_dump(Buffer& buf)
     append_to(dest, snap);
 }
 
-bool Task::append_record_isr(uint32_t header, uint32_t bank_io_val)
+bool Task::append_record_isr()
 {
     Buffer& buf = buffers.at(active_idx);
-    if (buf.offset + BankInterruptDumpRecordSize > BufferSize) {
+    if (buf.offset + BankCount * BankInterruptDumpRecordSize > BufferSize) {
         return false;
     }
-    const uint32_t ts   = nv::ctimer::Driver::read_ticks_inline();
-    uint8_t*       dest = buf.data.data() + buf.offset;
-    append_to(dest, header);
-    append_to(dest, ts);
-    append_to(dest, bank_io_val);
-    buf.offset += BankInterruptDumpRecordSize;
+    // Snapshot every bank's I/O state once and stamp all records with one timestamp
+    const uint32_t                  ts = nv::ctimer::Driver::read_ticks_inline();
+    std::array<uint32_t, BankCount> snap{};
+    uint8_t                         bank = 0;
+    for (auto& port_val : snap) {
+        (void)nv::gpio::Driver::read_gpio_port(bank++, port_val);
+    }
+    uint8_t* dest = buf.data.data() + buf.offset;
+    for (uint8_t i = 0; i < BankCount; ++i) {
+        append_to(dest, bank_interrupt_header(i));  // Bank{i}InterruptDump
+        append_to(dest, ts);                        // shared snapshot timestamp
+        append_to(dest, snap.at(i));                // that bank's PDIR
+    }
+    buf.offset += BankCount * BankInterruptDumpRecordSize;
     return true;
 }
 
-void Task::on_gpio_interrupt(uint8_t bank, uint32_t bank_io_val)
+void Task::on_gpio_interrupt()
 {
     Task& self = inst();
-    if (!self.triggers_enabled || bank >= BankCount) {
+    if (!self.triggers_enabled) {
         return;
     }
-    (void)self.append_record_isr(bank_interrupt_header(bank), bank_io_val);
+    (void)self.append_record_isr();
 }
 
 uint8_t Task::usb_rx_callback(uint8_t* data, uint32_t length)

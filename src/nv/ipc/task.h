@@ -27,9 +27,42 @@
 #include "nv/common/literals.h"
 #include "nv/common/utils.h"
 #include "sys/ipc/task.h"
+
+// Forward declaration for projects that don't define CustomTaskPriority in config.h
+namespace nv::ipc {
+enum class CustomTaskPriority;
+}
+
 #include NV_IPC_CONFIG_H
 
 namespace nv::ipc {
+
+static_assert(!(EnableCustomTaskPriority && EnableTaskSamePriority),
+              "EnableCustomTaskPriority overrides EnableTaskSamePriority");
+
+enum class DefaultTaskPriority
+{
+    Begin            = 0,
+    Idle             = Begin,
+    Norm             = 1,
+    IOX              = nv::ipc::EnableTaskSamePriority ? 2 : Norm,
+    Flash            = nv::ipc::EnableTaskSamePriority ? 2 : Norm,
+    SPI              = nv::ipc::EnableTaskSamePriority ? 2 : Norm,
+    GpuPwrController = nv::ipc::EnableTaskSamePriority ? 2 : Norm,
+    Pldm             = nv::ipc::EnableTaskSamePriority ? 2 : 2,
+    Spdm             = nv::ipc::EnableTaskSamePriority ? 2 : 2,
+    Logger           = nv::ipc::EnableTaskSamePriority ? 2 : 2,
+    Diag             = nv::ipc::EnableTaskSamePriority ? 2 : 2,
+    Mctp             = nv::ipc::EnableTaskSamePriority ? 2 : 3,
+    I2c              = nv::ipc::EnableTaskSamePriority ? 2 : 4,
+    Lstp             = nv::ipc::EnableTaskSamePriority ? 2 : 4,
+    Usb              = nv::ipc::EnableTaskSamePriority ? 2 : 5,
+    Ipc              = nv::ipc::EnableTaskSamePriority ? 2 : 6,
+    Timer            = configTIMER_TASK_PRIORITY,
+    Max              = configMAX_PRIORITIES,
+    End,
+    Invalid = 0xFF,
+};
 
 /**
  * Generic task interface.
@@ -46,31 +79,8 @@ public:
 
     using EntryPoint = void (*)(void*);
 
-    // TODO: need to decide on this.
-    enum class Priority
-    {
-        Begin            = 0,
-        Idle             = Begin,
-        Norm             = 1,
-        IOX              = nv::ipc::EanbleTaskSamePriority ? 2 : Norm,
-        Flash            = nv::ipc::EanbleTaskSamePriority ? 2 : Norm,
-        SPI              = nv::ipc::EanbleTaskSamePriority ? 2 : Norm,
-        GpuPwrController = nv::ipc::EanbleTaskSamePriority ? 2 : Norm,
-        SecureBoot       = nv::ipc::EanbleTaskSamePriority ? 2 : 2,
-        Pldm             = nv::ipc::EanbleTaskSamePriority ? 2 : 2,
-        Spdm             = nv::ipc::EanbleTaskSamePriority ? 2 : 2,
-        Logger           = nv::ipc::EanbleTaskSamePriority ? 2 : 2,
-        Diag             = nv::ipc::EanbleTaskSamePriority ? 2 : 2,
-        Mctp             = nv::ipc::EanbleTaskSamePriority ? 2 : 3,
-        I2c              = nv::ipc::EanbleTaskSamePriority ? 2 : 4,
-        Lstp             = nv::ipc::EanbleTaskSamePriority ? 2 : 4,
-        Usb              = nv::ipc::EanbleTaskSamePriority ? 2 : 5,
-        Ipc              = nv::ipc::EanbleTaskSamePriority ? 2 : 6,
-        Timer            = configTIMER_TASK_PRIORITY,
-        Max              = configMAX_PRIORITIES,
-        End,
-        Invalid = 0xFF,
-    };
+    using Priority = std::
+        conditional_t<EnableCustomTaskPriority, CustomTaskPriority, DefaultTaskPriority>;
 
     /// Generic Task memory region permission.
     enum class Permission : uint32_t

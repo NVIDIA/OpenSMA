@@ -146,9 +146,6 @@ status_t
 CfpaDriver::increase_cfpa_secure_version(uint32_t                     sec_version,
                                          nv::flash::KeyRollbackSelect key_rollback_select)
 {
-    // 0x01000080	MCTR_CUST_CTR0: AP0 key revocation
-    // 0x01000090	MCTR_CUST_CTR4: AP0 rollback protection
-
     if (inactive_page == CfpaInactivePageNotInit) {
         nv::info("FFR not init");
         return kStatus_InvalidArgument;
@@ -177,13 +174,6 @@ CfpaDriver::increase_cfpa_secure_version(uint32_t                     sec_versio
         }
         cfpa_read.secureFwVersion = sec_version;
     }
-    else if (key_rollback_select == nv::flash::KeyRollbackSelect::Ap0) {
-        if (cfpa_read.custCtr[4] > sec_version) {
-            nv::info("Invalid sec_version %d\n", sec_version);
-            return kStatus_InvalidArgument;
-        }
-        cfpa_read.custCtr[4] = sec_version;
-    }
     else {
         return kStatus_InvalidArgument;
     }
@@ -202,9 +192,6 @@ status_t
 CfpaDriver::increase_cfpa_image_key_revoke(uint32_t                     key_revoke,
                                            nv::flash::KeyRollbackSelect key_rollback_select)
 {
-    // 0x01000080	MCTR_CUST_CTR0: AP0 key revocation
-    // 0x01000090	MCTR_CUST_CTR4: AP0 rollback protection
-
     if (inactive_page == CfpaInactivePageNotInit) {
         nv::info("FFR not init");
         return kStatus_InvalidArgument;
@@ -232,13 +219,6 @@ CfpaDriver::increase_cfpa_image_key_revoke(uint32_t                     key_revo
             return kStatus_InvalidArgument;
         }
         cfpa_read.imageKeyRevoke = key_revoke;
-    }
-    else if (key_rollback_select == nv::flash::KeyRollbackSelect::Ap0) {
-        if (cfpa_read.custCtr[0] > key_revoke) {
-            nv::info("Invalid key_revoke %d\n", key_revoke);
-            return kStatus_InvalidArgument;
-        }
-        cfpa_read.custCtr[0] = key_revoke;
     }
     else {
         return kStatus_InvalidArgument;

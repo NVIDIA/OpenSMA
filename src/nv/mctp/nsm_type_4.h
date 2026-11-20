@@ -22,7 +22,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "nv/i2c/lattice_driver.h"
 #include "nv/mctp/constants.h"
 #include "nv/perf_mon/perf_mon.h"
 
@@ -30,21 +29,9 @@ namespace nv::mctp {
 
 constexpr uint8_t DevDiagGetDiagnosticsNoMoreSegments = 0xFF;
 constexpr uint8_t DevDiagTimestampTagId               = 0XFF;
-constexpr uint8_t DevDiagGetDiagnosticsFirstSegment   = 0x00;
 
 constexpr uint8_t DevDiagGetResetStatisticsResetCauseId = 0x08;
 constexpr uint8_t GetResetStatisticsResetLen            = 0x3;
-
-// CPLD Register Table constants
-constexpr uint8_t CpldRegisterTableNoMoreSegments = 0xFF;  // No more segments available
-constexpr uint8_t CpldRegisterTableFirstSegment   = 0x00;  // First segment to query
-constexpr uint16_t
-    CpldRegTablePayloadMaxSize = Constants::MctpTxBufSize - sizeof(nv::mctp::PrivateHeader)
-                               - sizeof(nv::mctp::Header)
-                               - Constants::NsmHeaderResponseSize;  // 1 is for
-                                                                    // the
-                                                                    // next_segment
-                                                                    // field
 
 // Bridge and Port Recovery constants
 constexpr uint8_t  NoMoreResetTargets = 0xFF;  // No more targets of this specific Reset Target
@@ -66,14 +53,28 @@ enum class RecoveryLevel : uint8_t
 
 enum class AggregateTaskEvent : uint32_t
 {
-    Mctp   = nv::common::bit(0),
-    I2C    = nv::common::bit(1),
-    I3C    = nv::common::bit(2),
-    PLDM   = nv::common::bit(3),
-    USB    = nv::common::bit(4),
-    Flash  = nv::common::bit(5),
-    Logger = nv::common::bit(6),
-    SPDM   = nv::common::bit(7),
+    Mctp       = nv::common::bit(0),
+    I2C        = nv::common::bit(1),
+    I3C        = nv::common::bit(2),
+    PLDM       = nv::common::bit(3),
+    USB        = nv::common::bit(4),
+    Flash      = nv::common::bit(5),
+    Logger     = nv::common::bit(6),
+    SPDM       = nv::common::bit(7),
+    LSTP       = nv::common::bit(8),
+    IOX        = nv::common::bit(9),
+    SSIF       = nv::common::bit(10),
+    IPC0       = nv::common::bit(11),
+    IPC1       = nv::common::bit(12),
+    SPI0       = nv::common::bit(13),
+    Diag       = nv::common::bit(14),
+    Reserved15 = nv::common::bit(15),
+#ifdef NV_UNITTEST
+    Unittest = nv::common::bit(16),
+#endif
+    EndNamed,                              // not used, just a mark to the latest known task
+    UnNamedArray = (EndNamed - 1) << 1UL,  // array of (31 - items above)
+    End          = nv::common::bit(30)     // bit 31 will not be used
 };
 
 struct [[gnu::packed]] TaskExecutionTimeResp
@@ -148,21 +149,5 @@ struct [[gnu::packed]] T4WriteProtectionRequest
  *         NsmStatus::ErrorGeneral on GPIO readback mismatch
  */
 NsmStatus platform_write_protection_gpio(uint8_t function, uint8_t mode);
-
-// CPLD Register Table Request Data Structure
-struct [[gnu::packed]] CpldRegisterTableReq
-{
-    uint8_t segment_index;  // Segment Index (0x00-0xFE for segment, 0xFF for no
-                            // more segments)
-};
-
-struct [[gnu::packed]] CpldRegisterTableResp
-{
-    uint8_t next_segment;  // Next Segment (0x00-0xFE for next segment, 0xFF for
-                           // no more segments)
-    // Variable length segment data follows after this structure
-    uint8_t segment_data[Cpld_User_Reg::CPLD_USER_REG_SIZE];  // Variable length segment data
-                                                              // follows after this structure
-};
 
 }  // namespace nv::mctp

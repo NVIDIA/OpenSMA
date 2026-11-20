@@ -86,6 +86,27 @@ i3c_ibi_data_t* Driver::get_ibi_data(uint8_t instance)
     return &smartdma_ctx.ibi_data[instance];
 }
 
+void Driver::clear_ibi_stop(uint8_t instance)
+{
+    if (instance >= SmartDmaI3cNumInstances) {
+        return;
+    }
+
+    i3c_smartdma_flag[instance].ibi_stop = 0;
+}
+
+void Driver::reset_flags(uint8_t instance)
+{
+    if (instance >= SmartDmaI3cNumInstances) {
+        return;
+    }
+
+    i3c_function_config[instance].i3c_read_write_start = 0;
+    i3c_function_config[instance].i3c_ibi_won          = 0;
+    i3c_smartdma_flag[instance].ibi_stop               = 0;
+    i3c_smartdma_flag[instance].read_write_stop        = 0;
+}
+
 void Driver::log_status(i3c_master_edma_handle_t& handle)
 {
     auto instance = I3C_GetInstance(handle.base);

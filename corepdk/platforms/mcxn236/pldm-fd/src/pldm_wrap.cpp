@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 #include "pldm_wrap.h"
-#include "nv/pldm/common.h"
 
 #include <algorithm>
 #include <chrono>
@@ -38,8 +37,6 @@
 #include "nv/fw_parser/fw_parser_mcu.h"
 #include "nv/ipchandler/ipchandler.h"
 #include "sys/flash/flash_config.h"
-#include "nv/fw_parser/fw_parser_ap.h"
-#include "nv/vrot/interface/interface.h"
 
 using namespace nv::mctp;
 using namespace std::chrono_literals;
@@ -65,76 +62,14 @@ void send_authenticate_mcu_firmware_result<nv::ipc::TaskId::Pldm>(
     }
 }
 
-template<>
-void send_authenticate_ap_firmware_result<nv::ipc::TaskId::Pldm>(
-    AuthenticateApFirmwareResponseParameter response)
-{
-    // send the auth result to pldm
-    pldm::Request request{
-        .type   = nv::pldm::RequestType::AuthApFinish,
-        .length = 2,
-        .rsv1   = 0,
-        .rsv2   = 0,
-    };
-
-    request.buffer[0] = static_cast<uint8_t>(response.auth_result);
-    request.buffer[1] = response.auth_request_id;
-
-    if (pldm::Task::to_pldm(ipchandler::Id::Spdm, request) == false) {
-        nv::info("to_pldm fail\n");
-    }
-}
-
 }  // namespace nv::spdm::crypto
 namespace nv::pldm {
-
-namespace {
-
-constexpr auto ApComponentIdList = make_component_id_list(nv::vrot::ApList);
-
-// Thin lookup helper: keeps `ApList` argument out of every call site and gives
-// the AP-branch helpers a single, readable name. Pure delegation to vrot's
-// constexpr finder — no caching, no per-AP-type dispatch.
-constexpr std::optional<nv::vrot::ApInfo> find_ap_info(NvU16 component_id)
-{
-    return nv::vrot::find_ap_by_component_id(component_id, nv::vrot::ApList);
-}
-
-constexpr size_t PldmVersionStringMaxLength = 32;
-
-void get_ap_comp_version_string(NvU8*                              version_string,
-                                NvU8&                              length,
-                                nv::fw_parser::ap::ParsingApFwType parsing_type)
-{
-    std::memset(version_string, 0, PldmVersionStringMaxLength);
-    length = 0;
-
-    if constexpr (nv::vrot::ApList.empty()) {
-        return;
-    }
-
-    auto comp_version = nv::fw_parser::ap::get_ap_comp_version_str(parsing_type);
-    if (!comp_version.has_value()) {
-        return;
-    }
-
-    const auto string_end = std::find(comp_version->begin(), comp_version->end(), NvU8{0});
-    const auto source_len = static_cast<size_t>(string_end - comp_version->begin());
-    const auto copy_len   = std::min(source_len, PldmVersionStringMaxLength - 1);
-    if (copy_len == 0) {
-        return;
-    }
-
-    std::copy_n(comp_version->begin(), copy_len, version_string);
-    length = static_cast<NvU8>(copy_len);
-}
-
-static_assert(nv::vrot::ApList.size() < NV_PLDM_MAX_COMPONENT_SIZE,
-              "ApList size should be less than 3");
-
-}  // namespace
-
 extern "C" {
+__attribute__((weak)) NvU8 pldm_update_component_busy(NvU16 /*component_id*/)
+{
+    return 0U;
+}
+
 void send_pldm_msg_to_mctp(NvU8* data,
                            NvU8  client,
                            NvU8  src_eid,
@@ -236,64 +171,8 @@ void pldm_write(NvU16                                          comp_id,
         err = NV_PLDM_RET_SUCCUSS;
     }
     else {
-        const auto ap_info = find_ap_info(comp_id);
-        if (!ap_info) {
-            nv::info("pldm_write: invalid component id 0x%x\n", comp_id);
-            err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
-            return;
-        }
-
-        if constexpr (nv::vrot::ApList.size() > 0) {
-            if (offset == 0) {
-                auto prepare_status = nv::vrot::fw_update_prepare(*ap_info);
-                if (prepare_status != nv::vrot::ApOpErrCode::Success) {
-                    nv::info("ap fw prepare fail %d\n", prepare_status);
-                    nv::logger::info(nv::logger::Event::PldmWriteFailAp,
-                                     {static_cast<uint8_t>(prepare_status)});
-                    err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
-                    return;
-                }
-            }
-            // Only write the actual valid data size, not the entire buffer
-            // to avoid writing residual data from previous transfers.
-            const std::span<uint8_t> valid_data(buffer.data(), size);
-
-            // PLDM streams the AP image as a single linear sequence starting
-            // at offset 0. The AP firmware layout puts the first
-            // sizeof(ApFwMetadata) bytes in the metadata region and the rest
-            // in the firmware-data region. Pick the matching region writer
-            // per chunk, splitting across the boundary if a chunk straddles.
-            constexpr auto MetadataSize = static_cast<NvU32>(
-                sizeof(nv::fw_parser::ap::ApFwMetadata));
-            auto          cur_data    = valid_data;
-            auto          cur_offset  = offset;
-            auto          status      = nv::vrot::ApOpErrCode::Success;
-            const uint8_t update_slot = nv::vrot::update_slot(*ap_info);
-            if (cur_offset < MetadataSize) {
-                const auto bytes_to_boundary = MetadataSize - cur_offset;
-                const auto split             = std::min(static_cast<NvU32>(cur_data.size()),
-                                            bytes_to_boundary);
-                status                       = nv::vrot::write_metadata(
-                    *ap_info, update_slot, cur_offset, cur_data.first(split));
-                if (status == nv::vrot::ApOpErrCode::Success && split < cur_data.size()) {
-                    cur_data = cur_data.subspan(split);
-                    status   = nv::vrot::write_fw_data(*ap_info, update_slot, 0, cur_data);
-                }
-            }
-            else {
-                status = nv::vrot::write_fw_data(
-                    *ap_info, update_slot, cur_offset - MetadataSize, cur_data);
-            }
-
-            if (status != nv::vrot::ApOpErrCode::Success) {
-                nv::info("ap fw write fail %d\n", status);
-                nv::logger::info(nv::logger::Event::PldmWriteFailAp,
-                                 {static_cast<uint8_t>(status)});
-                err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
-                return;
-            }
-            err = NV_PLDM_RET_SUCCUSS;
-        }
+        nv::info("pldm_write: invalid component id 0x%x\n", comp_id);
+        err = NV_PLDM_RET_IMAGE_WRITE_FAIL;
     }
 }
 
@@ -357,42 +236,6 @@ void pldm_update_pds(NvU16 component_id, NvU8 status, NvU16& err)
         // Rot state info change due to pldm update
         Driver::mctp_send_cmd(Driver::CmdCode::RotStateInfoChange);
     }
-    else {
-        if constexpr (nv::vrot::ApList.size() > 0) {
-            if (const auto ap = find_ap_info(component_id)) {
-                flash::Data update_state{};
-                if (status == static_cast<flash::Data>(PldmApFwStatus::Update_In_Progress)) {
-                    update_state = static_cast<flash::Data>(
-                        nv::fw_parser::ap::ApFwStatus::Update_In_Progress);
-                }
-                else if (status == static_cast<flash::Data>(PldmApFwStatus::Update_Complete)) {
-                    update_state = static_cast<flash::Data>(
-                        nv::fw_parser::ap::ApFwStatus::Update_Complete);
-                }
-                else {
-                    update_state = static_cast<flash::Data>(
-                        nv::fw_parser::ap::ApFwStatus::Update_Complete_But_Not_Activate);
-                }
-
-                auto status_key = flash::Key::NpdsInvalid;
-                switch (ap->id) {
-                    case nv::vrot::ApId::AP0: status_key = flash::Key::NpdsAp0FwStatus; break;
-                    case nv::vrot::ApId::AP1: status_key = flash::Key::NpdsAp1FwStatus; break;
-                    default                 : break;
-                }
-                if (status_key == flash::Key::NpdsInvalid) {
-                    err = NV_PLDM_RET_BOOTFSM_LEDGER_PROGRAM_FAIL;
-                    return;
-                }
-
-                auto flash_status = flash::Flash::set_data(status_key, update_state);
-                if (flash_status != flash::Status::Ok) {
-                    err = NV_PLDM_RET_BOOTFSM_LEDGER_PROGRAM_FAIL;
-                    return;
-                }
-            }
-        }
-    }
 
     err = NV_PLDM_RET_SUCCUSS;
 }
@@ -414,33 +257,6 @@ void pldm_get_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bui
     minor = MCU_FW_MINOR;
     patch = MCU_FW_PATCH;
     build = MCU_FW_BUILD;
-}
-
-void pldm_get_ap_active_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
-{
-    major = 0;
-    minor = 0;
-    patch = 0;
-    build = 0;
-
-    if constexpr (nv::vrot::ApList.empty()) {
-        return;
-    }
-
-    auto tbs_data = nv::fw_parser::ap::get_ap_fw_version(
-        nv::fw_parser::ap::ParsingApFwType::ActiveSlot);
-    if (tbs_data.has_value()) {
-        major = tbs_data->major;
-        minor = tbs_data->minor;
-        patch = tbs_data->patch;
-        build = tbs_data->build;
-    }
-}
-
-void pldm_get_ap_active_comp_version_string(NvU8* version_string, NvU8& length)
-{
-    get_ap_comp_version_string(
-        version_string, length, nv::fw_parser::ap::ParsingApFwType::ActiveSlot);
 }
 
 void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
@@ -493,54 +309,6 @@ void pldm_get_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& bu
     }
 }
 
-void pldm_get_ap_pending_version(NvU16& major, NvU8& minor, NvU16& patch, NvU16& build)
-{
-    major = 0;
-    minor = 0;
-    patch = 0;
-    build = 0;
-
-    if constexpr (nv::vrot::ApList.empty()) {
-        return;
-    }
-
-    flash::Data status{};
-    auto        flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, status);
-    if (flash_status != flash::Status::Ok
-        || status != static_cast<flash::Data>(nv::fw_parser::ap::ApFwStatus::Update_Complete)) {
-        return;
-    }
-
-    auto tbs_data = nv::fw_parser::ap::get_ap_fw_version(
-        nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-    if (tbs_data.has_value()) {
-        major = tbs_data->major;
-        minor = tbs_data->minor;
-        patch = tbs_data->patch;
-        build = tbs_data->build;
-    }
-}
-
-void pldm_get_ap_pending_comp_version_string(NvU8* version_string, NvU8& length)
-{
-    std::memset(version_string, 0, PldmVersionStringMaxLength);
-    length = 0;
-
-    if constexpr (nv::vrot::ApList.empty()) {
-        return;
-    }
-
-    flash::Data status{};
-    auto        flash_status = flash::Flash::get_data(flash::Key::NpdsAp0FwStatus, status);
-    if (flash_status != flash::Status::Ok
-        || status != static_cast<flash::Data>(nv::fw_parser::ap::ApFwStatus::Update_Complete)) {
-        return;
-    }
-
-    get_ap_comp_version_string(
-        version_string, length, nv::fw_parser::ap::ParsingApFwType::UpdateSlot);
-}
-
 void set_timer(NvU64 ns)
 {
     const std::chrono::nanoseconds Ns(ns);
@@ -583,23 +351,6 @@ void get_fw_info(NvU16  input_component_id,
         ap_sku_id           = MCU_AP_SKU;
         build_mode          = NV_BUILD_MODE;
         pldm_get_update_state_pds(fw_state);
-    }
-    else {
-        // Compile-time elide on empty ApList projects (no AP inventory to
-        // report).
-        if constexpr (nv::vrot::ApList.size() > 0) {
-            if (const auto ap = find_ap_info(input_component_id)) {
-                is_valid            = true;
-                output_component_id = ap->component_id;
-                fw_size             = ap->fw_size;
-                fw_offset           = ap->fw_offset;
-                ap_sku_id           = ap->ap_sku_id;
-                build_mode          = ap->build_mode;
-                // PDS update state is a single global flash key shared with
-                // the MCU branch (see pldm_get_update_state_pds above).
-                pldm_get_update_state_pds(fw_state);
-            }
-        }
     }
 }
 
@@ -707,56 +458,6 @@ void parse_header(NvU16     component_id,
             check_offset_within_transfer_size(ApSkuOffset, 4, transfer_size);
         }
     }
-    else {
-        // Compile-time elide on empty ApList projects (no AP to parse for).
-        if constexpr (nv::vrot::ApList.size() == 0) {
-            return;
-        }
-        if (!find_ap_info(component_id)) {
-            return;
-        }
-        // AP firmware images all start with an `nv::fw_parser::ap::ApFwMetadata`,
-        // so the offsets of the PLDM-visible fields come straight from the struct
-        // — no per-AP magic numbers, no per-AP parser. Field bytes are copied via
-        // memcpy from the streaming chunk; on a little-endian target this matches
-        // the on-flash layout for both the packed `ApFwVersion` and the `uint32_t`
-        // SKU id.
-        using nv::fw_parser::ap::ApFwMetadata;
-        using nv::fw_parser::ap::ApFwVersion;
-        constexpr uint32_t ApFwVersionOffset = offsetof(ApFwMetadata, tbs_data.fw_version);
-        constexpr uint32_t ApSkuIdOffset     = offsetof(ApFwMetadata, tbs_data.ap_sku_id);
-
-        if (is_in_range(cur_fw_offset,
-                        transfer_size,
-                        ApFwVersionOffset,
-                        ApFwVersionOffset + sizeof(ApFwVersion) - 1)) {
-            ApFwVersion v{};
-            std::memcpy(&v, data + (ApFwVersionOffset - cur_fw_offset), sizeof(v));
-            metadata->major = v.major;
-            metadata->minor = v.minor;
-            metadata->patch = v.patch;
-            metadata->build = v.build;
-        }
-
-        if (is_in_range(cur_fw_offset,
-                        transfer_size,
-                        ApSkuIdOffset,
-                        ApSkuIdOffset + sizeof(uint32_t) - 1)) {
-            uint32_t sku{};
-            std::memcpy(&sku, data + (ApSkuIdOffset - cur_fw_offset), sizeof(sku));
-            metadata->ap_sku_id = sku;
-            // ap_sku_id is the highest-offset AP-metadata field PLDM-FD cares
-            // about; once it has arrived, the FD can stop walking the metadata
-            // region.
-            is_recv_all_metadata = 1;
-        }
-
-        if (cur_fw_offset == 0) {
-            check_offset_within_transfer_size(
-                ApFwVersionOffset, sizeof(ApFwVersion), transfer_size);
-            check_offset_within_transfer_size(ApSkuIdOffset, sizeof(uint32_t), transfer_size);
-        }
-    }
 }
 
 void get_pcie_info(NvU16& vid, NvU16& did, NvU16& ssvid, NvU16& ssdid)
@@ -804,21 +505,6 @@ void request_authentication(NvU16 comp_id, NvU32& auth_request_id)
             // need error handling
         }
     }
-    else {
-        if constexpr (nv::vrot::ApList.size() > 0) {
-            uint8_t    ap_auth_request_id = 0;
-            const auto rc = nv::vrot::ap::request_authentication(comp_id, ap_auth_request_id);
-            if (rc == nv::vrot::ApOpErrCode::UnknownComponent) {
-                nv::info("request_authentication: no AP info for component id 0x%x\n", comp_id);
-                return;
-            }
-            if (rc != nv::vrot::ApOpErrCode::Success) {
-                // need error handling
-                return;
-            }
-            auth_request_id = ap_auth_request_id;
-        }
-    }
 }
 
 void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc)
@@ -848,73 +534,17 @@ void get_mcu_authentication_result(uint8_t result, uint8_t& verify_cc)
 #endif
 }
 
-void get_ap_authentication_result(uint16_t comp_id, uint8_t result, uint8_t& verify_cc)
-{
-    // Whole function is dead code on empty-ApList projects (no AP can ever
-    // send an authentication result to handle). Report ERROR for safety so
-    // any stray call from the FD doesn't silently leave verify_cc unset.
-    if constexpr (nv::vrot::ApList.size() == 0) {
-        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
-        return;
-    }
-    auto ap = find_ap_info(comp_id);
-    if (!ap) {
-        nv::info("get_ap_authentication_result: no AP info for component id 0x%x\n", comp_id);
-        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
-        return;
-    }
-    nv::logger::info(nv::logger::Event::PldmAuthInactiveCryptoStatus, {result});
-    auto rc = nv::vrot::ap::fw_update_callback(comp_id,
-                                               static_cast<spdm::crypto::CryptoStatus>(result));
-    if (rc == nv::vrot::ApOpErrCode::UnknownComponent) {
-        nv::info("get_ap_authentication_result: no AP info for component id 0x%x\n", comp_id);
-        verify_cc = NV_PLDM_VERIFY_CC_ERROR;
-        return;
-    }
-    switch (result) {
-        case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::Success):
-            verify_cc = NV_PLDM_VERIFY_CC_SUCCESS;
-            break;
-        case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::FailSecurityVersionRollBack):
-            verify_cc = NV_PLDM_VERIFY_CC_ROLLBACK_FAIL;
-            break;
-        case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::FailImageSigningKeyRevoke):
-            verify_cc = NV_PLDM_VERIFY_CC_KEY_FAIL;
-            break;
-        case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::FailNbootImageAuthenticate):
-        case static_cast<uint8_t>(nv::spdm::crypto::CryptoStatus::FailParsingFirmware):
-            verify_cc = NV_PLDM_VERIFY_CC_IMAGE_AUTH_FAIL;
-            break;
-        default: verify_cc = NV_PLDM_VERIFY_CC_ERROR; break;
-    }
-}
-
 void print_msg(NvU32 data)
 {
     nv::info("debug data:");
     nv::info(" 0x%x\n", data);
 }
-
-void get_arr_comp_id_len(NvU32& arrlen)
-{
-    // coverity[cert_int31_c_violation] - valid cast
-    arrlen = static_cast<NvU32>(ApComponentIdList.size());
-}
-
-const NvU16* get_arr_comp_id_address()
-{
-    return ApComponentIdList.data();
-}
-
 NvU8 get_write_fail_retry(NvU16 comp_id)
 {
     if (comp_id == sys::flash::config::McuComponentId) {
         //  mcu do not support retry since erase unit size is 8KB
         // if write fail at offset within 8KB, will not re-erase
         return 0;
-    }
-    if constexpr (nv::vrot::ApList.size() > 0) {
-        return nv::vrot::ap::get_write_fail_retry(comp_id);
     }
     return 0;
 }

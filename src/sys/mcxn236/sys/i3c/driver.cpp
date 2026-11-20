@@ -22,6 +22,7 @@
 #include <fsl_debug_console.h>
 
 #include "nv/i3c/task.h"
+#include "nv/ipc/mctp_bridge_config.h"
 #include "nv/logger/log.h"
 #include "nv/nv.h"
 
@@ -188,6 +189,19 @@ void nv::i3c::Driver::init()
         _base, &_i3c_m_handle, &Callback, this, &_rx_edma_handle, &_tx_edma_handle);
     _i3c_m_handle.ibiBuff = _ibi_data.data();
     _is_init              = true;
+
+    // I3C_MasterInit() resets the peripheral, clearing both the IBI address
+    // rules and MCTRL.IBIRESP. Every controller reset lands here and nothing
+    // re-arms IBI delivery once bring-up is done. The target keeps the dynamic
+    // address and ENINT it was granted across a controller-only reset, so it
+    // stays entitled to raise IBIs. GPU products register IBI during DAA, not
+    // here.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (_ibi_address != 0U) {
+            (void)register_ibi(_ibi_address);
+            set_ibi_ack_mandatory();
+        }
+    }
     nv::logger::info(nv::logger::Event::I3cDriverInit, {static_cast<uint8_t>(_port), true});
 }
 
@@ -263,6 +277,193 @@ bool nv::i3c::Driver::enec()
         return false;
     }
     return true;
+}
+
+bool nv::i3c::Driver::enec(uint8_t address)
+{
+    constexpr uint8_t BoradcastAddress = 0x7EU;
+    constexpr uint8_t CccEnecDirect    = 0x80U;
+    constexpr uint8_t Enint            = 0x01U;
+
+    i3c_master_transfer_t xfer{};
+    xfer.slaveAddress   = BoradcastAddress;
+    xfer.subaddress     = CccEnecDirect;
+    xfer.subaddressSize = 1U;
+    xfer.direction      = kI3C_Write;
+    xfer.busType        = kI3C_TypeI3CSdr;
+    xfer.flags          = kI3C_TransferNoStopFlag;
+    xfer.ibiResponse    = kI3C_IbiRespAckMandatory;
+    auto result         = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+    if (result != kStatus_Success) {
+        I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
+        const logger::EventData data = {
+            CccEnecDirect,
+            static_cast<uint8_t>(result >> 0 & 0xFF),
+            static_cast<uint8_t>(result >> 8 & 0xFF),
+            static_cast<uint8_t>(result >> 16 & 0xFF),
+            static_cast<uint8_t>(result >> 24 & 0xFF),
+        };
+        logger::info(logger::Event::I3CCccErrorV1, data);
+        auto status = to_driver_status(static_cast<uint32_t>(result));
+        if (status != Status::Success) {
+            const auto& task = *static_cast<nv::i3c::Task*>(_task);
+            task.record_error(static_cast<uint8_t>(status));
+        }
+        return false;
+    }
+
+    I3cBuffer buffer{
+        Enint,
+    };
+    memset(&xfer, 0, sizeof(xfer));
+    xfer.slaveAddress = address;
+    xfer.data         = buffer.data();
+    xfer.dataSize     = 1;
+    xfer.direction    = kI3C_Write;
+    xfer.busType      = kI3C_TypeI3CSdr;
+    xfer.flags        = kI3C_TransferDefaultFlag;
+    xfer.ibiResponse  = kI3C_IbiRespAckMandatory;
+    result            = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+    if (result != kStatus_Success) {
+        I3C_MasterStop(_i3c_m_handle.base);
+        const logger::EventData data = {
+            CccEnecDirect,
+            static_cast<uint8_t>(result >> 0 & 0xFF),
+            static_cast<uint8_t>(result >> 8 & 0xFF),
+            static_cast<uint8_t>(result >> 16 & 0xFF),
+            static_cast<uint8_t>(result >> 24 & 0xFF),
+        };
+        logger::info(logger::Event::I3CCccErrorV1, data);
+        auto status = to_driver_status(static_cast<uint32_t>(result));
+        if (status != Status::Success) {
+            const auto& task = *static_cast<nv::i3c::Task*>(_task);
+            task.record_error(static_cast<uint8_t>(status));
+        }
+        return false;
+    }
+    return true;
+}
+
+bool nv::i3c::Driver::register_ibi(uint8_t address)
+{
+    i3c_register_ibi_addr_t ibi_record{};
+    ibi_record.address[0]    = address;
+    ibi_record.ibiHasPayload = true;
+    I3C_MasterRegisterIBI(_i3c_m_handle.base, &ibi_record);
+    _ibi_address = address;
+    return true;
+}
+
+namespace {
+
+// I3C_MasterSetIBIResponse() exists only in SDK 25.09.00, which this platform does
+// not use, so arm the policy directly. Unlike I3C_MasterEmitIBIResponse() this leaves
+// REQUEST at None: it only changes how the controller will answer a future IBI and
+// must not emit a decision here. Clearing REQUEST_MASK is required because the field
+// is write-triggered, so a plain read-modify-write of MCTRL would re-issue whatever
+// request it last carried.
+void set_ibi_response(I3C_Type* base, i3c_ibi_response_t response)
+{
+    uint32_t ctrl  = base->MCTRL;
+    ctrl          &= ~(I3C_MCTRL_IBIRESP_MASK | I3C_MCTRL_REQUEST_MASK);
+    ctrl          |= I3C_MCTRL_IBIRESP(static_cast<uint32_t>(response))
+          | I3C_MCTRL_REQUEST(kI3C_RequestNone);
+    base->MCTRL = ctrl;
+}
+
+}  // namespace
+
+void nv::i3c::Driver::set_ibi_nack()
+{
+    set_ibi_response(_i3c_m_handle.base, kI3C_IbiRespNack);
+}
+
+bool nv::i3c::Driver::recover_irq_storm_if_pending()
+{
+    // I3C SLVSTART interrupt-storm recovery is only implemented for the mcxn556
+    // UsI3c bridge topology.
+    return false;
+}
+
+void nv::i3c::Driver::set_ibi_ack_mandatory()
+{
+    set_ibi_response(_i3c_m_handle.base, kI3C_IbiRespAckMandatory);
+}
+
+bool nv::i3c::Driver::set_mrl_mwl(uint8_t address)
+{
+    constexpr uint8_t CccSetMrlDirect = 0x8AU;
+    constexpr uint8_t CccSetMwlDirect = 0x89U;
+    constexpr uint8_t MrlMwlMsb       = 0x00U;
+    constexpr uint8_t MrlMwlLsb       = 0x45U;
+    constexpr uint8_t IbiPayloadSize  = 0x02U;
+
+    auto send_direct_ccc = [this, address](uint8_t ccc, std::span<uint8_t> data) {
+        constexpr uint8_t BoradcastAddress = 0x7EU;
+
+        i3c_master_transfer_t xfer{};
+        xfer.slaveAddress   = BoradcastAddress;
+        xfer.subaddress     = ccc;
+        xfer.subaddressSize = 1U;
+        xfer.direction      = kI3C_Write;
+        xfer.busType        = kI3C_TypeI3CSdr;
+        xfer.flags          = kI3C_TransferNoStopFlag;
+        xfer.ibiResponse    = kI3C_IbiRespAckMandatory;
+        auto result         = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (result != kStatus_Success) {
+            I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
+            const logger::EventData log_data = {
+                ccc,
+                static_cast<uint8_t>(result >> 0 & 0xFF),
+                static_cast<uint8_t>(result >> 8 & 0xFF),
+                static_cast<uint8_t>(result >> 16 & 0xFF),
+                static_cast<uint8_t>(result >> 24 & 0xFF),
+            };
+            logger::info(logger::Event::I3CCccErrorV1, log_data);
+            auto status = to_driver_status(static_cast<uint32_t>(result));
+            if (status != Status::Success) {
+                const auto& task = *static_cast<nv::i3c::Task*>(_task);
+                task.record_error(static_cast<uint8_t>(status));
+            }
+            return false;
+        }
+
+        memset(&xfer, 0, sizeof(xfer));
+        xfer.slaveAddress = address;
+        xfer.data         = data.data();
+        xfer.dataSize     = data.size();
+        xfer.direction    = kI3C_Write;
+        xfer.busType      = kI3C_TypeI3CSdr;
+        xfer.flags        = kI3C_TransferDefaultFlag;
+        xfer.ibiResponse  = kI3C_IbiRespAckMandatory;
+        result            = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (result != kStatus_Success) {
+            I3C_MasterStop(_i3c_m_handle.base);
+            const logger::EventData log_data = {
+                ccc,
+                static_cast<uint8_t>(result >> 0 & 0xFF),
+                static_cast<uint8_t>(result >> 8 & 0xFF),
+                static_cast<uint8_t>(result >> 16 & 0xFF),
+                static_cast<uint8_t>(result >> 24 & 0xFF),
+            };
+            logger::info(logger::Event::I3CCccErrorV1, log_data);
+            auto status = to_driver_status(static_cast<uint32_t>(result));
+            if (status != Status::Success) {
+                const auto& task = *static_cast<nv::i3c::Task*>(_task);
+                task.record_error(static_cast<uint8_t>(status));
+            }
+            return false;
+        }
+        return true;
+    };
+
+    I3cBuffer set_mrl_data{MrlMwlMsb, MrlMwlLsb, IbiPayloadSize};
+    if (!send_direct_ccc(CccSetMrlDirect, std::span<uint8_t>(set_mrl_data.data(), 3))) {
+        return false;
+    }
+
+    I3cBuffer set_mwl_data{MrlMwlMsb, MrlMwlLsb};
+    return send_direct_ccc(CccSetMwlDirect, std::span<uint8_t>(set_mwl_data.data(), 2));
 }
 
 bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)

@@ -52,7 +52,6 @@
 #include "nv/logger/task.h"
 #include "nv/bootloader.h"
 #include "nv/gpio/driver.h"
-#include "nv/i3c/task.h"
 #include "nv/ctimer/ctimer.h"
 #include "nv/perf_mon/perf_mon.h"
 #include "nv/watchdog/boot.h"
@@ -69,8 +68,6 @@ static void make_i2c_task()
                 ipc::ClientInfos[static_cast<uint16_t>(ipc::DownStreamInfos[0].client)]),
             "I2C1",
             ipc::DownStreamInfos[0].client,
-            ipc::EventId::I2c1,
-            ipc::QueueId::I2c1,
             i2c::Port::Zero,
             ipc::DownStreamInfos[0].port_address,
             ipc::BootedEventBits::I2c1};
@@ -86,8 +83,6 @@ static void make_i2c_task()
                 ipc::ClientInfos[static_cast<uint16_t>(ipc::DownStreamInfos[1].client)]),
             "I2C2",
             ipc::DownStreamInfos[1].client,
-            ipc::EventId::I2c2,
-            ipc::QueueId::I2c2,
             i2c::Port::One,
             ipc::DownStreamInfos[1].port_address,
             ipc::BootedEventBits::I2c2};
@@ -103,8 +98,6 @@ static void make_i2c_task()
             std::get<1>(ipc::ClientInfos[static_cast<uint16_t>(mctp::Client::UsI2c)]),
             "I2C0",
             mctp::Client::UsI2c,
-            ipc::EventId::I2c0,
-            ipc::QueueId::I2c0,
             i2c::Port::Zero,
             i2c::Task::DynAddr,
             ipc::BootedEventBits::I2c0};
@@ -112,31 +105,6 @@ static void make_i2c_task()
             NVIC_EnableIRQ(sys::i2c::Driver::get_irq(config.port_id));
             i2c::make_task_by_port<i2c::Port::Three>(config);
         }
-    }
-}
-
-static void make_i3c_task()
-{
-    using namespace nv;
-    const nv::i3c::Task::Config config{
-        std::get<1>(ipc::ClientInfos[static_cast<uint16_t>(mctp::Client::DsI3c0)]),
-        "I3C",
-        mctp::Client::DsI3c0,
-        ipc::EventId::I3c0,
-        ipc::QueueId::I3c0,
-        i3c::Driver::Port::One,
-        ipc::BootedEventBits::I3c0,
-        {400000U, 1000000U, 12500000U},
-        true,
-        0x6c,
-        0x4c,
-        ipc::TimerId::Gpu1Seneor,
-        {0, telemetry::TelemId::Gpu1Temp},
-        {nv::gpio::InvalidGpioPort, nv::gpio::InvalidGpioPin},
-        nv::ipchandler::Id::I3c0,
-    };
-    if (sys::ipc::task::Driver::can_direct_access_on_current_core(config.task_id)) {
-        nv::i3c::Task::make(config);
     }
 }
 
@@ -176,7 +144,6 @@ int main()
     // flash::Task::make();
     // usb::Task::make();
     // make_i2c_task();
-    // make_i3c_task();
     // logger::Task::make();
 
     // bootloader::Driver::boot_init();

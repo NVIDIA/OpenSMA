@@ -19,6 +19,7 @@
 #include "sys/i2c/utils.h"
 
 #include <cstring>
+#include <fsl_clock.h>
 
 #include "nv/common/utils.h"
 #include "nv/i2c/mutex.h"
@@ -305,4 +306,51 @@ void slave_config_fill_from_registers(LPI2C_Type*           base,
     cfg.enableSlave      = (scr & LPI2C_SCR_SEN_MASK) != 0U;
 }
 
+nv::i2c::I2cStatus set_master_frequency(nv::i2c::Port port, uint32_t baud_hz)
+{
+    LPI2C_Type* base = get_base(port);
+    if (!base || baud_hz == 0U) {
+        return nv::i2c::I2cStatus::Error;
+    }
+
+    auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(port));
+    // Acquire mutex so the divider is not reprogrammed mid-transfer
+    auto mutex_status = mutex.lock(nv::ipc::Mutex::DefaultTimeout);
+    if (mutex_status != nv::ipc::Mutex::Status::Ok) {
+        return nv::i2c::I2cStatus::MutexError;
+    }
+    const uint32_t clock_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(base));
+    LPI2C_MasterSetBaudRate(base, clock_hz, baud_hz);
+    mutex.unlock();
+
+    return nv::i2c::I2cStatus::Ok;
+}
+
+// Recover the live baud from the divider registers by reversing
+// LPI2C_MasterSetBaudRate, so no cached state is kept (bug 6478775). The result
+// is the actual programmed rate, which can differ slightly from the requested
+// value because the divider is integer-only (e.g. a 400 kHz request on a 25 MHz
+// clock reads back as ~403 kHz).
+uint32_t get_master_frequency_hz(nv::i2c::Port port)
+{
+    LPI2C_Type* base = get_base(port);
+    if (!base) {
+        return 0U;
+    }
+    const uint32_t source_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(base));
+    const uint32_t prescale  = (base->MCFGR1 & LPI2C_MCFGR1_PRESCALE_MASK)
+                           >> LPI2C_MCFGR1_PRESCALE_SHIFT;
+    const uint32_t divider  = 1U << prescale;
+    const uint32_t filt_scl = (base->MCFGR2 & LPI2C_MCFGR2_FILTSCL_MASK)
+                           >> LPI2C_MCFGR2_FILTSCL_SHIFT;
+    const uint32_t clk_hi = (base->MCCR0 & LPI2C_MCCR0_CLKHI_MASK) >> LPI2C_MCCR0_CLKHI_SHIFT;
+    const uint32_t clk_lo = (base->MCCR0 & LPI2C_MCCR0_CLKLO_MASK) >> LPI2C_MCCR0_CLKLO_SHIFT;
+
+    // baud = (source / 2^prescale) / (CLKLO + CLKHI + 2 + (2 + FILTSCL) / 2^prescale)
+    const uint32_t denom = clk_hi + clk_lo + 2U + (2U + filt_scl) / divider;
+    if (denom == 0U) {
+        return 0U;
+    }
+    return (source_hz / divider) / denom;
+}
 }  // namespace sys::i2c

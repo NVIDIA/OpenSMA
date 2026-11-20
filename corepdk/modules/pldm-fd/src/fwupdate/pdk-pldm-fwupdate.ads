@@ -85,7 +85,7 @@ package Pdk.Pldm.Fwupdate is
 
    PLDMFW_FD_TIMEOUT_T1     : constant := 60_000;  --  60 secs
    PLDMFW_FD_TIMEOUT_T2     : constant := 5_000;   --  5 secs
-   PLDMFW_FD_TIMEOUT_VERIFY : constant := 120_000; --  120 secs
+   PLDMFW_FD_TIMEOUT_VERIFY : constant := 180_000; --  180 secs
 
    PLDMFW_TIMEING_PN1    : constant := 3; --  retry 3 times
    PLDMFW_TIMEING_PT2    : constant := 4_800; --  4.8 secs
@@ -118,6 +118,7 @@ package Pdk.Pldm.Fwupdate is
    PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_CAN_BE_UPDATE       : constant NvU8 := 0;
    PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_STAMP_IDENTICAL     : constant NvU8 := 1;
    PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_STAMP_LOWER         : constant NvU8 := 2;
+   PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_PREREQ_NOT_MET      : constant NvU8 := 5;
    PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_NOT_SUPPORT         : constant NvU8 := 6;
    PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_NOT_MATCH_PASS_COMP : constant NvU8 := 9;
 
@@ -190,7 +191,7 @@ package Pdk.Pldm.Fwupdate is
       Pldmfw_Ret_Staged_Fw_Identical, Pldmfw_Ret_Staged_Fw_Lower_Stamp,
       Pldmfw_Ret_Pass_Zero_Component, Pldmfw_Ret_Invalid_Ver_str_Len_and_Type,
       Pldmfw_Ret_Invalid_Class_or_Class_Idx, Pldmfw_Ret_Invalid_authenticate_event,
-      Pldmfw_Ret_Rate_Limit_Reached) with
+      Pldmfw_Ret_Rate_Limit_Reached, Pldmfw_Ret_Platform_Busy) with
      Size => 16, Object_Size => 16, Alignment => 1;
 
    for Pldmfw_Ret use
@@ -234,7 +235,8 @@ package Pdk.Pldm.Fwupdate is
       Pldmfw_Ret_Invalid_Ver_str_Len_and_Type        => 37,
       Pldmfw_Ret_Invalid_Class_or_Class_Idx          => 38,
       Pldmfw_Ret_Invalid_authenticate_event          => 39,
-      Pldmfw_Ret_Rate_Limit_Reached                  => 40);
+      Pldmfw_Ret_Rate_Limit_Reached                  => 40,
+      Pldmfw_Ret_Platform_Busy                       => 41);
 
    function Uc_Pldmfw_Ret_U16 is new Ada.Unchecked_Conversion
      (Source => Pldmfw_Ret, Target => NvU16);

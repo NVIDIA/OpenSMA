@@ -17,6 +17,7 @@
  */
 #pragma once
 #include <stdint.h>
+#include <string_view>
 
 namespace nv::vruart {
 
@@ -86,5 +87,23 @@ typedef struct
     uint32_t port;
     uint32_t pin;
 } Signal;
+
+template<typename TaskId, typename QueueId, typename EventId, typename BootedEvent>
+struct BridgeConfig
+{
+    std::string_view task_name;
+    TaskId           task_id;
+    QueueId          tx_queue_id;
+    QueueId          rx_queue_id;
+    EventId          event_id;
+    BootedEvent      booted_event;
+    Signal           tx;
+    Signal           rx;
+    Baudrate         baudrate;
+    EdmaChn          edma_tx_channel;
+    EdmaChn          edma_rx_channel;
+    EdmaInst         edma_instance;
+    Instance         uart_instance;
+};
 
 }  // namespace nv::vruart

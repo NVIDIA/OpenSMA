@@ -137,7 +137,8 @@ protected:
     struct [[gnu::packed]] DataReadForceSendPkt
     {
         ReportId hid_id;
-        uint16_t length;
+        uint8_t  length_h;
+        uint8_t  length_l;
     };
     static DataReadForceSendPkt& hid_12_from(Buffer& arr)
     {

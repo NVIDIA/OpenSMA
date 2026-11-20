@@ -66,9 +66,15 @@ public:
 
     // Get singleton instance
     static CdcBridge& inst();
+    static CdcBridge& inst(uint8_t index);
 
     // Enqueue UART RX data for USB TX (called from ISR)
     static uint8_t enqueue(const uint8_t* data, uint32_t length);
+
+    // ISR-side entry points shared with LstpBridge, which uses the driver object to pick one of
+    // several tunnelled UARTs. CDC always bridges a single UART, so the object is ignored.
+    static uint8_t enqueue(const void* uart_obj, const uint8_t* data, uint32_t length);
+    static void    set_uart_tx_done_event(const void* uart_obj);
 
     // USB CDC ACM recv callback (registered with sys::usb::Driver)
     static uint8_t usb_rx_callback(uint8_t* data, uint32_t length);
@@ -92,7 +98,7 @@ private:
     // RX buffer: single-core callback copy / dual-core queue recv
     Buffer rx_buf{};
 
-    // TX buffer for UbridgeTx queue receive
+    // TX buffer for Ubridge0Tx queue receive
     Buffer tx_buf{};
 };
 

@@ -42,16 +42,3 @@ Status Npds::set_data(Key key, const Data data)
     // nv::info("Npds::set_data data:%d index:%d\n", data, index);
     return Status::Ok;
 }
-
-AuthenticateData& Npds::get_ap_fw_authenticate_data_index(Key key)
-{
-    switch (key) {
-        case Key::NpdsActiveApFwAuthenticateData   : return _ap_fw_authenticate_data.at(0);
-        case Key::NpdsUpdateApFwAuthenticateData   : return _ap_fw_authenticate_data.at(1);
-        case Key::NpdsInactiveApFwAuthenticateData : return _ap_fw_authenticate_data.at(2);
-        case Key::NpdsActiveAp1FwAuthenticateData  : return _ap1_fw_authenticate_data.at(0);
-        case Key::NpdsUpdateAp1FwAuthenticateData  : return _ap1_fw_authenticate_data.at(1);
-        case Key::NpdsInactiveAp1FwAuthenticateData: return _ap1_fw_authenticate_data.at(2);
-        default                                    : __builtin_unreachable();
-    }
-}

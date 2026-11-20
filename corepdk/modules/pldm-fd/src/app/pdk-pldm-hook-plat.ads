@@ -162,4 +162,7 @@ is
    function Pldm_Hook_Get_Write_Fail_Retry
      (Comp_Id : NvU16) return NvU8;
 
+   function Pldm_Hook_Update_Component_Busy
+     (Component_Id : NvU16) return Boolean;
+
 end Pdk.Pldm.Hook.Plat;

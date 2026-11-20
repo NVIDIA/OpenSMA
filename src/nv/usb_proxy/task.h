@@ -22,9 +22,9 @@
 #include <cstdint>
 #include <span>
 
-#include "nv/ipc/event.h"
 #include "nv/ipc/queue.h"
 #include "nv/ipc/task.h"
+#include "nv/ipc/tasknotify.h"
 #include "nv/i2c/common.h"
 #include "nv/lstp/lstp_router.h"
 #include "nv/mctp/router.h"
@@ -96,7 +96,7 @@ public:
     static bool to_usbLstp_proxy(std::span<uint8_t>& data);
 
     // Event bits for this task
-    enum EventBits : uint32_t
+    enum EventBits : ipc::TaskNotify::Bits
     {
         MctpRxBit             = (1U << 0),
         HidRxBit              = (1U << 1),
@@ -116,6 +116,9 @@ private:
     // Minimal buffer sizes - only for HID state machine
     static constexpr size_t HidBufferSize = 64;
     static constexpr size_t MaxDataSize   = 61;
+    // AN495 section 6.2 defines the DataWriteReadReq target address size as 0x01-0x10 bytes.
+    static constexpr size_t MaxAddrSize = 16;
+    static constexpr size_t MaxReadSize = HidBufferSize;
 
     // CP2112 HID report header sizes
     static constexpr size_t DataWriteHeaderSize        = 3;  // ReportId + SlaveAddr + WriteLen
@@ -168,9 +171,12 @@ private:
     HidState _hid_state{HidState::Idle};
     uint16_t _hid_read_length{};
     uint16_t _hid_bytes_received{};
+    size_t   _hid_bytes_sent{};
     Status0  _hid_status0{Status0::Idle};
     Status1  _hid_status1{Status1::Acked};
     bool     _has_pending_response{false};
+    // Each accepted backend request produces one ordered process_i2c_response() call.
+    uint8_t _discard_i2c_response_count{};
 
     // HID response buffer
     alignas(4) std::array<uint8_t, HidBufferSize> _response_buffer{};
@@ -178,9 +184,6 @@ private:
     // I2C response data storage (for read operations)
     alignas(4) std::array<uint8_t, HidBufferSize> _i2c_response_buffer{};
     size_t _i2c_response_data_length{0};
-
-    // Event reference
-    ipc::Event& _event;
 
     // Routing table for MCTP bridging (type from usb::RoutingTable)
     static usb::RoutingTable _routing_table;
@@ -197,6 +200,11 @@ private:
      * @brief Process received HID data
      */
     void process_hid(const uint8_t* data, size_t length);
+
+    /**
+     * @brief Hold a failed HID transaction until the host requests transfer status
+     */
+    void complete_hid_error(Status1 status);
 
     /**
      * @brief Route I2C request to appropriate backend (IOX/I3C/I2C)

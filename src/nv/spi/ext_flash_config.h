@@ -31,11 +31,6 @@ struct FlashPartition
     uint32_t size;
 };
 
-namespace ExtFlashPartitionIndex {
-constexpr uint8_t Primary  = 0;
-constexpr uint8_t Metadata = 1;
-}  // namespace ExtFlashPartitionIndex
-
 // expected_capacity is a board sanity-check against the SFDP density readout;
 // all other geometry is discovered via SFDP at init().
 struct FlashSpec

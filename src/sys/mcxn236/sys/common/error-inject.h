@@ -28,6 +28,10 @@ public:
     [[noreturn]] [[maybe_unused]] static void trigger_SecureFault(void);
     [[noreturn]] [[maybe_unused]] static void trigger_WatchdogReset(void);
     [[noreturn]] [[maybe_unused]] static void trigger_MemManageFault(void);
+    // Deliberately NOT [[noreturn]]: the stack canary is only verified in the function
+    // epilogue, so the method must reach its return for the check to fire. Requires the
+    // project to build with -fstack-protector-strong (SSP_ENABLED).
+    [[maybe_unused]] static void trigger_StackCheckFail(void);
 };
 
 }  // namespace sys::common

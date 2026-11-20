@@ -34,7 +34,7 @@ enum class Key : uint32_t
     NpdsExtTimestampMSB,
     NpdsExtTimestampTick,
     NpdsAllowInitBackgroundCopy,
-    NpdsBackgroundCopyComponentId,  ///< Latest background-copy component ID for progress query
+    NpdsReserved7,  ///< Reserved
     NpdsBootTimeFromFmcEndToMctpReady,
     NpdsBootReasonOriginal,
     NpdsI2cDynamicAddrForOcpDevice0,
@@ -49,23 +49,13 @@ enum class Key : uint32_t
     NpdsDebugTokenSubtypeMcuDebug,   ///< Subtype bitmap for MCU debug token
     NpdsDebugTokenSubtypeCpldDebug,  ///< Subtype bitmap for CPLD debug token
     NpdsDebugTokenFailCount,         ///< Debug token failure count for log throttling
-    NpdsAp0FwStatus,                 ///< AP0 FW status
-    NpdsAp1FwStatus,                 ///< AP1 FW status
+    NpdsReserved21,                  ///< Reserved
+    NpdsReserved22,                  ///< Reserved
     NpdsFmcNumericVersion,           ///< FMC numeric version (e.g. 3 for V3, 4 for V4)
-    NpdsAp0ProvisionStatus,          ///< AP0 provision status
+    NpdsReserved24,                  ///< Reserved
     NpdsDdaOrdinalNumber,            ///< DDA ordinal parsed from the programmed L3 certificate
     NpdsEnd,
     NpdsInvalid,
-    // here is for active ap fw authenticate data
-    NpdsActiveApFwAuthenticateData,
-    // here is for update ap fw authenticate data
-    NpdsUpdateApFwAuthenticateData,
-    // here is for inactive ap fw authenticate data used by SecureBoot recovery
-    NpdsInactiveApFwAuthenticateData,
-    // AP1 ap fw authenticate data
-    NpdsActiveAp1FwAuthenticateData,
-    NpdsUpdateAp1FwAuthenticateData,
-    NpdsInactiveAp1FwAuthenticateData,
     PdsStart = 0x1000,
     // TBD: Replace it with real data field
     PdsBootableSlot0 = PdsStart,

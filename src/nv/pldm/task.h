@@ -45,7 +45,6 @@ enum class Status
 enum class RequestType : uint8_t
 {
     AuthMcuFinish,
-    AuthApFinish
 };
 
 struct [[gnu::packed]] Request
@@ -72,7 +71,6 @@ public:
         WdtEvent      = 5,
         EventRequest  = 6,
         ProtocolReset = 7,
-        ApBgStart     = 8,
     };
 
     enum PldmEventBits : uint32_t
@@ -86,7 +84,6 @@ public:
         WdtEventBit      = common::bit(nv::pldm::Task::PldmTask::WdtEvent),
         EventRequestBit  = common::bit(nv::pldm::Task::PldmTask::EventRequest),
         ProtocolResetBit = common::bit(nv::pldm::Task::PldmTask::ProtocolReset),
-        ApBgStartBit     = common::bit(nv::pldm::Task::PldmTask::ApBgStart),
     };
 
     static void make();
@@ -115,8 +112,6 @@ public:  // static api section
      */
     static nv::pldm::Status pldm_tx(const nv::mctp::Packet& packet);
     static nv::pldm::Status pldm_bg_start();
-    static nv::pldm::Status pldm_ap_bg_start(uint16_t component_id);
-    static uint16_t         latest_background_copy_component_id();
     static void             on_timer([[maybe_unused]] ipc::Timer& id);
     static void             set_timer(std::chrono::microseconds ms);
     static void             clear_timer();

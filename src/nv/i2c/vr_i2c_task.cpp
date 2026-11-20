@@ -27,6 +27,7 @@
 #include "nv/bootloader.h"
 #include "nv/common/preproc.h"
 #include "nv/emulation/at24c01.h"
+#include "nv/emulation/i2c-rtc.h"
 #include "nv/emulation/pca9544a.h"
 #include "nv/emulation/pca9555.h"
 #include "nv/i2c/task.h"
@@ -38,15 +39,21 @@
 #include "nv/watchdog/runtime.h"
 #include "sys/i2c/i2c_slave.h"
 #include "sys/ipc/task.h"
+#include "sys/rtc/rtc.h"
 
 #include NV_IPC_CONFIG_H
 
 namespace nv::i2c {
 
+__attribute__((weak)) bool is_emulation_device_enabled([[maybe_unused]] VrI2cDeviceId device_id)
+{
+    return true;
+}
+
 namespace {
 
-using VrI2cEmulator =
-    std::variant<emulation::At24c01, emulation::Pca9555, emulation::Pca9544a>;
+using VrI2cEmulator = std::
+    variant<emulation::At24c01, emulation::Pca9555, emulation::Pca9544a, emulation::I2cRtc>;
 
 /** @brief Emulator instances and address map entries built from config slots. */
 template<size_t SlotCount>
@@ -60,10 +67,17 @@ struct VrI2cSlotDevices
     {}
 
 private:
-    /** @brief Emplace @p device_id into @p emulator. */
-    static emulation::EmulationDevice& make_emulator(VrI2cEmulator& emulator,
-                                                     VrI2cDeviceId  device_id)
+    /** @brief Emplace @p device_id into @p emulator; initializes RTC HAL once for I2C RTC.
+     */
+    static std::optional<std::reference_wrapper<emulation::EmulationDevice>>
+    make_emulator(VrI2cEmulator& emulator, VrI2cDeviceId device_id)
     {
+        static bool rtc_initialized = false;
+
+        if (!is_emulation_device_enabled(device_id)) {
+            return std::nullopt;
+        }
+
         switch (device_id) {
             case VrI2cDeviceId::At24c01:
                 emulator.emplace<emulation::At24c01>();
@@ -74,7 +88,13 @@ private:
             case VrI2cDeviceId::Pca9544a:
                 emulator.emplace<emulation::Pca9544a>();
                 return std::get<emulation::Pca9544a>(emulator);
-            case VrI2cDeviceId::Nct3018yr: break;
+            case VrI2cDeviceId::I2cRtc:
+                if (!rtc_initialized) {
+                    sys::rtc::Driver::init();
+                    rtc_initialized = true;
+                }
+                emulator.emplace<emulation::I2cRtc>();
+                return std::get<emulation::I2cRtc>(emulator);
         }
         NV_ASSERT(false);
         emulator.emplace<emulation::At24c01>();
@@ -101,7 +121,7 @@ private:
 
 /** @brief Select VrI2c0 or VrI2c1 slot table from project config. */
 template<ipchandler::Id BusId>
-struct VrI2cBusSlots
+struct VrI2cBusConfig
 {
     static_assert(BusId == ipchandler::Id::VrI2c0 || BusId == ipchandler::Id::VrI2c1);
 
@@ -111,6 +131,15 @@ struct VrI2cBusSlots
         }
         else {
             return ipc::VrI2c1DeviceNum;
+        }
+    }();
+
+    static constexpr nv::i2c::Port SlavePort = [] {
+        if constexpr (BusId == ipchandler::Id::VrI2c0) {
+            return ipc::VrI2c0SlavePort;
+        }
+        else {
+            return ipc::VrI2c1SlavePort;
         }
     }();
 
@@ -132,39 +161,114 @@ struct VrI2cTaskData
     VrI2cSlotDevices<SlotCount> devices;
     VrI2cTask                   task;
 
-    VrI2cTaskData(VrI2cTask::Config cfg, const std::array<VrI2cBusSlot, SlotCount>& slots)
+    VrI2cTaskData(VrI2cTask::Config                          cfg,
+                  const std::array<VrI2cBusSlot, SlotCount>& slots,
+                  const nv::i2c::Port                        port)
     : devices(slots)
-    , task(cfg, devices.entries)
+    , task(cfg, devices.entries, port)
     {}
 };
 
 }  // namespace
 
-VrI2cTask::VrI2cTask(Config config, std::span<const VrI2cDeviceEntry> devices) noexcept
+VrI2cTask::VrI2cTask(Config                            config,
+                     std::span<const VrI2cDeviceEntry> devices,
+                     nv::i2c::Port                     port) noexcept
 : nv::ipc::Task(config.task_id, config.task_name)
 , _queue(nv::ipc::Queue::make(config.queue_id))
 , _ipchandler_id(config.ipchandler_id)
 , _boot_event(config.boot_event)
 {
     for (const auto& entry : devices) {
-        if (entry.address < AddressSpace) {
+        if (entry.device.has_value() && entry.address < AddressSpace) {
             _device_map.at(entry.address) = entry.device;
         }
+    }
+
+    if (port != nv::i2c::Port::End) {
+        std::array<uint8_t, sys::i2c::NumI2cTargetAddresses> target_addresses{};
+        size_t                                               target_count = 0U;
+        for (const auto& entry : devices) {
+            if (entry.device.has_value()) {
+                target_addresses.at(target_count++) = entry.address;
+            }
+        }
+
+        if (target_count > 0U) {
+            _driver.bind(port, target_addresses, this);
+            _driver.start();
+        }
+    }
+}
+
+void VrI2cTask::i2c_write(uint8_t address, std::span<const uint8_t> i2c_buffer)
+{
+    if (address >= AddressSpace || i2c_buffer.empty()) {
+        return;
+    }
+
+    const auto& device_ref = _device_map.at(address);
+    if (device_ref.has_value()) {
+        device_ref->get().i2c_write(i2c_buffer);
+    }
+}
+
+size_t VrI2cTask::i2c_read(uint8_t                                          address,
+                           std::span<uint8_t, sys::i2c::I2cSlaveBufferSize> i2c_buffer,
+                           bool                                             new_transaction)
+{
+    if (address >= AddressSpace) {
+        return 0U;
+    }
+
+    const auto& device_ref = _device_map.at(address);
+    if (!device_ref.has_value()) {
+        return 0U;
+    }
+
+    size_t i2c_size = 0U;
+    device_ref->get().i2c_read(i2c_buffer, i2c_size, new_transaction);
+    return i2c_size;
+}
+
+bool VrI2cTask::has_device(uint8_t address) const
+{
+    return address < AddressSpace && _device_map.at(address).has_value();
+}
+
+void VrI2cTask::i2c_callback(uint8_t&           address,
+                             bool               is_read,
+                             std::span<uint8_t> i2c_buffer,
+                             size_t&            i2c_size,
+                             void*              this_task_instance,
+                             bool               new_transaction)
+{
+    // NOLINTNEXTLINE: no way around this without function pointers
+    auto* task = static_cast<VrI2cTask*>(this_task_instance);
+
+    if (is_read) {
+        i2c_size = task->i2c_read(
+            address, i2c_buffer.first<sys::i2c::I2cSlaveBufferSize>(), new_transaction);
+    }
+    else {
+        task->i2c_write(address, i2c_buffer.first(i2c_size));
     }
 }
 
 template<ipchandler::Id BusId>
 void VrI2cTask::make_task_by_bus(VrI2cTask::Config config)
 {
-    using BusConfig = VrI2cBusSlots<BusId>;
+    using BusConfig = VrI2cBusConfig<BusId>;
 
     static_assert(validate_vr_i2c_bus_slots(BusConfig::slots()),
                   "Invalid VrI2c device slots in config.h");
 
-    constexpr auto StackSize = std::max(384, int(configMINIMAL_STACK_SIZE));
+    // leave ~264 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(640, int(configMINIMAL_STACK_SIZE));
 
-    NV_TASK_DATA static VrI2cTaskData<BusConfig::DeviceNum> data(config, BusConfig::slots());
-    NV_STACK static sys::ipc::TaskStack<StackSize>          stack;
+    NV_TASK_DATA static VrI2cTaskData<BusConfig::DeviceNum> data(
+        config, BusConfig::slots(), BusConfig::SlavePort);
+    NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&data), sizeof(data));
@@ -221,11 +325,9 @@ void VrI2cTask::entrypoint(void* params)
 
 void VrI2cTask::handle_wdt_event()
 {
-    nv::watchdog::TaskMonitorIndex index{};
-    switch (_queue.id()) {
-        case nv::ipc::QueueId::VrI2c0: index = nv::watchdog::TaskMonitorIndex::VrI2c0; break;
-        case nv::ipc::QueueId::VrI2c1: index = nv::watchdog::TaskMonitorIndex::VrI2c1; break;
-        default                      : return;
+    const auto index = nv::i2c::i2c_queue_to_wdt(_queue.id());
+    if (index == nv::watchdog::TaskMonitorIndex::End) {
+        return;
     }
     nv::watchdog::Runtime::mark_task_alive(index);
 }
@@ -235,11 +337,9 @@ void VrI2cTask::wdt_notify(nv::watchdog::TaskMonitorIndex task_id)
     using namespace nv::ipc;
     using namespace std::chrono_literals;
 
-    QueueId queue_id{};
-    switch (task_id) {
-        case nv::watchdog::TaskMonitorIndex::VrI2c0: queue_id = QueueId::VrI2c0; break;
-        case nv::watchdog::TaskMonitorIndex::VrI2c1: queue_id = QueueId::VrI2c1; break;
-        default                                    : return;
+    const auto queue_id = nv::i2c::wdt_to_i2c_queue(task_id);
+    if (queue_id == QueueId::End) {
+        return;
     }
 
     const nv::i2c::Task::Request request{.type = nv::i2c::Task::RequestType::WdtEvent};
@@ -343,24 +443,24 @@ uint16_t VrI2cTask::run_emulated_i2c_transfer(emulation::EmulationDevice& device
                                               std::span<const uint8_t>    write_data,
                                               std::span<uint8_t>          read_data)
 {
-    constexpr uint8_t kDummyReadByte = 0xFF;
-
     if (!write_data.empty()) {
-        std::array<uint8_t, sys::i2c::I2cSlaveBufferSize> buf{};
-        const auto len = std::min(write_data.size(), buf.size());
-        std::copy_n(write_data.begin(), len, buf.begin());
-        device.i2c_write(buf, static_cast<uint8_t>(len));
+        const auto len = std::min(write_data.size(), sys::i2c::I2cSlaveBufferSize);
+        device.i2c_write_virtual(write_data.first(len));
     }
 
-    uint16_t bytes_read = 0;
-    for (size_t i = 0; i < read_data.size(); ++i) {
-        uint8_t    out             = kDummyReadByte;
-        const bool new_transaction = (i == 0U);
-        device.i2c_read(out, new_transaction);
-        read_data[i] = out;
-        bytes_read++;
+    size_t bytes_read = 0U;
+    while (bytes_read < read_data.size()) {
+        size_t     read_size       = 0U;
+        const bool new_transaction = (bytes_read == 0U);
+
+        device.i2c_read_virtual(read_data.subspan(bytes_read), read_size, new_transaction);
+        bytes_read += read_size;
+
+        if (read_size == 0U) {
+            break;
+        }
     }
-    return bytes_read;
+    return static_cast<uint16_t>(std::min(bytes_read, read_data.size()));
 }
 
 void VrI2cTask::reply_i2c(uint8_t            src_id,

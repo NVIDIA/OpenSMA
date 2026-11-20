@@ -50,4 +50,11 @@ public:
     Status tx(std::span<uint8_t> data);
 };
 
+/**
+ * Console / logger UART instance. Defaults to nv::ipc::UartInstance; projects with
+ * strap-selected debug UARTs call set_console_port() after product board init.
+ */
+void set_console_port(Port port);
+Port console_port();
+
 }  // namespace nv::uart

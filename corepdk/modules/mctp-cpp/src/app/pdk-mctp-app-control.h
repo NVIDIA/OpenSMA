@@ -87,8 +87,13 @@ public:
     inline RoutingMap&       routing_map() { return _routing_map; }
     inline const RoutingMap& routing_map() const { return _routing_map; }
     inline const uint8_t&    get_start_eid() const { return _start_eid; }
+    inline const uint8_t&    get_ds_pool_start_eid() const { return _ds_pool_start_eid; }
+    inline const bool&       is_ds_pool_allocated() const { return _is_ds_pool_allocated; }
+    inline const uint8_t&    get_allocate_eid_bus() const { return _allocate_eid_bus; }
     inline const uint8_t&    get_allocate_src_eid() const { return _allocate_src_eid; }
+    inline const uint8_t&    get_us_usb_eid() const { return _us_usb_eid; }
     inline const uint8_t&    get_us_i2c_eid() const { return _us_i2c_eid; }
+    inline const uint8_t&    get_us_i3c_eid() const { return _us_i3c_eid; }
     inline const uint8_t&    get_additional_eid_count() const { return _additional_eid_count; }
     inline const uint8_t&    get_additional_address(uint8_t index) const
     {
@@ -134,6 +139,15 @@ protected:
     constexpr static uint8_t VendorPciIdByte0   = 0x10;
     constexpr static uint8_t VendorPciIdByte1   = 0xDE;
     constexpr static uint8_t NoMoreCapability   = 0xFF;
+    constexpr static uint8_t MaxEidBusMaskBit   = 31;
+
+    bool has_allocate_eid_bus(uint8_t client) const
+    {
+        if (client > MaxEidBusMaskBit) {
+            return false;
+        }
+        return (_allocate_eid_bus_mask & (uint32_t{1} << client)) != 0;
+    }
 
     void on_get_endpoint_id(const Packet& rx, Packet& tx) const;
     void on_get_endpoint_uuid(const Packet& rx, Packet& tx) const;
@@ -142,20 +156,35 @@ protected:
     void on_get_vendor_msg_support(const Packet& rx, Packet& tx) const;
     void on_allocate_endpoint_id(const Packet& rx, Packet& tx);
     void on_routing_info_update(const Packet& rx, Packet& tx);
+    // The two Routing Information Update policies selected by
+    // platforms::tolerant_routing_info_update(). Both assume the caller has
+    // already filled the response header and verified the bus owner.
+    void apply_routing_info_update_strict(const Packet& rx, Packet& tx);
+    void apply_routing_info_update_tolerant(const Packet& rx, Packet& tx);
     void on_prepare_endpoint_discovery(const Packet& rx, Packet& tx) const;
     void on_endpoint_discovery(const Packet& rx, Packet& tx) const;
     void on_discovery_notify(const Packet& rx, Packet& tx) const;
 
-    uint8_t _allocate_eid_bus = static_cast<uint8_t>(platforms::Interface::End);
-    uint8_t _num_enumerate_eid{};
-    uint8_t _start_eid{};
-    uint8_t _allocate_src_eid{};
-    uint8_t _us_i2c_eid{};
-    uint8_t _additional_eid_count{};
+    uint8_t  _allocate_eid_bus = static_cast<uint8_t>(platforms::Interface::End);
+    uint32_t _allocate_eid_bus_mask{};
+    uint8_t  _num_enumerate_eid{};
+    uint8_t  _start_eid{};
+    uint8_t  _allocate_src_eid{};
+    uint8_t  _us_usb_eid{};
+    uint8_t  _us_i2c_eid{};
+    uint8_t  _us_i3c_eid{};
+    uint8_t  _additional_eid_count{};
     std::array<uint8_t, platforms::RoutingInfoUpdateSize> _additional_address{};
     bool                                                  _is_enumerated{};
 
     platforms::RoutingTable _router{};
     RoutingMap              _routing_map{};
+
+    // Start EID of the downstream pool, latched only from the bus owner that owns that
+    // pool. _start_eid follows whichever upstream allocated last, so on products that
+    // expose a second upstream domain it stops describing the downstream pool as soon as
+    // that domain allocates.
+    uint8_t _ds_pool_start_eid{};
+    bool    _is_ds_pool_allocated{};
 };
 }  // namespace pdk::mctp::app

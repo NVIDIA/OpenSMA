@@ -146,7 +146,7 @@ static void read_from_flash(nv::flash::Address        read_vir_address,
     return;
 }
 
-static uint16_t get_cert_len(const std::array<uint8_t, 4>& cert_data_span)
+static constexpr uint16_t get_cert_len(const std::array<uint8_t, 4>& cert_data_span)
 {
     uint16_t cert_len = 0;
     // certficate start with 0x3082xxxx ,where xxxx is length
@@ -171,6 +171,19 @@ static uint16_t get_cert_len(const std::array<uint8_t, 4>& cert_data_span)
     }
 
     return cert_len;
+}
+
+// Fixed-size certificate containers include unused zero padding. Emit only the DER bytes
+// when placing an immutable certificate in flash.
+template<const nv::spdm::certlib::CertArray& Certificate>
+consteval auto compact_certificate()
+{
+    constexpr auto Length = get_cert_len(
+        {Certificate[0], Certificate[1], Certificate[2], Certificate[3]});
+    static_assert(Length > 0, "Invalid constant certificate length");
+    std::array<uint8_t, Length> bytes{};
+    std::copy_n(Certificate.begin(), Length, bytes.begin());
+    return bytes;
 }
 
 template<typename... Args>
@@ -451,29 +464,19 @@ NV_PRIVILEGED_FUNCTION uint16_t get_l5_cert_len_impl()
 
 uint16_t read_l1_cert(std::span<uint8_t> input_buffer)
 {
-    auto                         cert_len = get_l1_cert_len();
-    nv::spdm::certlib::CertArray hard_code_cert{0x00};
-    if (nv::ipc::SpdmDummyCertificates == true) {
-        hard_code_cert = nv::spdm::dummyCertificate::DummyL1Cert;
-    }
-    else if (nv::ipc::SpdmDummyCertificates == false) {
-        hard_code_cert = nv::spdm::cert::HardCodeL1Cert;
-    }
-    std::copy(hard_code_cert.begin(), hard_code_cert.begin() + cert_len, input_buffer.begin());
-    return cert_len;
+    static constexpr auto Certificate = compact_certificate < nv::ipc::SpdmDummyCertificates
+                                          ? nv::spdm::dummyCertificate::DummyL1Cert
+                                          : nv::spdm::cert::HardCodeL1Cert > ();
+    std::copy(Certificate.begin(), Certificate.end(), input_buffer.begin());
+    return Certificate.size();
 }
 uint16_t read_l2_cert(std::span<uint8_t> input_buffer)
 {
-    auto                         cert_len = get_l2_cert_len();
-    nv::spdm::certlib::CertArray hard_code_cert{0x00};
-    if (nv::ipc::SpdmDummyCertificates == true) {
-        hard_code_cert = nv::spdm::dummyCertificate::DummyL2Cert;
-    }
-    else if (nv::ipc::SpdmDummyCertificates == false) {
-        hard_code_cert = nv::spdm::cert::HardCodeL2Cert;
-    }
-    std::copy(hard_code_cert.begin(), hard_code_cert.begin() + cert_len, input_buffer.begin());
-    return cert_len;
+    static constexpr auto Certificate = compact_certificate < nv::ipc::SpdmDummyCertificates
+                                          ? nv::spdm::dummyCertificate::DummyL2Cert
+                                          : nv::spdm::cert::HardCodeL2Cert > ();
+    std::copy(Certificate.begin(), Certificate.end(), input_buffer.begin());
+    return Certificate.size();
 }
 uint16_t read_l3_cert(std::span<uint8_t> input_buffer)
 {
@@ -1054,10 +1057,18 @@ bool generate_l4_cert()
                         static_cast<uint8_t>(DevIkGenerateErrorCode::DdaNumberReadNpdsFail));
         return false;
     }
-    const auto certificate_profile = nv::spdm::ik::certificate_profile_from_dda(
+    const auto dda_profile = nv::spdm::ik::certificate_profile_from_dda(
         provisioned_dda_ordinal);
+    const auto fmc_profile = nv::spdm::cert::certificate_profile_from_fmc_ordinal(
+        dev_ik_req.fmc_ordinal_number);
+    if (!nv::spdm::ik::is_supported_template_combination(dda_profile, fmc_profile)) {
+        spdm_log_helper(
+            nv::logger::Event::SpdmDevIkGenerateFail,
+            static_cast<uint8_t>(DevIkGenerateErrorCode::UnsupportedCertificateProfile));
+        return false;
+    }
 
-    if (certificate_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
+    if (dda_profile == nv::spdm::ik::DevIkCertificateProfile::EdgeLock2Go) {
         auto& serial_number_array = *std::bit_cast<std::array<uint32_t, 4>*>(
             &dev_ik_req.serial_number);
 
@@ -1120,7 +1131,7 @@ bool generate_l4_cert()
                 + sizeof(dev_ik_req.signature.bit_string.padding_length);
 
     // start to reconstruct the ik cert
-    auto dev_ik_helper = nv::spdm::ik::DevIkHelper(dev_ik_req, certificate_profile);
+    auto dev_ik_helper = nv::spdm::ik::DevIkHelper(dev_ik_req, dda_profile, fmc_profile);
     auto l4_cert_array = nv::spdm::certlib::CertArray();
 
     if (!construct_l4_cert(dev_ik_helper, l4_cert_array)) {

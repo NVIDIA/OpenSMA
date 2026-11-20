@@ -1077,6 +1077,16 @@ is
          goto Exit_Point;
       end if;
 
+      if Pldm_Hook_Update_Component_Busy (Component_Id => Context.Comp_Id)
+      then
+         Resp.CC                  := PLDM_CC_ERR_INVALID_NOT_READY;
+         Resp.Component_Resp      := PLDMFW_COMP_COMPATIBILITY_RESPONSE_MAY_BE_UPDATABLE;
+         Resp.Component_Resp_Code :=
+           PLDMFW_COMP_COMPATIBILITY_RESPONSE_CODE_PREREQ_NOT_MET;
+         Ret                      := Pldmfw_Ret_Platform_Busy;
+         goto Exit_Point;
+      end if;
+
       --  check if fw over size
       if Context.Fw_Size > Component_Infos (Update_Component_Idx).Fw_Size
       then

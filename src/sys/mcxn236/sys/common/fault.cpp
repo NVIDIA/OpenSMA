@@ -25,6 +25,7 @@
 #include "nv/nv.h"
 
 #include "nv/watchdog/runtime.h"
+#include "sys/common/stack_protect.h"
 #include NV_IPC_CONFIG_H
 
 extern "C" {
@@ -256,6 +257,28 @@ void SecureFault_Handler(void)
 {
     nv::fatal("SecureFault_Handler\r\n");
     nv::logger::FaultLogger::fault(nv::logger::Fault::Secure);
+}
+
+// Set by __stack_chk_fail (stack_protect.cpp); the return address of the frame whose canary
+// was smashed.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NV_SHARED_BSS volatile uint32_t g_stack_chk_return_addr = 0;
+
+// Software-triggered by __stack_chk_fail. Runs in handler mode on the MSP, so (a) the logging
+// happens on a fresh stack rather than the corrupted task stack, and (b) the flash-write path
+// takes its privileged direct branch (IPSR != 0) instead of issuing a nested SVC.
+void Reserved85_IRQHandler(void)
+{
+    const uint32_t          return_address = g_stack_chk_return_addr;
+    nv::logger::FaultBuffer fault_buffer{};
+    memcpy(fault_buffer.data(), &return_address, sizeof(return_address));
+    nv::logger::FaultLogger::fault(
+        nv::logger::Fault::StackChkFail, fault_buffer, nv::logger::FaultDataSize);
+    if constexpr (nv::ipc::EnableRuntimeWdt) {
+        sys::watchdog::WwdtDriver::trigger_wdt_reset_if_enabled(sys::watchdog::wwdt1);
+    }
+    // coverity[no_escape] suppress warning for while(1) loop
+    for (;;);
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t xTask, char* pcTaskName)

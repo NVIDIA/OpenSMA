@@ -57,7 +57,8 @@ Task* Task::taskInstance = nullptr;
  */
 void Task::make(const TaskConfig& task_config)
 {
-    constexpr auto StackSize = std::max(2048, int(configMINIMAL_STACK_SIZE));
+    // leave ~216 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(288, int(configMINIMAL_STACK_SIZE));
 
     // Create the task instance and stack
     NV_TASK_DATA static Task                       task(task_config);

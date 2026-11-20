@@ -16,7 +16,6 @@
 #include "fsl_clock.h"
 #include "fsl_lpspi.h"
 #include "fsl_lpuart.h"
-#include "fsl_i3c.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -93,13 +92,6 @@ extern "C" {
 #define LP_FLEXCOMM2_SLAVE_ADDRESS0 16U
 /* Definition of alternative follower address */
 #define LP_FLEXCOMM2_SLAVE_ADDRESS1 12U
-/* BOARD_InitPeripherals defines for I3C1 */
-/* Definition of peripheral ID */
-#define I3C1_PERIPHERAL ((I3C_Type *)I3C1)
-/* Definition of the slow clock source frequency */
-#define I3C1_SLOW_CLOCK_SOURCE 1000000UL
-/* Definition of the clock source frequency */
-#define I3C1_CLOCK_SOURCE_MASTER 25000000UL
 /* Definition of peripheral ID */
 #define LP_FLEXCOMM9_PERIPHERAL ((LPUART_Type *) LP_FLEXCOMM9)
 /* Definition of the clock source frequency */
@@ -120,7 +112,6 @@ extern const lpspi_master_config_t LP_FLEXCOMM7_config;
 extern const lpi2c_master_config_t LP_FLEXCOMM6_masterConfig;
 extern const lpuart_config_t LP_FLEXCOMM4_config;
 extern const lpi2c_slave_config_t LP_FLEXCOMM2_slaveConfig;
-extern const i3c_master_config_t I3C1_master_config;
 extern const lpuart_config_t LP_FLEXCOMM9_config;
 
 /***********************************************************************************************************************

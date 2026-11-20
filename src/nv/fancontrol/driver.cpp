@@ -34,8 +34,39 @@
 namespace nv::fancontrol {
 
 namespace {
+// Duty cycle is a percentage (0-100 %).
+constexpr uint8_t MaxPwmDuty = 100;
+
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 NV_SHARED_BSS std::array<uint8_t, FanNum> g_fan_duty{};
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+NV_SHARED_BSS FanMode g_fan_mode{FanMode::Auto};
+
+/**
+ * @brief Map a temperature onto a fan curve.
+ *
+ * Linear interpolation between the config.h breakpoints: below the first
+ * breakpoint returns the first duty, at/above the last breakpoint returns the
+ * last duty. An empty curve returns 100 % (fail toward full cooling).
+ */
+uint8_t eval_curve(Curve curve, int16_t temp_c)
+{
+    if (curve.empty()) {
+        return MaxPwmDuty;  // no curve to follow: fail toward full cooling
+    }
+    if (temp_c <= curve.front().temp_c) {
+        return curve.front().duty;
+    }
+    for (size_t i = 1; i < curve.size(); ++i) {
+        if (temp_c < curve[i].temp_c) {
+            const int32_t temp_gap = curve[i].temp_c - curve[i - 1].temp_c;
+            const int32_t duty_gap = curve[i].duty - curve[i - 1].duty;
+            const int32_t offset   = temp_c - curve[i - 1].temp_c;
+            return static_cast<uint8_t>(curve[i - 1].duty + (offset * duty_gap) / temp_gap);
+        }
+    }
+    return curve.back().duty;
+}
 }  // namespace
 
 void Driver::init()
@@ -56,18 +87,19 @@ void Driver::init()
 
 void Driver::set_fan_pwm(uint32_t duty_cycle, size_t fan_index)
 {
+    g_fan_mode = FanMode::Manual;
     set_pwm_duty_cycle(fan_index, duty_cycle);
 }
 
 void Driver::stop_fan_pwm(size_t fan_index)
 {
+    g_fan_mode = FanMode::Manual;
     set_pwm_duty_cycle(fan_index, 0);
 }
 
 void Driver::set_pwm_duty_cycle(size_t index, uint32_t duty_cycle)
 {
     // Clamp duty cycle to valid range (0-100%)
-    constexpr uint32_t MaxPwmDuty = 100;
     if (duty_cycle > MaxPwmDuty) {
         duty_cycle = MaxPwmDuty;
     }
@@ -107,6 +139,56 @@ uint8_t Driver::get_fan_pwm(size_t fan_index)
 size_t Driver::fan_count()
 {
     return FanNum;
+}
+
+void Driver::update(std::span<const int8_t> temps)
+{
+    if (g_fan_mode != FanMode::Auto) {
+        return;
+    }
+    for (size_t i = 0; i < FanNum && i < temps.size(); ++i) {
+        const Curve curve = FanCurve.at(i);
+        if (curve.empty()) {
+            continue;  // this fan is not on an autonomous curve
+        }
+        // No valid reading this cycle: fail safe to the config default duty.
+        const uint8_t duty = (temps[i] == InvalidTemp) ? FanDefaultDuty.at(i)
+                                                       : eval_curve(curve, temps[i]);
+        set_pwm_duty_cycle(i, duty);
+    }
+}
+
+FanMode Driver::get_fan_mode()
+{
+    return g_fan_mode;
+}
+
+void Driver::set_fan_mode(FanMode mode)
+{
+    g_fan_mode = mode;
+}
+
+uint16_t Driver::get_fan_tach(size_t tach_index)
+{
+    if constexpr (TachNum > 0) {
+        if (tach_index >= TachNum) {
+            return 0;
+        }
+        const uint32_t rpm = sys::pwm_ctimer::Driver::measure_tach_rpm(
+            TachCtimerInstance, TachCaptureCh.at(tach_index));
+
+        constexpr uint32_t MaxReportableRpm = 0xFFFF;
+        return static_cast<uint16_t>((rpm > MaxReportableRpm) ? MaxReportableRpm : rpm);
+    }
+    else {
+        (void)tach_index;
+        return 0;
+    }
+}
+
+size_t Driver::tach_count()
+{
+    return TachNum;
 }
 
 }  // namespace nv::fancontrol

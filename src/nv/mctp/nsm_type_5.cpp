@@ -27,8 +27,8 @@
 #include "nv/bootloader.h"
 #include "nv/debugtoken/debugtoken.h"
 #include "nv/flash/flash.h"
+#include "nv/gpio/project_gpio.h"
 #include "nv/i2c/error_injection.h"
-#include "nv/i2c/lattice_driver.h"
 #include "nv/logger/common.h"
 #include "nv/logger/log.h"
 #include "nv/mctp/constants.h"
@@ -38,6 +38,10 @@
 #include "nv/mctp/nsm_pwr_smoothing_handlers.h"
 #include "nv/mctp/task.h"
 #include "nv/nv.h"
+#include "nv/spi/flashrom_task.h"
+#include "nv/volt_mon/leak_detect.h"
+// Required for the project's GpioSpoofingOutputConfig specialization to be visible here.
+#include NV_IPC_CONFIG_H
 
 namespace nv::mctp {
 
@@ -53,6 +57,9 @@ constexpr uint32_t
 constexpr uint32_t valueFatalFaultEIWatchdogTimeout = (1u << static_cast<uint32_t>(
                                                            FatalFaultEIPayloadValues::
                                                                FatalFaultEIWatchdogTimeout));
+constexpr uint32_t valueFatalFaultEIStackCheckFail  = (1u << static_cast<uint32_t>(
+                                                          FatalFaultEIPayloadValues::
+                                                              FatalFaultEIStackCheckFail));
 constexpr uint32_t
     maskPortRecoveryL1EI = (1u << static_cast<uint32_t>(
                                 PortRecoveryEIPayloadValues::PortRecoveryL1MCTPEPStall));
@@ -82,6 +89,9 @@ const nv::logger::EventStructItem& getActivateNsmLoggerEvent(uint32_t bitmap)
     else if (bitmap == valueFatalFaultEIWatchdogTimeout) {
         return nv::logger::Event::T5ActivateWatchdogTimeout;
     }
+    else if (bitmap == valueFatalFaultEIStackCheckFail) {
+        return nv::logger::Event::T5ActivateStackCheckFail;
+    }
     // it should not happen, but return a valid log anyway
     return nv::logger::Event::NsmLogMessages;
 }
@@ -99,6 +109,12 @@ void on_nsm_t5_fatal_fault_ei(uint8_t bitmap)
     }
     else if (bitmap == valueFatalFaultEIWatchdogTimeout) {
         sys::common::ErrorInject::trigger_WatchdogReset();
+    }
+    else if (bitmap == valueFatalFaultEIStackCheckFail) {
+        // Smashes this frame's canary; the epilogue check calls __stack_chk_fail, which logs
+        // via Reserved85_IRQHandler on the MSP. Unlike the two above, this is not [[noreturn]]
+        // (the check only fires on return), so control resumes here on builds without SSP.
+        sys::common::ErrorInject::trigger_StackCheckFail();
     }
     // else run for other erros
 }
@@ -175,7 +191,12 @@ void on_nsm_t5_protocol_ei(uint8_t protocol_type,
         }
     }
     // Check if this is for SPI protocol
-    else if (protocol_type == static_cast<uint8_t>(USBBridgeProtocolType::Spi)) {}
+    else if (protocol_type == static_cast<uint8_t>(USBBridgeProtocolType::Spi)) {
+        if constexpr (nv::lstp::EnableSpi) {
+            const uint8_t command = (bus_error == 0x00) ? 0x00 : 0x01;
+            nv::spi::FlashromTask::set_error_injection(command, bus_number, bus_error);
+        }
+    }
     // Other protocols can be handled here in the future
 }
 /**
@@ -212,11 +233,6 @@ bool validatePortRecoveryErrorInjectionPayload(
 bool validateUSBBridgeEmulationErrorInjectionPayload(
     USBBridgeEmulationPayload& usbBridgeEmulationPayload)
 {
-    // Validate bus number (should be 0-7 for I2C buses)
-    if (usbBridgeEmulationPayload.bus_number >= nv::i2c::MaxErrorInjectionPorts) {
-        return false;
-    }
-
     // Extract protocol type from payload_type (bits 0-5)
     const uint8_t protocol_type = usbBridgeEmulationPayload.payload_type & ProtocolTypeMask;
 
@@ -224,6 +240,22 @@ bool validateUSBBridgeEmulationErrorInjectionPayload(
     if (protocol_type != static_cast<uint8_t>(USBBridgeProtocolType::I2c)
         && protocol_type != static_cast<uint8_t>(USBBridgeProtocolType::Spi)
         && protocol_type != static_cast<uint8_t>(USBBridgeProtocolType::I2cPca9555)) {
+        return false;
+    }
+
+    // Validate bus number per protocol:
+    // SPI has exactly one bus (index 0); I2C/PCA9555 buses are 0 to MaxErrorInjectionPorts-1
+    if (protocol_type == static_cast<uint8_t>(USBBridgeProtocolType::Spi)) {
+        if (usbBridgeEmulationPayload.bus_number != 0) {
+            nv::warn("NSM T5: SPI error injection only supports bus 0, got bus %d\n",
+                     usbBridgeEmulationPayload.bus_number);
+            return false;
+        }
+    }
+    else if constexpr (nv::i2c::MaxErrorInjectionPorts == 0) {
+        return false;
+    }
+    else if (usbBridgeEmulationPayload.bus_number >= static_cast<uint8_t>(nv::i2c::Port::End)) {
         return false;
     }
 
@@ -253,11 +285,11 @@ void triggerGpioSpoofingEvents(const GPIOSpoofingPayload& gpioSpoofingPayload)
         }
 
         const auto gpio_index = entry.gpioIndex;
-        if (gpio_index >= ipc::GpioSetup.size()) {
+        if (gpio_index >= ipc::gpio_count()) {
             continue;
         }
 
-        const auto& gpio_config = ipc::GpioSetup.at(gpio_index);
+        const auto& gpio_config = ipc::gpio_at(gpio_index);
         const auto  port        = std::get<0>(gpio_config);
         const auto  pin         = std::get<1>(gpio_config);
 
@@ -304,12 +336,12 @@ bool validateGpioSpoofingErrorInjectionPayload(GPIOSpoofingPayload& gpioSpoofing
         const auto gpio_index = gpioSpoofingPayload.gpio_ei_entries[i].gpioIndex;
 
         // Check if GPIO index is within bounds
-        if (gpio_index >= ipc::GpioNum) {
+        if (gpio_index >= ipc::gpio_count()) {
             return false;
         }
 
         // Get GPIO port and pin from configuration
-        const auto& gpio_config = ipc::GpioSetup.at(gpio_index);
+        const auto& gpio_config = ipc::gpio_at(gpio_index);
         const auto  port        = std::get<0>(gpio_config);
         const auto  pin         = std::get<1>(gpio_config);
 
@@ -473,106 +505,71 @@ Ccode createSmaBaseboardAggregateResponse(NsmPktBulkResp& ntx_bulk, uint16_t& si
     return Ccode::Success;
 }
 
-Ccode handle_set_program_cpld_feature_row()
+void clear_leak_detection_error()
 {
-    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
-        return Ccode::ErrorUnsupportedCmd;
+    if constexpr (nv::ipc::voltage_monitor_config::LeakDetectSensorNum > 0) {
+        nv::leak_detect::LeakDetect::inst().clear_error_injection();
     }
-
-    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> expected{};
-    std::memcpy(&expected[0],
-                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.data(),
-                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size());
-    std::memcpy(&expected[Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size()],
-                Cpld_Feature_Row::EXPECTED_FEABITS.data(),
-                Cpld_Feature_Row::EXPECTED_FEABITS.size());
-
-    auto&         cpld        = nv::i2c::LatticeCpld::inst();
-    constexpr int max_retries = 3;
-
-    for (int i = 0; i < max_retries; i++) {
-        if (cpld.program_feature_row() != nv::i2c::I2cStatus::Ok) {
-            continue;
-        }
-
-        std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> readback{};
-        if (cpld.read_feature_row(readback) != nv::i2c::I2cStatus::Ok) {
-            continue;
-        }
-
-        if (std::memcmp(readback.data(), expected.data(), expected.size()) == 0) {
-            return Ccode::Success;
-        }
-    }
-
-    return Ccode::ErrorGeneral;
 }
 
-Ccode handle_get_program_cpld_feature_row(NsmPktResp& ntx)
+Ccode subimit_leak_detection_error(LeakDetectionErrorPayload&   leakDetectionErrorResp,
+                                   const nv::mctp::NsmPktReqV2& nrx,
+                                   bool&                        clear_leak_detection)
 {
-    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
-        return Ccode::ErrorUnsupportedCmd;
+    LeakDetectionErrorPayloadBase reqLeakDetectionErrorPayload{};
+    // copy header
+    memcpy(&reqLeakDetectionErrorPayload, &nrx.data[0], sizeof(LeakDetectionErrorPayloadBase));
+
+    // check the number of sensors
+    if (reqLeakDetectionErrorPayload.number_of_sensors > MaxLeakSensorsNumber) {
+        return Ccode::ErrorInvalidData;
     }
-
-    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> expected{};
-    std::memcpy(&expected[0],
-                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.data(),
-                Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size());
-    std::memcpy(&expected[Cpld_Feature_Row::EXPECTED_FEATURE_ROW.size()],
-                Cpld_Feature_Row::EXPECTED_FEABITS.data(),
-                Cpld_Feature_Row::EXPECTED_FEABITS.size());
-
-    std::array<uint8_t, nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE> readback{};
-
-    auto& cpld = nv::i2c::LatticeCpld::inst();
-    if (cpld.read_feature_row(readback) != nv::i2c::I2cStatus::Ok) {
-        return Ccode::ErrorGeneral;
+    // number of sensors 0 clear Leak Detection errors
+    if (reqLeakDetectionErrorPayload.number_of_sensors == 0) {
+        clear_leak_detection = true;
+        return Ccode::Success;
     }
-
-    // Regardless the Request version, the Response is always V2
-    auto& resp          = *std::bit_cast<ProgramCpldFeatureRowResponse*>(&ntx.data[0]);
-    resp.current_length = sizeof(ProgramCpldFeatureRowResponse)
-                        - sizeof(CpldFeatureRowResponse);
-    resp.pending_length = 0;
-    resp.match  = (std::memcmp(readback.data(), expected.data(), expected.size()) == 0) ? 1 : 0;
-    resp.length = static_cast<uint8_t>(nv::i2c::LATTICE_CPLD_FEATURE_ROW_SIZE);
-    resp.reserved[0] = 0x00;
-    resp.reserved[1] = 0x00;
-    std::memcpy(static_cast<uint8_t*>(resp.data), readback.data(), readback.size());
-    ntx.data_size = sizeof(ProgramCpldFeatureRowResponse);
+    // check total size including sensors struct
+    const uint16_t sensors_size = reqLeakDetectionErrorPayload.number_of_sensors
+                                * sizeof(LeakSensors);
+    const uint16_t expected_size = sizeof(LeakDetectionErrorPayloadBase) + sensors_size;
+    if (nrx.data_size != expected_size) {
+        return Ccode::ErrorInvalidLength;
+    }
+    // copy header
+    memcpy(&leakDetectionErrorResp, &nrx.data[0], sizeof(LeakDetectionErrorPayloadBase));
+    // copy sensors data
+    memcpy(&leakDetectionErrorResp.sensors[0],
+           &nrx.data[sizeof(LeakDetectionErrorPayloadBase)],
+           sensors_size);
     return Ccode::Success;
 }
 
-Ccode handle_set_otp_cpld_feature_row()
+Ccode activate_leak_detection_error(LeakDetectionErrorPayload& leak)
 {
-    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
-        return Ccode::ErrorUnsupportedCmd;
+    auto status = nv::volt_mon::Status::Ok;
+    if constexpr (nv::ipc::voltage_monitor_config::LeakDetectSensorNum > 0) {
+        auto& leakDetect = nv::leak_detect::LeakDetect::inst();
+        for (uint16_t counter = 0; counter < leak.number_of_sensors; ++counter) {
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
+            const auto& sensor = &leak.sensors[counter];
+            if (sensor->sensor_id > std::numeric_limits<nv::volt_mon::SensorId>::max()) {
+                return Ccode::ErrorInvalidData;
+            }
+            const auto  sensor_id  = static_cast<nv::volt_mon::SensorId>(sensor->sensor_id);
+            const auto& sensor_adc = sensor->sensor_adc;
+            if (sensor_adc == 0) {
+                // clear the error injection for this sensor id
+                status = leakDetect.clear_error_injection(sensor_id);
+            }
+            else {
+                status = leakDetect.set_error_injection(sensor_id, sensor_adc);
+            }
+            if (status != nv::volt_mon::Status::Ok) {
+                return Ccode::ErrorGeneral;
+            }
+        }
     }
-    auto& cpld = nv::i2c::LatticeCpld::inst();
-    if (cpld.otp_feature_row() != nv::i2c::I2cStatus::Ok) {
-        return Ccode::ErrorGeneral;
-    }
-    return Ccode::Success;
-}
-
-Ccode handle_get_otp_cpld_feature_row(NsmPktResp& ntx)
-{
-    if constexpr (!nv::i2c::LatticeCpld::is_enabled()) {
-        return Ccode::ErrorUnsupportedCmd;
-    }
-
-    uint8_t value = 0;
-    auto&   cpld  = nv::i2c::LatticeCpld::inst();
-    if (cpld.read_otp_feature_row(value) != nv::i2c::I2cStatus::Ok) {
-        return Ccode::ErrorGeneral;
-    }
-
-    // Regardless the Request version, the Response is always V2
-    auto& resp          = *std::bit_cast<OtpCpldFeatureRowResponse*>(&ntx.data[0]);
-    resp.current_length = sizeof(OtpCpldFeatureRowResponse) - sizeof(CpldFeatureRowResponse);
-    resp.pending_length = 0;
-    resp.data           = value;
-    ntx.data_size       = sizeof(OtpCpldFeatureRowResponse);
     return Ccode::Success;
 }
 
@@ -792,8 +789,16 @@ void Nsm::on_dev_cfg_set_errorInjectionMode(const Packet& rx, Packet& tx)
 
     fill_packet_header(rx, tx);
     fill_nsm_msg_header(rx, tx);
-    const auto& nrx       = NsmPktReq::from(rx);
-    auto&       ntx       = NsmPktResp::from(tx);
+    const auto& nrx = NsmPktReq::from(rx);
+
+    // check mode parameter value
+    if (nrx.data[0] != NsmDevCfgEnablingMode::Enable
+        && nrx.data[0] != NsmDevCfgEnablingMode::Disable) {
+        fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+        return;
+    }
+
+    auto& ntx             = NsmPktResp::from(tx);
     tx.priv.packet_length = sizeof(Header) + HeaderResponseSize;
 
     ntx.completion_code = Ccode::Success;
@@ -887,43 +892,42 @@ void Nsm::on_dev_cfg_set_currentErrorInjectionTypes(const Packet& rx, Packet& tx
         return;
     }
 
-    // To simplify the code, only loop through the supported error types
-    for (size_t index = 0; index < nsm_msg::NsmT5SuppErrorTyesNum; ++index) {
-        const uint8_t error_bitmap    = msg_with_bitmask.at(index);
-        const uint8_t current_bitmask = type5_data.current_errors_injection_bitmask.at(index);
-        const uint8_t cleared_bits    = current_bitmask & ~error_bitmap;
+    const auto& prev_bitmask = type5_data.current_errors_injection_bitmask;
+    // Get DeviceError transition regarding previous set current error types
+    const bool was_set_device_error = nsm_msg::is_bit_set(prev_bitmask,
+                                                          ErrorInjectionID::DeviceError);
+    const bool is_set_device_error  = nsm_msg::is_bit_set(msg_with_bitmask,
+                                                         ErrorInjectionID::DeviceError);
+    // Get GpioSpoofing transition regarding previous set current error types
+    const bool was_set_gpiospoofing = nsm_msg::is_bit_set(prev_bitmask,
+                                                          ErrorInjectionID::GpioSpoofing);
+    const bool is_set_gpiospoofing  = nsm_msg::is_bit_set(msg_with_bitmask,
+                                                         ErrorInjectionID::GpioSpoofing);
 
-        // Check if DeviceError bit is being cleared in this byte
-        const int32_t bit_offset = static_cast<int32_t>(
-                                       static_cast<uint8_t>(ErrorInjectionID::DeviceError))
-                                 - static_cast<int32_t>(index * CHAR_BIT);
-        if (bit_offset >= 0 && bit_offset < CHAR_BIT && (cleared_bits & (1 << bit_offset))) {
-            if (!type5_data.isDeviceErrorStatusBitmapCleared()) {
-                fill_error_packet(Ccode::ErrorGeneral, rx, tx);
-                return;
-            }
-            type5_data.clearErrorInjectionPayload(
-                static_cast<uint8_t>(ErrorInjectionID::DeviceError));
+    // Check if DeviceError bit is being cleared
+    if (was_set_device_error && !is_set_device_error) {
+        if (!type5_data.isDeviceErrorStatusBitmapCleared()) {
+            fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+            return;
         }
-
-        // Check if GpioSpoofing bit is being cleared in this byte
-        const int32_t gpio_bit_offset = static_cast<int32_t>(static_cast<uint8_t>(
-                                            ErrorInjectionID::GpioSpoofing))
-                                      - static_cast<int32_t>(index * CHAR_BIT);
-        if (gpio_bit_offset >= 0 && gpio_bit_offset < CHAR_BIT
-            && (cleared_bits & (1 << gpio_bit_offset))) {
-            type5_data.clearErrorInjectionPayload(
-                static_cast<uint8_t>(ErrorInjectionID::GpioSpoofing));
-            notifyIoxSpoofingState(false);
-        }
-        // Check if GpioSpoofing bit is set in this byte
-        if (gpio_bit_offset >= 0 && gpio_bit_offset < CHAR_BIT
-            && (error_bitmap & (1 << gpio_bit_offset))) {
-            notifyIoxSpoofingState(true);
-        }
-
-        type5_data.current_errors_injection_bitmask.at(index) = error_bitmap;
+        type5_data.clearErrorInjectionPayload(
+            static_cast<uint8_t>(ErrorInjectionID::DeviceError));
     }
+
+    // Check if GpioSpoofing bit is being cleared
+    if (was_set_gpiospoofing && !is_set_gpiospoofing) {
+        type5_data.clearErrorInjectionPayload(
+            static_cast<uint8_t>(ErrorInjectionID::GpioSpoofing));
+        notifyGpioSpoofingState(false);
+    }
+    else {  // Check if GpioSpoofing is being set
+        if (is_set_gpiospoofing && !was_set_gpiospoofing) {
+            notifyGpioSpoofingState(true);
+        }
+    }
+
+    // set current error types
+    type5_data.current_errors_injection_bitmask = msg_with_bitmask;
 }
 
 /**
@@ -979,22 +983,28 @@ void Nsm::on_dev_cfg_get_ErrorInjectionPayload(const Packet& rx, Packet& tx)
 
     if (request.error_injection_id == static_cast<uint16_t>(DeviceError)) {
         // Handle different error types
-        if (request.error_type == static_cast<uint16_t>(FatalErrors)) {
+        if (request.error_type == static_cast<uint16_t>(FatalError)) {
             // Return Fatal Error Payload
             ntx.data_size = sizeof(FatalErrorPayload);
             memcpy(&ntx.data[0], &type5_data.fatalerrorResp, sizeof(FatalErrorPayload));
         }
-        else if (request.error_type == static_cast<uint16_t>(PortRecoveryErrors)) {
+        else if (request.error_type == static_cast<uint16_t>(PortRecoveryError)) {
             // Return Port Recovery Error Payload
             ntx.data_size = sizeof(PortRecoveryPayload);
             memcpy(&ntx.data[0], &type5_data.portRecoveryResp, sizeof(PortRecoveryPayload));
         }
-        else if (request.error_type == static_cast<uint16_t>(USBBridgeEmulationErrors)) {
+        else if (request.error_type == static_cast<uint16_t>(USBBridgeEmulationError)) {
             // Return USB Bridge Emulation Error Payload
             ntx.data_size = sizeof(USBBridgeEmulationPayload);
             memcpy(&ntx.data[0],
                    &type5_data.usbBridgeEmulationResp,
                    sizeof(USBBridgeEmulationPayload));
+        }
+        else if (request.error_type == static_cast<uint16_t>(LeakDetectionError)) {
+            const uint16_t sensors_size = type5_data.leakDetectionErrorResp.number_of_sensors
+                                        * sizeof(LeakSensors);
+            ntx.data_size = sizeof(LeakDetectionErrorPayloadBase) + sensors_size;
+            memcpy(&ntx.data[0], &type5_data.leakDetectionErrorResp, ntx.data_size);
         }
         else {
             fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
@@ -1074,7 +1084,7 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
         }
 
         // Handle different error types
-        if (request.error_type == static_cast<uint16_t>(FatalErrors)) {
+        if (request.error_type == static_cast<uint16_t>(FatalError)) {
             // Handle Fatal Errors (Error Type 0x0)
             if (!is_input_length_valid(rx, sizeof(FatalErrorPayload))
                 || nrx.data_size < sizeof(FatalErrorPayload)) {
@@ -1093,7 +1103,7 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
             }
             return;
         }
-        else if (request.error_type == static_cast<uint16_t>(PortRecoveryErrors)) {
+        else if (request.error_type == static_cast<uint16_t>(PortRecoveryError)) {
             if (!is_input_length_valid(rx, sizeof(PortRecoveryPayload))
                 || nrx.data_size < sizeof(PortRecoveryPayload)) {
                 fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
@@ -1113,7 +1123,7 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
 
             return;
         }
-        else if (request.error_type == static_cast<uint16_t>(USBBridgeEmulationErrors)) {
+        else if (request.error_type == static_cast<uint16_t>(USBBridgeEmulationError)) {
             // Handle USB Bridge Emulation Errors (Error Type 0x2) - not implemented yet
             if (!is_input_length_valid(rx, sizeof(USBBridgeEmulationPayload))
                 || nrx.data_size < sizeof(USBBridgeEmulationPayload)) {
@@ -1134,6 +1144,38 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
             }
 
             return;
+        }
+        else if (request.error_type == static_cast<uint16_t>(LeakDetectionError)) {
+            if constexpr (nv::ipc::voltage_monitor_config::LeakDetectSensorNum > 0) {
+                // Check if leak detection is enabled at runtime
+                if (!nv::leak_detect::LeakDetect::inst().is_enabled()) {
+                    fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                    return;
+                }
+                if (!is_input_length_valid(rx, sizeof(LeakDetectionErrorPayloadBase))
+                    || nrx.data_size < sizeof(LeakDetectionErrorPayloadBase)) {
+                    fill_error_packet(Ccode::ErrorInvalidLength, rx, tx);
+                    return;
+                }
+                // Handle Leak Detection Errors (Error Type 0x3)
+                bool clear_leak_detection = false;
+                auto ccode                = nsm_type5::subimit_leak_detection_error(
+                    type5_data.leakDetectionErrorResp, nrx, clear_leak_detection);
+                if (ccode != Ccode::Success) {
+                    fill_error_packet(ccode, rx, tx);
+                    return;
+                }
+                if (true == clear_leak_detection) {
+                    type5_data.leakDetectionErrorResp = LeakDetectionErrorPayload{};
+                    nsm_type5::clear_leak_detection_error();
+                    type5_data.clearDeviceErrorStatusBitmap(
+                        DeviceErrorStatusBitmap::LeakDetectionError);
+                }
+            }
+            else {
+                fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+                return;
+            }
         }
         else {
             // Reserved error types
@@ -1181,7 +1223,10 @@ void Nsm::on_dev_cfg_submit_ErrorInjectionPayload(const Packet& rx, Packet& tx)
 
         // send clear event for any payload already activated
         if (type5_data.previousGpioSpoofingPayload.gpio_spoofing_header.ei_gpio_number > 0) {
-            nsm_type5::triggerGpioSpoofingEvents(type5_data.previousGpioSpoofingPayload);
+            if constexpr (nv::gpio::is_gpio_spoofing_output_enabled(
+                              nv::gpio::GpioSpoofingOutputInterface::GpioEvent)) {
+                nsm_type5::triggerGpioSpoofingEvents(type5_data.previousGpioSpoofingPayload);
+            }
             type5_data.previousGpioSpoofingPayload.gpio_spoofing_header.ei_gpio_number = 0;
         }
 
@@ -1255,7 +1300,7 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
         }
 
         switch (request.error_type) {
-            case static_cast<uint16_t>(FatalErrors): {
+            case static_cast<uint16_t>(FatalError): {
                 const auto& fatalErrorPayload = type5_data.getFatalErrorPayload();
                 const auto  fatalBitMap       = fatalErrorPayload.fault_payload_bitmap;
 
@@ -1274,7 +1319,7 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
                 break;
             }
 
-            case static_cast<uint16_t>(PortRecoveryErrors): {
+            case static_cast<uint16_t>(PortRecoveryError): {
                 // Get the Port Recovery payload
                 const auto& portRecoveryPayload = type5_data.getPortRecoveryPayload();
                 // Extract the recovery bitmaps from the payload
@@ -1302,7 +1347,7 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
                 break;
             }
 
-            case static_cast<uint16_t>(USBBridgeEmulationErrors): {
+            case static_cast<uint16_t>(USBBridgeEmulationError): {
                 // Get the USB Bridge Emulation payload
                 const auto& usbBridgeEmulationPayload = type5_data
                                                             .getUSBBridgeEmulationPayload();
@@ -1330,6 +1375,29 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
                                                  usbBridgeEmulationPayload.address);
                 break;
             }
+            case static_cast<uint16_t>(LeakDetectionError): {
+                // Check if leak detection is enabled at runtime
+                if constexpr (nv::ipc::voltage_monitor_config::LeakDetectSensorNum > 0) {
+                    if (!nv::leak_detect::LeakDetect::inst().is_enabled()) {
+                        fill_error_packet(Ccode::ErrorGeneral, rx, tx);
+                        return;
+                    }
+                }
+                else {
+                    fill_error_packet(Ccode::ErrorInvalidData, rx, tx);
+                    return;
+                }
+                auto ccode = nsm_type5::activate_leak_detection_error(
+                    type5_data.leakDetectionErrorResp);
+                if (ccode != Ccode::Success) {
+                    fill_error_packet(ccode, rx, tx);
+                    return;
+                }
+                type5_data.setDeviceErrorStatusBitmap(
+                    DeviceErrorStatusBitmap::LeakDetectionError);
+                break;
+            }
+            default: break;
         }
     }
     else if (request.error_injection_id == static_cast<uint16_t>(GpioSpoofing)) {
@@ -1351,7 +1419,7 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
             const auto gpio_index = gpio_entry.gpioIndex;
 
             // Validate GPIO index is within bounds
-            if (gpio_index < ipc::GpioNum) {
+            if (gpio_index < ipc::gpio_count()) {
                 // Get GPIO spoofing configuration
                 uint8_t default_value{};
                 get_gpio_default_value(gpio_entry.gpioIndex, default_value);
@@ -1364,8 +1432,11 @@ void Nsm::on_dev_cfg_activate_ErrorInjectionPayload(const Packet& rx, Packet& tx
             }
         }
         // trigger current event
-        nsm_type5::triggerGpioSpoofingEvents(type5_data.gpioSpoofingResp);
-        notifyIoxSpoofingState(true);
+        if constexpr (nv::gpio::is_gpio_spoofing_output_enabled(
+                          nv::gpio::GpioSpoofingOutputInterface::GpioEvent)) {
+            nsm_type5::triggerGpioSpoofingEvents(type5_data.gpioSpoofingResp);
+        }
+        notifyGpioSpoofingState(true);
         // save payload to send clear event on next set payload
         type5_data.previousGpioSpoofingPayload = type5_data.gpioSpoofingResp;
     }
@@ -1648,12 +1719,6 @@ void Nsm::on_dev_cfg_set_device_mode_settings(const Packet& rx, Packet& tx)
             }
             result = handle_set_ncsi_mac(payload_bytes.data());
             break;
-        case DeviceModeIndex::ProgramCpldFeatureRow:
-            result = nsm_type5::handle_set_program_cpld_feature_row();
-            break;
-        case DeviceModeIndex::OtpCpldFeatureRow:
-            result = nsm_type5::handle_set_otp_cpld_feature_row();
-            break;
         default: fill_error_packet(Ccode::ErrorInvalidData, rx, tx); return;
     }
     if (result != Ccode::Success) {
@@ -1707,13 +1772,7 @@ void Nsm::on_dev_cfg_get_device_mode_settings(const Packet& rx, Packet& tx)
             result = nsm_pwr_smoothing_handlers::handle_get_soc_therm_brake_enabled(ntx);
             break;
         case DeviceModeIndex::NcsiMac: result = handle_get_ncsi_mac(ntx); break;
-        case DeviceModeIndex::ProgramCpldFeatureRow:
-            result = nsm_type5::handle_get_program_cpld_feature_row(ntx);
-            break;
-        case DeviceModeIndex::OtpCpldFeatureRow:
-            result = nsm_type5::handle_get_otp_cpld_feature_row(ntx);
-            break;
-        default: break;
+        default                      : break;
     }
 
     // Check if feature is available

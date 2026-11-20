@@ -222,10 +222,11 @@ void LeakDetect::initialize_virtual_gpio()
     // Initialize virtual GPIO state
     vrGpioState = VrGpioState::Nominal;
 
-    /**
-     * virtual gpio is initialized by iox module
-     * so NOTHING to do here !!!
-     */
+    // Seed each virtual GPIO from its configured state. The IOX task processes these
+    // requests after the scheduler starts; no NSM event is generated before an ADC sample.
+    for (uint8_t i = 0; i < LeakDetectSensorNum; ++i) {
+        update_virtual_gpio(i, static_cast<VrGpioState>(sensor.at(i).state), false);
+    }
 }
 
 void LeakDetect::initialize_hardware_gpio()

@@ -126,6 +126,10 @@
                <pin_label pin_num="C14" pin_signal="PIO0_6/ISPMODE_N/FC0_P2/FC1_P6/CT_INP2/PDM0_DATA1/TSI0_CH10" label="MCU_RECOVERY" identifier="MCU_RECOVERY"/>
                <pin_label pin_num="B14" pin_signal="PIO0_4/WUU0_IN0/EWM0_IN/FC0_P0/FC1_P4/CT0_MAT2/UTICK_CAP2/HSCMP1_OUT/PDM0_CLK/TSI0_CH8" label="SMB_SSD7_SDA" identifier="SMB_SSD7_SDA"/>
                <pin_label pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9" label="SMB_SSD7_SCL" identifier="SMB_SSD7_SCL"/>
+               <pin_label pin_num="B16" pin_signal="PIO0_2/TDO/SWO/FC1_P2/CT0_MAT0/UTICK_CAP0/I3C0_PUR" label="L_MCU_P0_2" identifier="L_MCU_P0_2"/>
+               <pin_label pin_num="B15" pin_signal="PIO0_3/TDI/FC1_P3/CT0_MAT1/UTICK_CAP1/HSCMP0_OUT/CMP1_IN1" label="S_MCU_READY_STATUS" identifier="S_MCU_READY_STATUS"/>
+               <pin_label pin_num="A12" pin_signal="PIO0_9/FC0_P5/CT_INP1/FLEXIO0_D1/ADC0_B9" label="GLOBAL_WP_MCU" identifier="GLOBAL_WP_MCU"/>
+               <pin_label pin_num="U2" pin_signal="ADC0_A3/ADC1_A3" label="S_LEAK_SNS_IN1_R" identifier="S_LEAK_SNS_IN1_R"/>
             </pin_labels>
             <external_user_signals>
                <properties/>
@@ -588,6 +592,26 @@
                   <pin peripheral="SYSCON0" signal="ISPMODE" pin_num="C14" pin_signal="PIO0_6/ISPMODE_N/FC0_P2/FC1_P6/CT_INP2/PDM0_DATA1/TSI0_CH10"/>
                   <pin peripheral="LP_FLEXCOMM0" signal="LPFLEXCOMM_P0" pin_num="B14" pin_signal="PIO0_4/WUU0_IN0/EWM0_IN/FC0_P0/FC1_P4/CT0_MAT2/UTICK_CAP2/HSCMP1_OUT/PDM0_CLK/TSI0_CH8"/>
                   <pin peripheral="LP_FLEXCOMM0" signal="LPFLEXCOMM_P1" pin_num="A14" pin_signal="PIO0_5/EWM0_OUT_b/FC0_P1/FC1_P5/CT0_MAT3/UTICK_CAP3/PDM0_DATA0/TSI0_CH9"/>
+                  <pin peripheral="GPIO0" signal="GPIO, 2" pin_num="B16" pin_signal="PIO0_2/TDO/SWO/FC1_P2/CT0_MAT0/UTICK_CAP0/I3C0_PUR">
+                     <pin_features>
+                        <pin_feature name="direction" value="INPUT"/>
+                        <pin_feature name="drive_strength" value="low"/>
+                     </pin_features>
+                  </pin>
+                  <pin peripheral="GPIO0" signal="GPIO, 3" pin_num="B15" pin_signal="PIO0_3/TDI/FC1_P3/CT0_MAT1/UTICK_CAP1/HSCMP0_OUT/CMP1_IN1">
+                     <pin_features>
+                        <pin_feature name="direction" value="OUTPUT"/>
+                        <pin_feature name="gpio_init_state" value="false"/>
+                        <pin_feature name="open_drain" value="enable"/>
+                        <pin_feature name="pull_enable" value="disable"/>
+                     </pin_features>
+                  </pin>
+                  <pin peripheral="GPIO0" signal="GPIO, 9" pin_num="A12" pin_signal="PIO0_9/FC0_P5/CT_INP1/FLEXIO0_D1/ADC0_B9">
+                     <pin_features>
+                        <pin_feature name="direction" value="INPUT"/>
+                     </pin_features>
+                  </pin>
+                  <pin peripheral="ADC0" signal="A, 3" pin_num="U2" pin_signal="ADC0_A3/ADC1_A3"/>
                </pins>
             </function>
          </functions_list>

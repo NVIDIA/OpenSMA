@@ -32,8 +32,8 @@ namespace nv::mctp {
 void Task::make()
 {
     using namespace std::chrono_literals;
-    // leave 1186 bytes
-    constexpr auto StackSize = std::max(2080 + 2080, int(configMINIMAL_STACK_SIZE));
+    // leave ~584 bytes of margin above the deepest observed stack usage
+    constexpr auto StackSize = std::max(3680, int(configMINIMAL_STACK_SIZE));
 
     NV_TASK_DATA static Task                       task;
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;

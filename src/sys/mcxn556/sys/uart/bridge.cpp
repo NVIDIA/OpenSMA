@@ -116,7 +116,7 @@ Status Bridge::init_edma(nv::vruart::EdmaInst edmaInstance,
     return Status::Ok;
 }
 
-Status Bridge::init_lpuart(nv::vruart::Baudrate baudrate)
+Status Bridge::init_lpuart(nv::vruart::Baudrate baudrate, uint32_t srcClockHz)
 {
     /**
      * default config
@@ -141,7 +141,7 @@ Status Bridge::init_lpuart(nv::vruart::Baudrate baudrate)
     config.baudRate_Bps = baudrate;
     config.enableTx     = true;
     config.enableRx     = true;
-    LPUART_Init(uartRegbase, &config, 12000000U);
+    LPUART_Init(uartRegbase, &config, srcClockHz);
     return Status::Ok;
 }
 
@@ -204,8 +204,9 @@ extern "C" void LPUART_UserCallback(LPUART_Type*          base,
     auto uart = static_cast<sys::uart::Bridge*>(userData);
     if (kStatus_LPUART_TxIdle == status) {
         uart->set_txongoing(false);
-        // Notify task that UART TX is complete
-        nv::vruart::Bridge::set_uart_tx_done_event();
+        // Notify task that UART TX is complete. Passing the driver object lets the bridge pick
+        // the right instance when a project tunnels more than one UART.
+        nv::vruart::Bridge::set_uart_tx_done_event(uart);
     }
 
     // handle RX buffer full (EDMA transfer complete)
@@ -213,8 +214,8 @@ extern "C" void LPUART_UserCallback(LPUART_Type*          base,
         uart->set_rxongoing(false);
 
         // Order matters: enqueue first (copy data), then restart eDMA (may overwrite buffer)
-        (void)nv::vruart::Bridge::enqueue(uart->get_rx_buffer().data(),
-                                          sys::uart::edmaXferBufSize);
+        (void)nv::vruart::Bridge::enqueue(
+            uart, uart->get_rx_buffer().data(), sys::uart::edmaXferBufSize);
         (void)uart->start_edma_rx(sys::uart::edmaXferBufSize);
     }
 
@@ -230,7 +231,8 @@ extern "C" void LPUART_UserCallback(LPUART_Type*          base,
 
             // Order matters: enqueue first (copy data), then restart eDMA (may overwrite
             // buffer)
-            (void)nv::vruart::Bridge::enqueue(uart->get_rx_buffer().data(), receivedCount);
+            (void)nv::vruart::Bridge::enqueue(
+                uart, uart->get_rx_buffer().data(), receivedCount);
             (void)uart->start_edma_rx(sys::uart::edmaXferBufSize);
         }
     }
@@ -273,8 +275,23 @@ Status Bridge::init(nv::vruart::Instance      instance,
     uartInstance = instance;
     uartRegbase  = get_reg_base(instance);
 
-    /** init lpuart clock */
+    /** init lpuart clock
+     *
+     * When the FlexComm is shared with an LPI2C master the board has already chosen the
+     * clock, and LPI2C_MasterInit() sized its dividers from it. Re-attaching FRO12M here
+     * would silently change SCL, and the I2C driver caches the frequency when its task
+     * binds, so the damage would also depend on which task started first.
+     */
+#if !defined(NV_UART_BRIDGE_SHARE_FLEXCOMM_I2C) || (NV_UART_BRIDGE_SHARE_FLEXCOMM_I2C == 0)
     init_clock(uartInstance);
+#endif
+
+    // Derived rather than assumed, so the baudrate is right whichever clock the FlexComm is on.
+    uint32_t srcClockHz = CLOCK_GetLPFlexCommClkFreq(nv::common::to_underlying(uartInstance));
+    if (srcClockHz == 0) {
+        nv::error("Bridge: FLEXCOMM%d clock is off\n", nv::common::to_underlying(uartInstance));
+        return Status::InvalidInstance;
+    }
 
     /** init lpuart signal
      *
@@ -295,7 +312,17 @@ Status Bridge::init(nv::vruart::Instance      instance,
 #endif
 
     /** init lpuart */
-    init_lpuart(baudrate);
+    init_lpuart(baudrate, srcClockHz);
+
+    // Shared Flexcomm (NV_UART_BRIDGE_SHARE_FLEXCOMM_I2C):
+    // LPI2C_MasterInit() must already have run (BOARD_InitPeripherals) so the
+    // I2C sub-block is programmed before this function. LPUART_Init() then
+    // sets PSELID to UART-only and unmaps LPI2C; restore combined mode so
+    // that I2C mapping is not lost.
+#if defined(NV_UART_BRIDGE_SHARE_FLEXCOMM_I2C) && (NV_UART_BRIDGE_SHARE_FLEXCOMM_I2C > 0)
+    LP_FLEXCOMM_Init(nv::common::to_underlying(uartInstance),
+                     LP_FLEXCOMM_PERIPH_LPI2CAndLPUART);
+#endif
 
     /** init lpuart edma */
     init_edma(edmaInstance, edmaTxChn, edmaRxChn);
@@ -313,6 +340,11 @@ Status Bridge::init(nv::vruart::Instance      instance,
                               Custom_LPUART_IRQHandler,
                               &edmaLpuartHandle,
                               LP_FLEXCOMM_PERIPH_LPUART);
+
+    edmaLpuartXferTx.data     = edmaXferTxBuffer.data();
+    edmaLpuartXferTx.dataSize = edmaXferTxBuffer.size();
+    edmaLpuartXferRx.data     = edmaXferRxBuffer.data();
+    edmaLpuartXferRx.dataSize = edmaXferRxBuffer.size();
 
     /** enable lpuart idle line interrupt */
     LPUART_EnableInterrupts(uartRegbase, kLPUART_IdleLineInterruptEnable);

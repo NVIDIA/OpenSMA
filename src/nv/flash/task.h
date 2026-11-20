@@ -78,9 +78,6 @@ private:
     void efuse_life_cycle_read(Response& response);
     void crc_read(Response& response);
 
-    void get_ap_fw_authenticate_data(const Request& request, Response& response);
-    void set_ap_fw_authenticate_data(const Request& request, Response& response);
-
     // @WAR GFWLYNT1-213 Semaphore
     static nv::ipc::Queue::Status semaphore_take(nv::ipc::Queue::Usecs timeout = FlashTimeout);
     static nv::ipc::Queue::Status

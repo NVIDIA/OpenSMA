@@ -22,29 +22,105 @@
 #include <fsl_debug_console.h>
 
 #include "nv/i3c/task.h"
+#include "nv/ipc/mctp_bridge_config.h"
 #include "nv/logger/log.h"
 #include "nv/nv.h"
 #include "fsl_i3c_edma.h"
 #include "sys/common/common.h"
 #include "sys/smartdma/driver.h"
 
+// The CPU bring-up sequence in nv::i3c::Task::recover_cpu_i3c_bus() chains up to a
+// hundred blocking CCCs without yielding, and the runtime watchdog only feeds once
+// every monitored task has answered - so a stall here starves the whole MCU, not just
+// this task. That sequence stays far inside the 10 s budget only because every SDK
+// wait it reaches is capped at I3C_RETRY_TIMES polls. The SDK treats zero as "wait
+// forever", which would turn the same sequence into an unbounded hang.
+static_assert(I3C_RETRY_TIMES != 0,
+              "I3C_RETRY_TIMES must stay bounded: the CPU I3C recovery sequence relies "
+              "on it to keep the runtime watchdog fed");
+
 namespace {
 
-static void ibi_callback([[maybe_unused]] I3C_Type* base,
-                         i3c_master_edma_handle_t*  handle,
-                         i3c_ibi_type_t             ibi_type,
-                         i3c_ibi_state_t            ibi_state)
+static void ibi_callback(I3C_Type*                 base,
+                         i3c_master_edma_handle_t* handle,
+                         i3c_ibi_type_t            ibi_type,
+                         i3c_ibi_state_t           ibi_state)
 {
     auto&         driver  = *static_cast<nv::i3c::Driver*>(handle->userData);
     const uint8_t port_id = static_cast<uint8_t>(I3C_GetInstance(base));
+    if (ibi_state == kI3C_IbiAckNackPending) {
+        // The SDK delegates the ACK/NACK decision to this callback, and merely
+        // setting MCTRL.IBIRESP does not emit the response request, so the decision
+        // has to be made here.
+        //
+        // A bridge's Normal IBI is the CPU's MCTP receive path, so it must be
+        // answered with the policy currently armed in MCTRL.IBIRESP: NACK during CPU
+        // recovery, AckMandatory once the first bring-up TX succeeded. Only bridge
+        // builds arm that field outside a transfer - elsewhere it still holds
+        // whatever the last transfer left behind.
+        bool use_armed_policy = false;
+        if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+            use_armed_policy = ibi_type == kI3C_IbiNormal;
+        }
+
+        auto ibi_response = kI3C_IbiRespNack;
+        if (use_armed_policy) {
+            ibi_response = static_cast<i3c_ibi_response_t>(
+                (base->MCTRL & I3C_MCTRL_IBIRESP_MASK) >> I3C_MCTRL_IBIRESP_SHIFT);
+        }
+        else {
+            /* Manual / controller-role requests are unsupported - no AP may take the
+               controller role and this firmware has no target mode. NACK to complete
+               the HW handshake, then wait for kI3C_IbiReady before notifying the app.
+               Not logged for a bridge policy NACK: the CPU retries a refused Normal
+               IBI, so that path would flood the log during a recovery. */
+            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CManualIbiNack.unique_id,
+                                             nv::logger::Level::Info,
+                                             {port_id, static_cast<uint8_t>(ibi_type)});
+        }
+
+        I3C_MasterEmitIBIResponse(base, ibi_response);
+        if (ibi_response == kI3C_IbiRespNack) {
+#if defined(I3C_DMA_USE_STOP_OFFLOAD)
+            /* SmartDMA N556 path: a NACK may not raise MSTATUS.COMPLETE, so nudge
+               the handle into kStopState with IBIWon. Macro used here because
+               handle->result is not defined in the N547 SDK. */
+            constexpr uint8_t EdmaStopState = 8U;  // kStopState in 556 fsl_i3c_edma.c
+            handle->result                  = kStatus_I3C_IBIWon;
+            handle->state                   = EdmaStopState;
+#endif
+        }
+        return;
+    }
     if (ibi_state != kI3C_IbiReady) {
         nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiStateV2.unique_id,
                                          nv::logger::Level::Info,
                                          {port_id, static_cast<uint8_t>(ibi_state)});
         return;
     }
+
     switch (ibi_type) {
         case kI3C_IbiNormal: driver.on_ibi(static_cast<void*>(handle)); break;
+        case kI3C_IbiMasterRequest:
+            if constexpr (nv::ipc::EnableSmartDMA) {
+                /* Manual NACK in previous IRQ above can cause a residual IBI stop
+                   flag in SmartDMA */
+                sys::smartdma::Driver::clear_ibi_stop(port_id);
+            }
+            /* CX WAR: a CX target sends a controller-role request where it meant a
+               pending-read IBI, and leaves the packet queued forever if we drop it.
+               UsI3c bridge buses are not CX; synthesizing 0xAE would start a spurious
+               private read toward the CPU. */
+            if constexpr (!nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+                if (!driver.is_gpu()) {
+                    driver.on_master_request_ibi(static_cast<void*>(handle));
+                    break;
+                }
+            }
+            nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiTypeV2.unique_id,
+                                             nv::logger::Level::Info,
+                                             {port_id, static_cast<uint8_t>(ibi_type)});
+            break;
         default:
             nv::logger::Logger::add_from_isr(nv::logger::Event::I3CIgnoreIbiTypeV2.unique_id,
                                              nv::logger::Level::Info,
@@ -150,6 +226,45 @@ static void i3c_callback(I3C_Type*                 base,
     }
 }
 
+// Trace every I3C CCC issued on this controller (RSTDAA/ENTDAA/ENEC/SETMRL/
+// SETMWL/GETSTATUS). On the CPU-bridge product, port 1 is the CPU upstream (UsI3c) bus.
+static void log_ccc_sent(uint8_t port, uint8_t ccc, uint8_t address)
+{
+    nv::logger::info(nv::logger::Event::I3CCccSentV2, {port, ccc, address});
+}
+
+// Snapshot the controller at a CCC failure. Must run before the ForceExit/STOP
+// recovery, which clears the state that explains why the frame stalled:
+// MSTATUS carries SLVSTART (bit 8), IBIWON (bit 13), ERRWARN (bit 15) and
+// STATE (bits [2:0]); MERRWARN[15:0] details the error. `part` numbers the
+// segment of a multi-part CCC that failed.
+static void log_ccc_fail_detail(uint8_t port, uint8_t part, I3C_Type* base)
+{
+    const uint32_t mstatus  = base->MSTATUS;
+    const uint32_t merrwarn = base->MERRWARN;
+    nv::logger::info(nv::logger::Event::I3CCccFailDetailV2,
+                     {port,
+                      part,
+                      static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                      static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                      static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                      static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+                      static_cast<uint8_t>(merrwarn >> 0 & 0xFF),
+                      static_cast<uint8_t>(merrwarn >> 8 & 0xFF)});
+}
+
+// Read out whatever an IBI left queued. The mandatory data byte is pushed as
+// soon as the controller ACKs, and anything still there when the next transfer
+// starts surfaces as the head of that transfer's RX data.
+static void drain_rx_fifo(I3C_Type* base)
+{
+    uint32_t rx_count = (base->MDATACTRL & I3C_MDATACTRL_RXCOUNT_MASK)
+                     >> I3C_MDATACTRL_RXCOUNT_SHIFT;
+    while (rx_count-- != 0U) {
+        (void)base->MRDATAB;
+    }
+}
+
 }  // namespace
 
 nv::i3c::Driver::Driver(
@@ -217,16 +332,141 @@ void nv::i3c::Driver::init()
     const auto instance = I3C_GetInstance(_base);
     I3C_MasterInit(_base, &_master_config, _clock);
 
-    static_assert(nv::ipc::I3CInterruptPriority >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+    // On a UsI3c bridge (the CPU is the I3C bus owner) the MCU can see sustained
+    // I3C interrupt activity, and a looping/storming I3C ISR at a priority above
+    // USB pre-empts the USB device IRQ and starves the BMC-facing MCTP-over-USB
+    // link (EID 80 drops). For these products lower the I3C IRQ below USB so USB
+    // always wins; other products keep the Bug-5947030 pre-emptive priority.
+    constexpr uint8_t kI3cIrqPriority = nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode
+                                          ? static_cast<uint8_t>(
+                                                nv::ipc::UsbDeviceInterruptPriority + 1U)
+                                          : nv::ipc::I3CInterruptPriority;
+    static_assert(kI3cIrqPriority >= configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
                   "Priority cannot be set higher than the FreeRTOS maximum for this platform");
-    NVIC_SetPriority(kI3cIrqs[instance], nv::ipc::I3CInterruptPriority);
+    NVIC_SetPriority(kI3cIrqs[instance], kI3cIrqPriority);
 
     // coverity[cert_exp60_cpp_violation] waive this until I have a good solution
     I3C_MasterTransferCreateHandleEDMA(
         _base, &_i3c_m_handle, &Callback, this, &_rx_edma_handle, &_tx_edma_handle);
     _i3c_m_handle.ibiBuff = _ibi_data.data();
     _is_init              = true;
+
+    // I3C_MasterInit() resets the peripheral, clearing the IBI address rules and
+    // MCTRL.IBIRESP - the field ibi_callback() reads back to answer every IBI.
+    // Every controller reset lands here (force_bus_idle() fallback,
+    // try_recover(), IRQ-storm recovery) and nothing re-arms IBI delivery once
+    // bring-up is done, so a reset in steady state would leave the CPU's IBIs
+    // ACKed without their mandatory data byte. The CPU keeps the dynamic address
+    // and ENINT it was granted across a controller-only reset, so it stays
+    // entitled to raise them. GPU products register IBI during DAA, not here.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (_ibi_address != 0U) {
+            (void)register_ibi(_ibi_address);
+            set_ibi_ack_mandatory();
+        }
+    }
     nv::logger::info(nv::logger::Event::I3cDriverInit, {static_cast<uint8_t>(_port), true});
+}
+
+void sys::i3c::set_irq_enabled(uint8_t instance, bool enable)
+{
+    constexpr uint8_t I3cInstanceNum = 2;
+    if (instance >= I3cInstanceNum) {
+        return;
+    }
+    IRQn_Type const kI3cIrqs[] = I3C_IRQS;
+    if (enable) {
+        NVIC_ClearPendingIRQ(kI3cIrqs[instance]);
+        NVIC_EnableIRQ(kI3cIrqs[instance]);
+    }
+    else {
+        NVIC_DisableIRQ(kI3cIrqs[instance]);
+    }
+}
+
+namespace {
+// I3C interrupt-storm breaker state (I3C1 / UsI3c only). A runaway I3C ISR keeps
+// the controller stuck in a non-idle state and re-enters back-to-back with no
+// progress, pinning the CPU and starving every task (WWDT reset, USB/EID80
+// loss). This happens with the NXP EDMA state machine's "interrupt delay
+// workaround" (SLVSTART left asserted while non-idle) but can also be driven by
+// other latched conditions (ERRWARN/IBIWON). Detect it flag-agnostically:
+// count consecutive ISR entries where the controller is NOT idle. A completed
+// transfer returns the controller to Idle and resets the count, so normal
+// traffic never accumulates; a genuine storm crosses the threshold within a
+// couple of ms (far below the 10s watchdog) and we disable the IRQ so a task
+// can recover the controller.
+constexpr uint32_t kI3cIsrStormThreshold = 1024U;
+volatile uint32_t  g_i3c1_isr_run        = 0U;
+volatile bool      g_i3c1_irq_storm      = false;
+// Storm-time controller snapshot captured the instant the storm is detected in
+// the ISR (MSTATUS/MERRWARN show which condition is stuck: SLVSTART bit8,
+// IBIWON bit13, ERRWARN bit15, STATE bits[2:0]; MERRWARN details the error).
+// Read at detection because by recovery time the controller is back to idle.
+volatile uint32_t g_i3c1_storm_mstatus  = 0U;
+volatile uint32_t g_i3c1_storm_merrwarn = 0U;
+}  // namespace
+
+extern "C" void I3C1_DriverIRQHandler(void);
+
+extern "C" void I3C1_IRQHandler(void)
+{
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        if (I3C_MasterGetState(I3C1) != kI3C_MasterStateIdle) {
+            const uint32_t isr_run = g_i3c1_isr_run + 1U;
+            g_i3c1_isr_run         = isr_run;
+            if (isr_run >= kI3cIsrStormThreshold) {
+                g_i3c1_isr_run        = 0U;
+                g_i3c1_storm_mstatus  = I3C1->MSTATUS;
+                g_i3c1_storm_merrwarn = I3C1->MERRWARN;
+                g_i3c1_irq_storm      = true;
+                sys::i3c::set_irq_enabled(1U, false);
+                return;
+            }
+        }
+        else {
+            g_i3c1_isr_run = 0U;
+        }
+    }
+    I3C1_DriverIRQHandler();
+}
+
+bool nv::i3c::Driver::recover_irq_storm_if_pending()
+{
+    if (I3C_GetInstance(_base) != 1U || !g_i3c1_irq_storm) {
+        return false;
+    }
+    g_i3c1_irq_storm = false;
+    g_i3c1_isr_run   = 0U;
+
+    // Log the storm-time snapshot captured in the ISR (not the current, already
+    // recovered, state) so the stuck condition is identifiable: MSTATUS carries
+    // SLVSTART/IBIWON/ERRWARN/STATE and MERRWARN[15:0] the specific error.
+    const uint32_t mstatus  = g_i3c1_storm_mstatus;
+    const uint32_t merrwarn = g_i3c1_storm_merrwarn;
+    logger::info(logger::Event::I3CIrqStormV2,
+                 {static_cast<uint8_t>(_port),
+                  static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                  static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                  static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                  static_cast<uint8_t>(mstatus >> 24 & 0xFF),
+                  static_cast<uint8_t>(merrwarn >> 0 & 0xFF),
+                  static_cast<uint8_t>(merrwarn >> 8 & 0xFF)});
+
+    // The ISR already disabled the I3C1 NVIC IRQ to stop the storm. Recover the
+    // controller here in task context (this path feeds the watchdog): abort the
+    // stuck EDMA transfer, drain the pending Slave-Start, reset the SmartDMA
+    // handshake, re-init, then re-enable the IRQ. DAA re-bring-up happens on the
+    // normal AP-status Querying path.
+    I3C_MasterTransferAbortEDMA(_i3c_m_handle.base, &_i3c_m_handle);
+    (void)force_bus_idle();
+    deinit();
+    if constexpr (nv::ipc::EnableSmartDMA) {
+        sys::smartdma::Driver::reset_flags(1U);
+    }
+    init();
+    sys::i3c::set_irq_enabled(1U, true);
+    return true;
 }
 
 void nv::i3c::Driver::deinit()
@@ -240,10 +480,164 @@ void nv::i3c::Driver::deinit()
     nv::logger::info(nv::logger::Event::I3cDriverInit, {static_cast<uint8_t>(_port), false});
 }
 
+bool nv::i3c::Driver::disec()
+{
+    constexpr uint8_t BoradcastAddress = 0x7EU;
+    constexpr uint8_t CccDisec         = 0x01U;  // Broadcast DISEC
+    // Disable IBI (ENINT), controller-role request (ENCR) and hot-join (ENHJ)
+    // so the bus is quiet before RSTDAA/ENTDAA.
+    constexpr uint8_t DisableEvents = 0x0BU;
+    I3cBuffer         buffer{DisableEvents};
+    _last_status = Status::Success;
+
+    i3c_master_transfer_t xfer{};
+    xfer.slaveAddress   = BoradcastAddress;
+    xfer.subaddress     = CccDisec;
+    xfer.subaddressSize = 1U;
+    xfer.data           = buffer.data();
+    xfer.dataSize       = 1U;
+    xfer.direction      = kI3C_Write;
+    xfer.busType        = kI3C_TypeI3CSdr;
+    xfer.flags          = kI3C_TransferDefaultFlag;
+    xfer.ibiResponse    = kI3C_IbiRespNack;
+    log_ccc_sent(static_cast<uint8_t>(_port), CccDisec, BoradcastAddress);
+    auto result = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+    if (result != kStatus_Success) {
+        I3C_MasterStop(_i3c_m_handle.base);
+        const logger::EventData data = {
+            static_cast<uint8_t>(_port),
+            CccDisec,
+            static_cast<uint8_t>(result >> 0 & 0xFF),
+            static_cast<uint8_t>(result >> 8 & 0xFF),
+            static_cast<uint8_t>(result >> 16 & 0xFF),
+            static_cast<uint8_t>(result >> 24 & 0xFF),
+        };
+        logger::info(logger::Event::I3CCccErrorV2, data);
+        _last_status = to_driver_status(static_cast<uint32_t>(result));
+        return false;
+    }
+    return true;
+}
+
+bool nv::i3c::Driver::force_bus_idle()
+{
+    auto*          base   = _i3c_m_handle.base;
+    const uint32_t before = base->MSTATUS;
+    auto           state  = I3C_MasterGetState(base);
+
+    // The CPU pulses a Slave-Start at nearly every transfer entry but clears it
+    // within microseconds, so sampling STATE alone misses it. The sticky
+    // SLVSTART flag latches the event until we clear it, so use it (together
+    // with a live SlvReq) to decide whether a target request is pending.
+    const bool slave_start_pending = state == kI3C_MasterStateSlvReq
+                                  || (before & I3C_MSTATUS_SLVSTART_MASK) != 0U;
+    // A request the controller already won arbitration for shows up as neither
+    // of those: SlvReq is gone and SLVSTART was consumed, leaving only IBITYPE
+    // and IBIADDR populated while STATE sits in NormAct. The controller still
+    // owes that target its mandatory data byte, so it needs the same servicing
+    // as a fresh Slave-Start.
+    const bool ibi_captured = (before & I3C_MSTATUS_IBITYPE_MASK) != 0U;
+
+    if (state == kI3C_MasterStateIdle && !slave_start_pending) {
+        I3C_MasterClearStatusFlags(base, static_cast<uint32_t>(kI3C_MasterClearFlags));
+        return true;
+    }
+
+    // Own the hardware state machine while draining the pending target request;
+    // otherwise the EDMA ISR and this recovery path can issue competing MCTRL
+    // requests.
+    const uint32_t enabled_interrupts = I3C_MasterGetEnabledInterrupts(base);
+    I3C_MasterDisableInterrupts(base, enabled_interrupts);
+    I3C_MasterClearErrorStatusFlags(base, I3C_MasterGetErrorStatusFlags(base));
+
+    status_t result = kStatus_Success;
+    if (slave_start_pending) {
+        // Unconditionally emit START+0x7E arbitration so a pending (possibly
+        // already-deasserted) Slave-Start resolves into IBIACK, instead of
+        // relying on the transient SlvReq state still being live.
+        I3C_MasterClearStatusFlags(base, static_cast<uint32_t>(kI3C_MasterClearFlags));
+        I3C_MasterEmitRequest(base, kI3C_RequestAutoIbi);
+        result = I3C_MasterWaitForCtrlDone(base, false);
+        state  = I3C_MasterGetState(base);
+    }
+
+    // AutoIbi under AckMandatory parks in IbiRcv rather than IbiAck once the
+    // target starts pushing its mandatory byte, and an IBI captured before this
+    // call is past IbiAck as well. Accepting only IbiAck sent both straight to
+    // the controller reset below with the byte still unread, so the target kept
+    // re-raising the same request and every later frame stalled against it.
+    const bool servicing_ibi = state == kI3C_MasterStateIbiAck
+                            || state == kI3C_MasterStateIbiRcv
+                            || (ibi_captured && state == kI3C_MasterStateNormAct);
+    if (result == kStatus_Success && servicing_ibi) {
+        if (state == kI3C_MasterStateIbiAck) {
+            // Service the CPU IBI (ACK + read its mandatory data byte) so the
+            // target considers the request handled and stops re-asserting,
+            // rather than NACKing it (which the CPU ignores and retries into a
+            // storm).
+            I3C_MasterEmitIBIResponse(base, kI3C_IbiRespAckMandatory);
+            result = I3C_MasterWaitForCtrlDone(base, false);
+        }
+        drain_rx_fifo(base);
+        state = I3C_MasterGetState(base);
+    }
+
+    // A half-open frame parks in NormAct and never reaches idle on its own:
+    // an IBI whose payload has just been taken, or a CCC abandoned between its
+    // two segments. Close it explicitly rather than waiting for an idle that
+    // only a STOP can produce -- that wait is what expired as a bounded-poll
+    // timeout and dropped every one of these into the controller reset below.
+    // NormAct is the one non-idle state where a STOP is unambiguously valid.
+    if (result == kStatus_Success && state == kI3C_MasterStateNormAct) {
+        I3C_MasterEmitRequest(base, kI3C_RequestEmitStop);
+        result = I3C_MasterWaitForCtrlDone(base, true);
+        drain_rx_fifo(base);
+        state = I3C_MasterGetState(base);
+    }
+
+    const bool idle = result == kStatus_Success && state == kI3C_MasterStateIdle;
+    if (idle) {
+        I3C_MasterClearStatusFlags(base, static_cast<uint32_t>(kI3C_MasterClearFlags));
+        I3C_MasterEnableInterrupts(base, enabled_interrupts);
+    }
+    else {
+        // The bounded SDK waits failed or the controller was in an unexpected
+        // state. Reset only the MCU controller rather than issuing ForceExit or
+        // STOP in a state where those requests may be invalid.
+        I3C_MasterTransferAbortEDMA(base, &_i3c_m_handle);
+        deinit();
+        // Clear the SmartDMA IBI handshake the way recover_irq_storm_if_pending()
+        // does: an ibi_stop / i3c_ibi_won left set by the frame just abandoned
+        // survives deinit/init and strands the next IBI.
+        if constexpr (nv::ipc::EnableSmartDMA) {
+            sys::smartdma::Driver::reset_flags(static_cast<uint8_t>(I3C_GetInstance(base)));
+        }
+        init();
+    }
+
+    const uint32_t after = base->MSTATUS;
+    logger::info(logger::Event::I3CForceBusIdleV2,
+                 {static_cast<uint8_t>(_port),
+                  static_cast<uint8_t>(before >> 0 & 0xFF),
+                  static_cast<uint8_t>(before >> 8 & 0xFF),
+                  static_cast<uint8_t>(before >> 16 & 0xFF),
+                  static_cast<uint8_t>(before >> 24 & 0xFF),
+                  // The call's own verdict, not a re-read of STATE: after the
+                  // reset branch below the controller always reads back idle,
+                  // which hid every controller reset from this event.
+                  static_cast<uint8_t>(idle ? 1U : 0U),
+                  static_cast<uint8_t>(after >> 16 & 0xFF),
+                  static_cast<uint8_t>(after >> 24 & 0xFF)});
+    return idle;
+}
+
 bool nv::i3c::Driver::reset_daa(bool ping)
 {
-    constexpr uint8_t     BoradcastAddress = 0x7EU;
-    constexpr uint8_t     CccRstdaa        = 0x06U;
+    constexpr uint8_t BoradcastAddress = 0x7EU;
+    constexpr uint8_t CccRstdaa        = 0x06U;
+    // Only the bridge's execute_message() consults last_status() to tell a retryable
+    // Busy/Timeout from a hard failure. Tracking it is write-only elsewhere.
+    _last_status = Status::Success;
     i3c_master_transfer_t xfer{};
     xfer.slaveAddress   = BoradcastAddress;
     xfer.subaddress     = CccRstdaa;
@@ -252,8 +646,12 @@ bool nv::i3c::Driver::reset_daa(bool ping)
     xfer.busType        = kI3C_TypeI3CSdr;
     xfer.flags          = kI3C_TransferDefaultFlag;
     xfer.ibiResponse    = kI3C_IbiRespNack;
-    auto result         = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        log_ccc_sent(static_cast<uint8_t>(_port), CccRstdaa, BoradcastAddress);
+    }
+    auto result = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
     if (result != kStatus_Success) {
+        _last_status = to_driver_status(static_cast<uint32_t>(result));
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to reset daa %d\n", result);
         if (!ping) {
@@ -277,6 +675,8 @@ bool nv::i3c::Driver::enec()
     I3cBuffer         buffer{
         Enint,
     };
+    _last_status = Status::Success;
+
     i3c_master_transfer_t xfer{};
     xfer.slaveAddress   = BoradcastAddress;
     xfer.subaddress     = CccRstdaa;
@@ -287,7 +687,10 @@ bool nv::i3c::Driver::enec()
     xfer.busType        = kI3C_TypeI3CSdr;
     xfer.flags          = kI3C_TransferDefaultFlag;
     xfer.ibiResponse    = kI3C_IbiRespNack;
-    auto result         = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        log_ccc_sent(static_cast<uint8_t>(_port), CccRstdaa, BoradcastAddress);
+    }
+    auto result = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
         const logger::EventData data = {
@@ -300,7 +703,8 @@ bool nv::i3c::Driver::enec()
         };
         logger::info(logger::Event::I3CCccErrorV2, data);
 
-        auto status = to_driver_status(static_cast<uint32_t>(result));
+        auto status  = to_driver_status(static_cast<uint32_t>(result));
+        _last_status = status;
         if (status != Status::Success) {
             const auto& task = *static_cast<nv::i3c::Task*>(_task);
             task.record_error(static_cast<uint8_t>(status));
@@ -310,14 +714,275 @@ bool nv::i3c::Driver::enec()
     return true;
 }
 
+bool nv::i3c::Driver::enec(uint8_t address)
+{
+    constexpr uint8_t BoradcastAddress = 0x7EU;
+    constexpr uint8_t CccEnecDirect    = 0x80U;
+    constexpr uint8_t Enint            = 0x01U;
+    // Segment identifiers for I3CCccFailDetailV2: ENEC is sent as a broadcast
+    // 0x7E+0x80 header held open with NoStop, then the directed ENINT byte.
+    constexpr uint8_t PartBroadcastHeader = 1U;
+    constexpr uint8_t PartDirectedByte    = 2U;
+    _last_status                          = Status::Success;
+
+    // Set when the ENINT byte was delivered and only the idle bus the SDK waits
+    // for after STOP is missing; see send_frame().
+    bool enint_answered_with_ibi_request = false;
+
+    // Sends both segments of the directed ENEC. On failure it snapshots the
+    // controller before the ForceExit/STOP that closes the frame, because that
+    // recovery clears the state explaining the stall.
+    auto send_frame = [this, address, &enint_answered_with_ibi_request]() -> status_t {
+        i3c_master_transfer_t xfer{};
+        xfer.slaveAddress   = BoradcastAddress;
+        xfer.subaddress     = CccEnecDirect;
+        xfer.subaddressSize = 1U;
+        xfer.direction      = kI3C_Write;
+        xfer.busType        = kI3C_TypeI3CSdr;
+        xfer.flags          = kI3C_TransferNoStopFlag;
+        xfer.ibiResponse    = kI3C_IbiRespAckMandatory;
+        log_ccc_sent(static_cast<uint8_t>(_port), CccEnecDirect, address);
+        auto status = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (status != kStatus_Success) {
+            log_ccc_fail_detail(
+                static_cast<uint8_t>(_port), PartBroadcastHeader, _i3c_m_handle.base);
+            I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
+            return status;
+        }
+
+        I3cBuffer buffer{
+            Enint,
+        };
+        memset(&xfer, 0, sizeof(xfer));
+        xfer.slaveAddress = address;
+        xfer.data         = buffer.data();
+        xfer.dataSize     = 1;
+        xfer.direction    = kI3C_Write;
+        xfer.busType      = kI3C_TypeI3CSdr;
+        xfer.flags        = kI3C_TransferDefaultFlag;
+        xfer.ibiResponse  = kI3C_IbiRespAckMandatory;
+        status            = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (status != kStatus_Success) {
+            auto* base = _i3c_m_handle.base;
+            // The DISEC and RSTDAA that precede this ENEC in bring-up leave the
+            // target unable to raise an IBI until this ENINT byte lands. A timeout
+            // that finds it holding SDA low with no bus error therefore means the
+            // byte and the STOP went out and the target is already requesting the
+            // IBI it was just enabled for; the SDK only gave up waiting for an idle
+            // bus that the request will not allow.
+            if (status == kStatus_I3C_Timeout
+                && I3C_MasterGetState(base) == kI3C_MasterStateSlvReq && base->MERRWARN == 0U) {
+                const uint32_t mstatus = base->MSTATUS;
+                logger::info(logger::Event::I3CEnecIbiRequestV2,
+                             {static_cast<uint8_t>(_port),
+                              static_cast<uint8_t>(mstatus >> 0 & 0xFF),
+                              static_cast<uint8_t>(mstatus >> 8 & 0xFF),
+                              static_cast<uint8_t>(mstatus >> 16 & 0xFF),
+                              static_cast<uint8_t>(mstatus >> 24 & 0xFF)});
+                enint_answered_with_ibi_request = true;
+                return status;
+            }
+            log_ccc_fail_detail(static_cast<uint8_t>(_port), PartDirectedByte, base);
+            I3C_MasterStop(base);
+        }
+        return status;
+    };
+
+    // MCTRL.IBIRESP is the only IBI policy the blocking transfer API honours;
+    // xfer.ibiResponse above is applied by I3C_MasterTransferNonBlocking only.
+    // Under AckMandatory the controller ACKs a mid-frame IBI and then waits for
+    // software to take the mandatory data byte, which a blocking transfer never
+    // does, so the frame parks until the completion poll expires. Refuse IBIs
+    // for the duration of the frame and restore the steady-state policy on
+    // exit. A target that loses the frame this way is not stranded: the caller
+    // drains the collision through force_bus_idle() and re-sends the whole CCC.
+    set_ibi_nack();
+    const status_t result = send_frame();
+    set_ibi_ack_mandatory();
+    // Re-sending ENEC after the target answered ENINT with an IBI request would
+    // meet that same request every time. Accept the frame instead: the request is
+    // collected under the AckMandatory policy just restored, either by the IBI
+    // interrupt or by winning arbitration against the next transfer.
+    if (result == kStatus_Success || enint_answered_with_ibi_request) {
+        return true;
+    }
+
+    const logger::EventData data = {
+        static_cast<uint8_t>(_port),
+        CccEnecDirect,
+        static_cast<uint8_t>(result >> 0 & 0xFF),
+        static_cast<uint8_t>(result >> 8 & 0xFF),
+        static_cast<uint8_t>(result >> 16 & 0xFF),
+        static_cast<uint8_t>(result >> 24 & 0xFF),
+    };
+    logger::info(logger::Event::I3CCccErrorV2, data);
+    auto status  = to_driver_status(static_cast<uint32_t>(result));
+    _last_status = status;
+    if (status != Status::Success) {
+        const auto& task = *static_cast<nv::i3c::Task*>(_task);
+        task.record_error(static_cast<uint8_t>(status));
+    }
+    return false;
+}
+
+bool nv::i3c::Driver::register_ibi(uint8_t address)
+{
+    i3c_register_ibi_addr_t ibi_record{};
+    ibi_record.address[0]    = address;
+    ibi_record.ibiHasPayload = true;
+    I3C_MasterRegisterIBI(_i3c_m_handle.base, &ibi_record);
+    _ibi_address = address;
+    return true;
+}
+
+namespace {
+
+// SDK 25.09.00 ships I3C_MasterSetIBIResponse() but 25.09.02 dropped it, and this
+// driver is built against both, so arm the policy directly. Unlike
+// I3C_MasterEmitIBIResponse() this leaves REQUEST at None: it only changes how the
+// controller will answer a future IBI and must not emit a decision here. Clearing
+// REQUEST_MASK is required because the field is write-triggered, so a plain
+// read-modify-write of MCTRL would re-issue whatever request it last carried.
+void set_ibi_response(I3C_Type* base, i3c_ibi_response_t response)
+{
+    uint32_t ctrl  = base->MCTRL;
+    ctrl          &= ~(I3C_MCTRL_IBIRESP_MASK | I3C_MCTRL_REQUEST_MASK);
+    ctrl          |= I3C_MCTRL_IBIRESP(static_cast<uint32_t>(response))
+          | I3C_MCTRL_REQUEST(kI3C_RequestNone);
+    base->MCTRL = ctrl;
+}
+
+}  // namespace
+
+void nv::i3c::Driver::set_ibi_nack()
+{
+    set_ibi_response(_i3c_m_handle.base, kI3C_IbiRespNack);
+}
+
+void nv::i3c::Driver::set_ibi_ack_mandatory()
+{
+    set_ibi_response(_i3c_m_handle.base, kI3C_IbiRespAckMandatory);
+}
+
+bool nv::i3c::Driver::set_mrl_mwl(uint8_t address)
+{
+    constexpr uint8_t CccSetMrlDirect = 0x8AU;
+    constexpr uint8_t CccSetMwlDirect = 0x89U;
+    constexpr uint8_t MrlMwlMsb       = 0x00U;
+    constexpr uint8_t MrlMwlLsb       = 0x45U;
+    constexpr uint8_t IbiPayloadSize  = 0x02U;
+    _last_status                      = Status::Success;
+
+    auto send_direct_ccc = [this, address](uint8_t ccc, std::span<uint8_t> data) {
+        constexpr uint8_t BoradcastAddress = 0x7EU;
+
+        i3c_master_transfer_t xfer{};
+        xfer.slaveAddress   = BoradcastAddress;
+        xfer.subaddress     = ccc;
+        xfer.subaddressSize = 1U;
+        xfer.direction      = kI3C_Write;
+        xfer.busType        = kI3C_TypeI3CSdr;
+        xfer.flags          = kI3C_TransferNoStopFlag;
+        xfer.ibiResponse    = kI3C_IbiRespAckMandatory;
+        log_ccc_sent(static_cast<uint8_t>(_port), ccc, address);
+        auto result = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (result != kStatus_Success) {
+            I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
+            const logger::EventData log_data = {
+                static_cast<uint8_t>(_port),
+                ccc,
+                static_cast<uint8_t>(result >> 0 & 0xFF),
+                static_cast<uint8_t>(result >> 8 & 0xFF),
+                static_cast<uint8_t>(result >> 16 & 0xFF),
+                static_cast<uint8_t>(result >> 24 & 0xFF),
+            };
+            logger::info(logger::Event::I3CCccErrorV2, log_data);
+            auto status  = to_driver_status(static_cast<uint32_t>(result));
+            _last_status = status;
+            if (status != Status::Success) {
+                const auto& task = *static_cast<nv::i3c::Task*>(_task);
+                task.record_error(static_cast<uint8_t>(status));
+            }
+            return false;
+        }
+
+        memset(&xfer, 0, sizeof(xfer));
+        xfer.slaveAddress = address;
+        xfer.data         = data.data();
+        xfer.dataSize     = data.size();
+        xfer.direction    = kI3C_Write;
+        xfer.busType      = kI3C_TypeI3CSdr;
+        xfer.flags        = kI3C_TransferDefaultFlag;
+        xfer.ibiResponse  = kI3C_IbiRespAckMandatory;
+        result            = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
+        if (result != kStatus_Success) {
+            I3C_MasterStop(_i3c_m_handle.base);
+            const logger::EventData log_data = {
+                static_cast<uint8_t>(_port),
+                ccc,
+                static_cast<uint8_t>(result >> 0 & 0xFF),
+                static_cast<uint8_t>(result >> 8 & 0xFF),
+                static_cast<uint8_t>(result >> 16 & 0xFF),
+                static_cast<uint8_t>(result >> 24 & 0xFF),
+            };
+            logger::info(logger::Event::I3CCccErrorV2, log_data);
+            auto status  = to_driver_status(static_cast<uint32_t>(result));
+            _last_status = status;
+            if (status != Status::Success) {
+                const auto& task = *static_cast<nv::i3c::Task*>(_task);
+                task.record_error(static_cast<uint8_t>(status));
+            }
+            return false;
+        }
+        return true;
+    };
+
+    I3cBuffer set_mrl_data{MrlMwlMsb, MrlMwlLsb, IbiPayloadSize};
+    if (!send_direct_ccc(CccSetMrlDirect, std::span<uint8_t>(set_mrl_data.data(), 3))) {
+        return false;
+    }
+
+    I3cBuffer set_mwl_data{MrlMwlMsb, MrlMwlLsb};
+    return send_direct_ccc(CccSetMwlDirect, std::span<uint8_t>(set_mwl_data.data(), 2));
+}
+
 bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
 {
-    constexpr uint8_t     BoradcastAddress = 0x7EU;
-    constexpr uint8_t     CccGetStatus     = 0x90U;
-    constexpr uint16_t    WordMask         = 0xFFFF;
+    constexpr uint8_t  BroadcastAddress = 0x7EU;
+    constexpr uint8_t  CccGetStatus     = 0x90U;
+    constexpr uint16_t WordMask         = 0xFFFF;
+    _last_status                        = Status::Success;
+
+    const auto report_failure = [this](uint32_t result) {
+        constexpr uint8_t       CccGetStatus = 0x90U;
+        const logger::EventData data         = {
+            static_cast<uint8_t>(_port),
+            CccGetStatus,
+            static_cast<uint8_t>(result >> 0 & 0xFF),
+            static_cast<uint8_t>(result >> 8 & 0xFF),
+            static_cast<uint8_t>(result >> 16 & 0xFF),
+            static_cast<uint8_t>(result >> 24 & 0xFF),
+        };
+        logger::info(logger::Event::I3CCccErrorV2, data);
+        const auto driver_status = to_driver_status(result);
+        _last_status             = driver_status;
+        if (driver_status != Status::Success) {
+            const auto& task = *static_cast<nv::i3c::Task*>(_task);
+            task.record_error(static_cast<uint8_t>(driver_status));
+        }
+        return false;
+    };
+
+    // GETSTATUS is a Direct CCC and must be framed as two chained bus segments:
+    //   phase 1: START + 0x7E (broadcast) + CCC 0x90, held open (No Stop)
+    //   phase 2: repeated START + target address + directed read + STOP
+    // The blocking API sends the CCC byte on the 0x7E broadcast address, which
+    // the target recognizes as GETSTATUS. A single combined EDMA transaction
+    // (StartWithBroadcastAddr) instead emits the CCC as a directed write to the
+    // target address, which this CPU NACKs, so keep the blocking two-phase form.
     I3cBuffer             buffer{};
     i3c_master_transfer_t xfer{};
-    xfer.slaveAddress   = BoradcastAddress;
+    xfer.slaveAddress   = BroadcastAddress;
     xfer.subaddress     = CccGetStatus;
     xfer.subaddressSize = 1U;
     xfer.direction      = kI3C_Write;
@@ -327,26 +992,13 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
     auto result         = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
     if (result != kStatus_Success) {
         I3C_MasterEmitRequest(_i3c_m_handle.base, kI3C_RequestForceExit);
-        const logger::EventData data = {
-            static_cast<uint8_t>(_port),
-            CccGetStatus,
-            static_cast<uint8_t>(result >> 0 & 0xFF),
-            static_cast<uint8_t>(result >> 8 & 0xFF),
-            static_cast<uint8_t>(result >> 16 & 0xFF),
-            static_cast<uint8_t>(result >> 24 & 0xFF),
-        };
-        logger::info(logger::Event::I3CCccErrorV2, data);
-        auto driver_status = to_driver_status(static_cast<uint32_t>(result));
-        if (driver_status != Status::Success) {
-            const auto& task = *static_cast<nv::i3c::Task*>(_task);
-            task.record_error(static_cast<uint8_t>(driver_status));
-        }
-        return false;
+        return report_failure(static_cast<uint32_t>(result));
     }
+
     memset(&xfer, 0, sizeof(xfer));
     xfer.slaveAddress = address;
     xfer.data         = buffer.data();
-    xfer.dataSize     = 2;
+    xfer.dataSize     = 2U;
     xfer.direction    = kI3C_Read;
     xfer.busType      = kI3C_TypeI3CSdr;
     xfer.flags        = kI3C_TransferDefaultFlag;
@@ -354,34 +1006,28 @@ bool nv::i3c::Driver::get_status(uint8_t address, uint16_t& status)
     result            = I3C_MasterTransferBlocking(_i3c_m_handle.base, &xfer);
     if (result != kStatus_Success) {
         I3C_MasterStop(_i3c_m_handle.base);
-        const logger::EventData data = {
-            static_cast<uint8_t>(_port),
-            CccGetStatus,
-            static_cast<uint8_t>(result >> 0 & 0xFF),
-            static_cast<uint8_t>(result >> 8 & 0xFF),
-            static_cast<uint8_t>(result >> 16 & 0xFF),
-            static_cast<uint8_t>(result >> 24 & 0xFF),
-        };
-        logger::info(logger::Event::I3CCccErrorV2, data);
-        auto driver_status = to_driver_status(static_cast<uint32_t>(result));
-        if (driver_status != Status::Success) {
-            const auto& task = *static_cast<nv::i3c::Task*>(_task);
-            task.record_error(static_cast<uint8_t>(driver_status));
-        }
-        return false;
+        return report_failure(static_cast<uint32_t>(result));
     }
+
     status = (buffer[0] << 8 | buffer[1]) & WordMask;
     return true;
 }
 
 bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
 {
+    constexpr uint8_t CccEntdaa        = 0x07U;
+    constexpr uint8_t BroadcastAddress = 0x7EU;
+    _last_status                       = Status::Success;
     /// reset list of devices
     I3C_MasterClearDeviceCount(_i3c_m_handle.base);
     /// start DAA porcess
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        log_ccc_sent(static_cast<uint8_t>(_port), CccEntdaa, BroadcastAddress);
+    }
     auto result = I3C_MasterProcessDAA(
         _i3c_m_handle.base, address_list.data(), address_list.size());
     if (result != kStatus_Success) {
+        _last_status = to_driver_status(static_cast<uint32_t>(result));
         I3C_MasterStop(_i3c_m_handle.base);
         nv::info("fail to process daa %d\n", result);
         logger::info(logger::Event::I3CFailedToProcessDaaV2,
@@ -407,6 +1053,7 @@ bool nv::i3c::Driver::process_daa(std::span<uint8_t> address_list)
             {static_cast<uint8_t>(_port), static_cast<uint8_t>(list[index].dynamicAddr)});
     }
     if (count != address_list.size() && _is_gpu == false) {
+        _last_status = Status::Error;
         logger::info(logger::Event::I3CDaaMismatchV2,
                      {static_cast<uint8_t>(_port), count, address_list.size()});
         return false;
@@ -419,13 +1066,27 @@ bool nv::i3c::Driver::write(uint8_t address, std::span<uint8_t> buffer)
 {
     uint8_t               length = 0;
     i3c_master_transfer_t xfer{};
-    xfer.slaveAddress  = address;
-    xfer.data          = buffer.data();
-    xfer.dataSize      = buffer.size();
-    xfer.direction     = kI3C_Write;
-    xfer.busType       = kI3C_TypeI3CSdr;
-    xfer.flags         = kI3C_TransferDefaultFlag;
-    xfer.ibiResponse   = kI3C_IbiRespAckMandatory;
+    xfer.slaveAddress = address;
+    xfer.data         = buffer.data();
+    xfer.dataSize     = buffer.size();
+    xfer.direction    = kI3C_Write;
+    xfer.busType      = kI3C_TypeI3CSdr;
+    xfer.flags        = kI3C_TransferDefaultFlag;
+    // I3C_MasterTransferEDMA writes this field into MCTRL.IBIRESP, so it sets the
+    // controller-wide IBI policy rather than just describing this frame.
+    if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+        // Preserve whatever policy is armed. The first post-recovery DiscoveryNotify
+        // is transmitted while IBIs are NACKed; Task::transmit() switches to
+        // AckMandatory only after this write succeeds.
+        xfer.ibiResponse = static_cast<i3c_ibi_response_t>(
+            (_i3c_m_handle.base->MCTRL & I3C_MCTRL_IBIRESP_MASK) >> I3C_MCTRL_IBIRESP_SHIFT);
+    }
+    else {
+        // Nothing arms the policy on non-bridge products (register_ibi() and the
+        // enec(address) NACK window are both bridge-only), so preserving it here
+        // would leave the post-I3C_MasterInit() default of Ack-without-mandatory-byte.
+        xfer.ibiResponse = kI3C_IbiRespAckMandatory;
+    }
     auto        status = transfer(&xfer, length);
     const auto& task   = *static_cast<nv::i3c::Task*>(_task);
     if (status != Status::Success) {
@@ -497,6 +1158,32 @@ nv::i3c::Driver::Status nv::i3c::Driver::transfer(void* args, uint8_t& length)
         taskEXIT_CRITICAL();
         if (result != kStatus_Success) {
             status = Status::Busy;
+            if constexpr (nv::ipc::MctpBridgeConfig<>::UsI3cBridgeMode) {
+                // Busy-at-entry: I3C_MasterTransferEDMA refused to start because the
+                // controller was not Idle. This is either an IBI the CPU is pushing
+                // right now, a stuck EDMA handle left non-idle by a prior aborted
+                // transfer, or an intermittent CPU Slave-Start that held the
+                // controller out of Idle at this instant.
+                const auto state = I3C_MasterGetState(_i3c_m_handle.base);
+                // An IBI in flight parks the controller in IbiAck/IbiRcv for
+                // microseconds and completes on its own. Aborting the handle there
+                // flushes the RX FIFO, drops handle->state back to Idle, and leaves
+                // the frame with no STOP -- I3C_MasterStop() is guarded on NormAct
+                // and silently no-ops from IbiRcv -- so force_bus_idle() is left with
+                // nothing to recover from and falls through to a controller reset.
+                // Leave the IBI alone; the retry below picks it up, and the
+                // try_recover() at the end of this function is still the backstop.
+                if (state != kI3C_MasterStateIbiAck && state != kI3C_MasterStateIbiRcv) {
+                    // force_bus_idle() inspects the sticky SLVSTART flag and services
+                    // any pending CPU Slave-Start (AutoIbi + ACK + drain), which
+                    // sampling the live STATE here would miss. Only the CPU link
+                    // raises Slave-Starts this way; elsewhere the retry below is left
+                    // to try_recover(), whose MaxConsecutiveRecoveries cap
+                    // force_bus_idle() does not honour.
+                    I3C_MasterTransferAbortEDMA(_i3c_m_handle.base, &_i3c_m_handle);
+                    (void)force_bus_idle();
+                }
+            }
             task.delay(10ms);
             continue;
         }
@@ -578,6 +1265,23 @@ void nv::i3c::Driver::on_ibi(void* args)
         task.on_ibi(handle.ibiAddress,
                     std::span<uint8_t>(handle.ibiBuff, handle.ibiPayloadSize));
     }
+}
+
+void nv::i3c::Driver::on_master_request_ibi(void* args)
+{
+    constexpr uint8_t PendingReadId = 0xAEU;
+
+    auto&   task    = *static_cast<nv::i3c::Task*>(_task);
+    auto&   handle  = *static_cast<i3c_master_edma_handle_t*>(args);
+    uint8_t address = handle.ibiAddress;
+
+    if constexpr (nv::ipc::EnableSmartDMA) {
+        const auto instance = I3C_GetInstance(handle.base);
+        address             = sys::smartdma::Driver::get_ibi_data(instance)->address;
+    }
+
+    volatile uint8_t pending_read = PendingReadId;
+    task.on_ibi(address, std::span<volatile uint8_t>(&pending_read, 1));
 }
 
 void nv::i3c::Driver::set_event(Event event)

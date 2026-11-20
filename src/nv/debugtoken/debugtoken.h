@@ -23,7 +23,6 @@
 #include <cstdint>
 
 #include "nv/flash/common.h"
-#include "nv/vrot/interface/types.h"
 
 namespace nv::debugtoken {
 
@@ -518,14 +517,6 @@ TokenErrorCode check_debug_token_type_enabled(Type token_type);
 TokenErrorCode check_debug_token_subtype_enabled(Type token_type, uint32_t token_subtype);
 
 /**
- *  Check if FlashDebugFw debug token permits debug-signed firmware for an AP type.
- *
- *  @param[in] ap_type AP type that is being authenticated
- *  @return TokenErrorCode for standardized error reporting
- */
-TokenErrorCode check_flash_debug_fw_token_for_ap(nv::vrot::ApType ap_type);
-
-/**
  *  Fast path: true if token type and subtype bits are set in NPDS cache (no full auth).
  *
  *  @param[in] token_type       Debug token type (FlashDebugFw / McuDebug / CpldDebug)
@@ -556,14 +547,5 @@ TokenErrorCode auth_token_tlv(
     const std::span<const uint8_t>& token_payload,
     const std::array<uint8_t, static_cast<uint8_t>(debugtoken::HashSize::Mcu384Pubkey)>&
         pubkey);
-
-/**
- * Synchronize debug-token feature state after AP boot/authentication.
- *
- * Covers:
- *   - Token already installed before this MCU boot -> AP feature is restored.
- *   - Token erased during MCU recovery -> AP feature stays locked.
- */
-void sync_debug_token_features_on_boot();
 
 }  // namespace nv::debugtoken

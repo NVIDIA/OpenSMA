@@ -18,11 +18,13 @@
 #include "sys/i2c/i2c.h"
 
 #include "fsl_clock.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 
 #include "nv/i2c/mutex.h"
 #include "nv/i2c/task.h"
+#include "nv/i2c/vr_i2c_task.h"
 #include "nv/i2c/smb_direct.h"
 #include "nv/i2c/helper.h"
 #include "nv/ipc/mutex.h"
@@ -41,6 +43,18 @@ using namespace nv;
 using namespace sys::i2c;
 
 namespace sys::i2c {
+
+namespace {
+constexpr bool has_emulation_slave_function()
+{
+    for (const auto& entry : nv::ipc::SlaveFunctionTable) {
+        if (entry.enabled && entry.function == nv::i2c::SlaveFunction::Emulation) {
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
 
 void download_log_in_isr(const uint8_t CurrentSession, I2cBuffer& log_buffer_data)
 {
@@ -190,6 +204,9 @@ void Driver::target_callback_lookup(LPI2C_Type*             base,
         case SlaveFunction::I2cForward:
             target_callback_i2c_forward(base, transfer, user_data);
             break;
+        case SlaveFunction::Emulation:
+            target_callback_emulation(base, transfer, user_data);
+            break;
         case SlaveFunction::Mctp:
         default                 : target_callback(base, transfer, user_data); break;
     }
@@ -296,13 +313,76 @@ void Driver::target_callback_i2c_forward(LPI2C_Type*             base,
         default: break;
     }
 }
+
+/// Dispatch a physical LPI2C target transaction to the VrI2cTask associated with this port.
+/// Read sizing and register semantics are owned by the selected emulated device.
+void Driver::target_callback_emulation(LPI2C_Type*             base,
+                                       lpi2c_slave_transfer_t* transfer,
+                                       void*                   user_data)
+{
+    auto* context = static_cast<TargetContex*>(user_data);
+    NV_ASSERT(context->emul_task != nullptr);
+    auto&                    emul_task = *static_cast<nv::i2c::VrI2cTask*>(context->emul_task);
+    const std::span<uint8_t> buffer    = context->buffer;
+
+    switch (transfer->event) {
+        case kLPI2C_SlaveAddressMatchEvent: {
+            // Nothing is staged until the transmit event, so discard any stale TX byte.
+            base->SCR          |= LPI2C_SCR_RTF_MASK;
+            transfer->data      = nullptr;
+            transfer->dataSize  = 0U;
+            context->transmit   = false;
+
+            if ((transfer->receivedAddress & 0x01U) != 0U) {
+                // The SDK reports a repeated start as another address match. Complete the
+                // receive phase before asking the emulator for the first read byte.
+                if (context->rx_seen && transfer->transferredCount > 0U) {
+                    emul_task.i2c_write(context->target_addr,
+                                        buffer.subspan(2, transfer->transferredCount));
+                    context->rx_seen = false;
+                }
+            }
+            else {
+                context->rx_seen = false;
+            }
+            context->new_transaction = true;
+            break;
+        }
+        case kLPI2C_SlaveTransmitEvent: {
+            const bool NewTransaction = context->new_transaction;
+            context->transmit         = true;
+            context->new_transaction  = false;
+            transfer->data            = context->buffer.data();
+            transfer->dataSize        = emul_task.i2c_read(
+                context->target_addr, buffer.first<I2cSlaveBufferSize>(), NewTransaction);
+            break;
+        }
+        case kLPI2C_SlaveReceiveEvent:
+            context->transmit  = false;
+            context->rx_seen   = true;
+            transfer->data     = context->buffer.data() + 2;
+            transfer->dataSize = I2cSlaveBufferSize;
+            break;
+        case kLPI2C_SlaveCompletionEvent:
+            if (!context->transmit && context->rx_seen
+                && transfer->completionStatus == kStatus_Success
+                && transfer->transferredCount > 0U) {
+                emul_task.i2c_write(context->target_addr,
+                                    buffer.subspan(2, transfer->transferredCount));
+            }
+            context->rx_seen = false;
+            break;
+        default: break;
+    }
+}
+
 }  // namespace sys::i2c
 
 LPI2C_Type* Driver::get_base(nv::i2c::Port port)
 {
     constexpr uint8_t Size = nv::common::to_underlying(nv::i2c::Port::End);
     // NOLINTNEXTLINE: SDK definition
-    std::array<LPI2C_Type*, Size> bases LPI2C_BASE_PTRS;
+    static const std::array<LPI2C_Type*, Size> bases LPI2C_BASE_PTRS;
     return bases.at(nv::common::to_underlying(port));
 }
 
@@ -320,11 +400,26 @@ void Driver::irq_handler(uint32_t instance, void* handle)
     NV_ASSERT(handle != nullptr);
     auto base         = get_base(static_cast<nv::i2c::Port>(instance));
     auto lpi2c_handle = static_cast<Lpi2cHandle*>(handle);
-    if ((base->MCR & LPI2C_MCR_MEN_MASK) != 0U) {
-        LPI2C_MasterTransferHandleIRQ(instance, &lpi2c_handle->controller);
+
+    if constexpr (has_emulation_slave_function()) {
+        // Re-ordering to and SSR/MSR gate required to stabilize concurrent master/target access
+        // on dual-I2C FLEXCOMM (RTC as slave, LSTP as master)
+        if ((base->SCR & LPI2C_SCR_SEN_MASK) != 0U && (base->SSR & base->SIER) != 0U) {
+            LPI2C_SlaveTransferHandleIRQ(instance, &lpi2c_handle->target);
+        }
+        if ((base->MCR & LPI2C_MCR_MEN_MASK) != 0U && (base->MSR & base->MIER) != 0U) {
+            LPI2C_MasterTransferHandleIRQ(instance, &lpi2c_handle->controller);
+        }
     }
-    if ((base->SCR & LPI2C_SCR_SEN_MASK) != 0U) {
-        LPI2C_SlaveTransferHandleIRQ(instance, &lpi2c_handle->target);
+    else {
+        // For projects that don't use dual-I2C FLEXCOMM, fall back to old logic to reduce
+        // regression risk
+        if ((base->MCR & LPI2C_MCR_MEN_MASK) != 0U) {
+            LPI2C_MasterTransferHandleIRQ(instance, &lpi2c_handle->controller);
+        }
+        if ((base->SCR & LPI2C_SCR_SEN_MASK) != 0U) {
+            LPI2C_SlaveTransferHandleIRQ(instance, &lpi2c_handle->target);
+        }
     }
 }
 
@@ -465,18 +560,19 @@ void Driver::target_callback(LPI2C_Type*             base,
     }
 }
 
-void Driver::bind(nv::i2c::Port port, void* task)
+void Driver::bind(nv::i2c::Port port, void* task, void* emul_task)
 {
     NV_ASSERT(task != nullptr);
     auto i2c_task = static_cast<nv::i2c::Task*>(task);
     nv::info("task %s binds to I2C port %d\n", i2c_task->name().data(), port);
     logger::info(logger::Event::I2CBind,
                  {static_cast<uint8_t>(i2c_task->id()), static_cast<uint8_t>(port)});
-    _port                    = port;
-    _base                    = get_base(port);
-    _controller_context.task = task;
-    _target_context.task     = task;
-    _target_context.owner    = this;
+    _port                     = port;
+    _base                     = get_base(port);
+    _controller_context.task  = task;
+    _target_context.task      = task;
+    _target_context.emul_task = emul_task;
+    _target_context.owner     = this;
 
     _peripheral_clk_hz = CLOCK_GetLPFlexCommClkFreq(LPI2C_GetInstance(_base));
     if (_peripheral_clk_hz == 0) {
@@ -518,6 +614,12 @@ void Driver::start(bool enable_target)
 
 void Driver::peripheral_recovery(bool enable_target)
 {
+    // This routine only recovers the I2C slave/target. Controller-only ports
+    // have no slave, so do not touch any slave registers/APIs, take the port
+    // mutex, or emit recovery logs.
+    if (!enable_target) {
+        return;
+    }
     auto& mutex = nv::ipc::Mutex::make(nv::i2c::port_to_mutex_id(_port));
     if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
         return;
@@ -601,6 +703,9 @@ bool Driver::get_status(uint8_t address)
     constexpr uint8_t MctpCtrlRqByte = 0x80;
     constexpr uint8_t MctpCmdGetEpId = 0x02;
     constexpr uint8_t PecPlaceholder = 0x00;
+    using namespace std::chrono;
+    constexpr uint8_t Retry    = 5;
+    auto              i2c_task = static_cast<nv::i2c::Task*>(_controller_context.task);
 
     std::array<uint8_t, PacketSize> packet{SmbusMctpCmd,
                                            MctpByteCount,
@@ -633,9 +738,22 @@ bool Driver::get_status(uint8_t address)
     if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
         return false;
     }
-    const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
+    for (uint8_t i = 0; i < Retry; i++) {
+        const status_t Status = LPI2C_MasterTransferBlocking(_base, &transfer);
+        if (Status == kStatus_Success) {
+            mutex.unlock();
+            return true;
+        }
+        if (i + 1U < Retry) {
+            mutex.unlock();
+            i2c_task->delay(10ms);
+            if (mutex.lock() != nv::ipc::Mutex::Status::Ok) {
+                return false;
+            }
+        }
+    }
     mutex.unlock();
-    return Status == kStatus_Success;
+    return false;
 }
 
 bool Driver::ping(uint8_t address)

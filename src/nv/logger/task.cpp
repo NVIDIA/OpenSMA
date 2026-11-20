@@ -42,7 +42,7 @@ Task::Task() noexcept
 , download_queue(nv::ipc::Queue::make(nv::ipc::QueueId::LogDownload))
 , download_resp_queue(nv::ipc::Queue::make(nv::ipc::QueueId::LogDownloadResp))
 , isr_queue(nv::ipc::Queue::make(nv::ipc::QueueId::LogISR))
-, _uart_driver(static_cast<nv::uart::Port>(nv::ipc::UartInstance))
+, _uart_driver(nv::uart::console_port())
 {
     // Assert the queue item_size is correct in config.h
     static_assert(sizeof(Item)
@@ -70,7 +70,8 @@ Task::Task() noexcept
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    constexpr auto           StackSize = std::max(736, int(configMINIMAL_STACK_SIZE));
+    // leave ~280 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(672, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
     // NOLINTNEXTLINE(*-reinterpret-cast)
     const std::span<uint8_t> Priv(reinterpret_cast<uint8_t*>(&task), sizeof(Task));
@@ -110,11 +111,8 @@ Task::request(const Item& item, Item& resp_item, bool wait, nv::ipc::Queue::Usec
              & nv::common::to_underlying(OutputDirection::Flash))
             != nv::common::to_underlying(OutputDirection::None)) {
             // Only record event is dropped when it is required to write to flash
-            auto event      = ipc::Event::make(ipc::EventId::LogEvent);
-            auto set_status = event.set(EventBits::DropLogEvent);
-            if (set_status != ipc::Event::Status::Ok) {
-                nv::info("Set event 0x%x failed\n", EventBits::DropLogEvent);
-            }
+            auto event = ipc::Event::make(ipc::EventId::LogEvent);
+            (void)event.set(EventBits::DropLogEvent);
         }
         return nv::logger::Status::Timeout;
     }

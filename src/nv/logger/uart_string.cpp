@@ -60,7 +60,7 @@ void process_request(uint8_t* ascii_char, uint32_t size)
         dump_buffer[CoreIdOffset] = (current_core == nv::ipc::CoreId::Core1) ? Core1Symbol
                                                                              : Core0Symbol;
         std::memcpy(dump_buffer.data() + 1, ascii_char, size);
-        auto driver = nv::uart::Driver(static_cast<nv::uart::Port>(nv::ipc::UartInstance));
+        auto driver = nv::uart::Driver(nv::uart::console_port());
         driver.tx(dump_buffer);
     }
     else if (!is_under_fault) {

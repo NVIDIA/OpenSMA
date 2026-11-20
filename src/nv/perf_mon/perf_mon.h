@@ -18,8 +18,11 @@
 #pragma once
 
 #include "nv/ctimer/ctimer.h"
+#include "nv/i2c/i2c_types.h"
+#include "nv/i3c/driver_status.h"
 #include "nv/ipc/task.h"
 #include "nv/ipc/timer.h"
+#include "nv/spi/spb_status.h"
 #include NV_IPC_CONFIG_H
 
 extern char __text_size;
@@ -29,13 +32,39 @@ extern char __max_ram_size;
 
 namespace nv::perf_mon {
 
+#ifndef NV_PERF_MON_BUFFER_SIZE
+#define NV_PERF_MON_BUFFER_SIZE (30U)
+#endif
+
 constexpr uint32_t CpuUtilizationEntryNum = 20;
+using ErrorCounter                        = uint16_t;
 using CpuUtilization                      = std::array<uint32_t, CpuUtilizationEntryNum>;
 
 constexpr uint32_t TaskExecutionTimeEntryNum = 20;
 constexpr uint32_t TaskNum                   = static_cast<uint32_t>(ipc::TaskId::KernelEnd);
 using TaskExecutionTime                      = std::array<uint32_t, TaskExecutionTimeEntryNum>;
 using AllTaskExecutionTime                   = std::array<TaskExecutionTime, TaskNum>;
+
+/**
+ * @brief  Intends to return the maximum Error Counter among:
+ *         I2c -> nv::i2c::I2cStatus::End
+ *         SPI -> nv::spi::SpbStatus::End
+ *         I3c -> uses I2cStatus or nv::i3c::DriverStatus
+ * @return The maximum Error Counter Id used
+ */
+constexpr uint8_t getMaxErrorCounterId()
+{
+    uint8_t                max_error_counter = 0;
+    std::array<uint8_t, 3> max_used_errors{static_cast<uint8_t>(nv::spi::SpbStatus::End),
+                                           static_cast<uint8_t>(nv::i2c::I2cStatus::End),
+                                           static_cast<uint8_t>(nv::i3c::DriverStatus::End)};
+    for (const auto& max_value : max_used_errors) {
+        if (max_value > max_error_counter) {
+            max_error_counter = max_value;
+        }
+    }
+    return max_error_counter;
+}
 
 enum class OobBus
 {
@@ -63,14 +92,14 @@ enum class OobBusType : uint8_t
     Spi = 2
 };
 
-constexpr uint8_t error_type_num = 16;
-using OobBusErrorCount           = std::array<uint32_t, error_type_num>;
+constexpr uint8_t ErrorTypeNum   = getMaxErrorCounterId();
+using OobBusErrorCount           = std::array<ErrorCounter, ErrorTypeNum>;
 constexpr uint32_t OobBusTypeNum = static_cast<uint32_t>(OobBus::End);
 
 #if 0
 
 constexpr uint32_t OobBusTypeNum       = static_cast<uint32_t>(OobBus::End);
-using OobBusErrorCount                 = std::array<uint32_t, error_type_num>;
+using OobBusErrorCount                 = std::array<uint32_t, ErrorTypeNum>;
 using OobBusError                      = std::array<OobBusErrorCount, OobBusTypeNum>;
 using OobBusErrorLatched               = std::array<uint8_t, OobBusTypeNum>;
 
@@ -90,7 +119,8 @@ enum class Mode
 
 class Driver
 {
-    constexpr static uint32_t BufferSize   = 30;
+    constexpr static uint32_t BufferSize = NV_PERF_MON_BUFFER_SIZE;
+    static_assert(BufferSize > 0U, "performance monitor buffer must not be empty");
     constexpr static uint32_t TaskNum      = static_cast<uint32_t>(ipc::TaskId::KernelEnd);
     constexpr static uint32_t InterfaceNum = 20;
     constexpr static uint32_t ErrorNum     = 3;
@@ -224,7 +254,7 @@ public:
     // OOB Bus error for NSM
     static void set_transaction_error(OobBus bus, uint8_t error_type);
 
-    static uint32_t get_transaction_error(OobBus bus, uint8_t error_type);
+    static ErrorCounter get_transaction_error(OobBus bus, uint8_t error_type);
 
     static uint8_t get_latached_error(OobBus bus);
 
@@ -249,7 +279,7 @@ public:
 
     static OobBusType get_oob_bus_type(OobBus bus);
 
-    constexpr static uint32_t InvalidErrorCount = 0xFFFFFFFF;
+    constexpr static ErrorCounter InvalidErrorCount = static_cast<ErrorCounter>(-1);
 
     constexpr static uint8_t InvalidErrorType = 0xFF;
 

@@ -29,7 +29,8 @@ void FlashromTask::make(Config config)
 {
     if constexpr (nv::lstp::EnableSpi) {
         // Flashrom task requires more stack for USB communication
-        constexpr auto StackSize = std::max(480, int(configMINIMAL_STACK_SIZE));
+        // leave ~256 bytes of margin above the worst-case observed stack usage
+        constexpr auto StackSize = std::max(704, int(configMINIMAL_STACK_SIZE));
 
         NV_TASK_DATA static FlashromTask               task(config);
         NV_STACK static sys::ipc::TaskStack<StackSize> stack;
@@ -84,7 +85,29 @@ FlashromTask::FlashromTask(Config config) noexcept
         auto status = flashrom_queue.recv(tx_msg_item, 5s);
 
         if (status == Queue::Status::Ok) {
-            _flashrom.handle_tx(tx_msg);
+            // EI_CONTROL: error injection command sent via queue
+            auto* hdr = FlashromMsgHdr_from(tx_msg);
+            if ((hdr->cmdCode & Flashrom::CMD_CODE_MASK) == FlashromCmdCode::EI_CONTROL) {
+                const uint8_t cmd  = hdr->len_lsb;
+                const uint8_t bus  = hdr->len_msb;
+                const uint8_t type = FlashromMsgData_from(tx_msg)[0];
+                if (cmd == 0x00 || type == ErrorInjectionType::CLEAR_ERROR_INJECTION) {
+                    _flashrom.clear_error_injection();
+                }
+                else {
+                    _flashrom.set_error_injection(
+                        true, bus, static_cast<ErrorInjectionType>(type));
+                }
+            }
+            // SPI_QUEUE_FULL: simulate a full queue by silently dropping incoming messages
+            else if (_flashrom.is_error_injection_enabled()
+                     && _flashrom.get_error_injection_type()
+                            == ErrorInjectionType::SPI_QUEUE_FULL) {
+                // drop message
+            }
+            else {
+                _flashrom.handle_tx(tx_msg);
+            }
         }
     }
 }
@@ -96,6 +119,23 @@ bool FlashromTask::to_spi(std::span<uint8_t>& msg)
         logger::error(logger::Event::SpiFlashromQueueFail, {static_cast<uint8_t>(status)});
         return false;
     }
-
     return true;
+}
+
+void FlashromTask::set_error_injection(uint8_t command, uint8_t bus_number, uint8_t error_type)
+{
+    // Build an EI_CONTROL message and post it to the SPI queue.
+    std::array<uint8_t, nv::ipc::UsbLstpMsgSize> buffer{};
+    auto*                                        hdr = FlashromMsgHdr_from(buffer);
+    hdr->channelId                                   = 0;
+    hdr->cmdCode                                     = FlashromCmdCode::EI_CONTROL;
+    hdr->len_lsb                                     = command;
+    hdr->len_msb                                     = bus_number;
+    FlashromMsgData_from(buffer)[0]                  = error_type;
+
+    const std::span<uint8_t> msg(buffer.data(), buffer.size());
+    auto status = nv::ipc::Queue::make(nv::ipc::QueueId::LstpToSpi).send(msg);
+    if (status != nv::ipc::Queue::Status::Ok) {
+        nv::warn("FlashromTask: EI_CONTROL queue send failed (%d)\n", static_cast<int>(status));
+    }
 }

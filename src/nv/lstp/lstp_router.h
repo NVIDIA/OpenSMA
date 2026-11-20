@@ -118,19 +118,26 @@ public:
     /**
      * @brief Sends an LSTP message to the IPMI channel
      *
+     * @param channel_id The LSTP channel of the SSIF interface that produced the message.
+     *                   Supplied by the caller so a board with several interfaces labels each
+     *                   response with its true origin.
      * @param buffer The buffer with the message data
      * @param size The length of the message data
      */
-    static void send_ipmi(std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer, size_t size);
+    static void send_ipmi(uint8_t                                       channel_id,
+                          std::array<uint8_t, nv::ipc::UsbLstpMsgSize>& buffer,
+                          size_t                                        size);
 
     /**
-     * @brief Send a message to the UART channel
+     * @brief Send a message to a UART channel
      *
      * @param buffer The buffer with the message data
+     * @param channel_id The tunnelled UART this payload belongs to, so it reaches the matching
+     *                   host tty. The bridge instance supplies it.
      *
      * @return True if the message enqueued successfully, false otherwise
      */
-    static bool send_uart(std::span<uint8_t>& buffer);
+    static bool send_uart(std::span<uint8_t>& buffer, uint8_t channel_id);
 
 private:
     struct ChannelState

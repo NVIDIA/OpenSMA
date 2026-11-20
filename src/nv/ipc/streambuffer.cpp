@@ -33,7 +33,7 @@ StreamBuffer& StreamBuffer::make(IdType   id,
         obj_mem = Supervisor::inst().memory_for(id, base_addr, direct_memory_access);
     }
 
-    nv::always_assert(obj_mem != nullptr);
+    NV_ALWAYS_ASSERT(obj_mem != nullptr);
     if (obj_mem->obj_is_allocated || direct_memory_access) {
         return *obj_mem;
     }

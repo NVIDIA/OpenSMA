@@ -41,8 +41,18 @@ enum class TaskMonitorIndex : uint32_t
     Flash,
     Logger,
     Spdm,
-    Ssif,
+    Ssif0,
+    Ssif1,
+    Lstp,
+    Iox,
+    Ipc0,
+    Ipc1,
+    Spi0,
+    Diag,
+#ifdef NV_UNITTEST
+    Unittest,
+#endif
     End
 };
 
-}
+}  // namespace nv::watchdog

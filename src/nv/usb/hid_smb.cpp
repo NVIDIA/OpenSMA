@@ -166,7 +166,8 @@ void HidSmb::receive(Buffer& tx_buffer, Buffer& rx_buffer, bool& is_tx_send)
     if (hid_report.report_id == ReportId::DataReadForceSend) {
         auto& force_read_pkt = hid_12_from(rx_buffer);
 
-        const uint16_t requested_length = force_read_pkt.length;
+        const uint16_t requested_length = (static_cast<uint16_t>(force_read_pkt.length_h) << 8)
+                                        | force_read_pkt.length_l;
 
         // prevent uninitialized data in buffer
         tx_buffer            = {};

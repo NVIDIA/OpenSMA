@@ -23,6 +23,7 @@
 #if !SYS_USB_DISABLED
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 
 #include "nv/i2c/task.h"
@@ -48,7 +49,8 @@ namespace nv::usb {
 void Task::make()
 {
     NV_TASK_DATA static Task task;
-    constexpr auto           StackSize = std::max(480, int(configMINIMAL_STACK_SIZE));
+    // leave ~312 bytes of margin above the worst-case observed stack usage
+    constexpr auto StackSize = std::max(640, int(configMINIMAL_STACK_SIZE));
     NV_STACK static sys::ipc::TaskStack<StackSize> stack;
 
     // NOLINTNEXTLINE(*-reinterpret-cast)
@@ -64,21 +66,13 @@ void Task::entrypoint(void* params)
     task.main();
 }
 
-Task::Task()
-: ipc::Task(ipc::TaskId::Usb, "USB")
-, _event(ipc::Event::make(ipc::EventId::UsbTask))
-, _tx(ipc::Queue::make(ipc::QueueId::UsbTx))
-{}
+Task::Task() : ipc::Task(ipc::TaskId::Usb, "USB"), _tx(ipc::Queue::make(ipc::QueueId::UsbTx)) {}
 
 [[noreturn]] void Task::main()
 {
-    auto wait_bits = MctpTxBit | MctpRxBit | MctpTxDoneBit | AttachBit | ResetBit
-                   | UpdateRoutingTableBit | HidRxBit | WdtEventBit;
-
-    // Add flashrom-related event bits if enabled
-    if constexpr (nv::ipc::EnableLstp) {
-        wait_bits = wait_bits | LstpRxBit | LstpTxBit | LstpTxDoneBit;
-    }
+    // A pending TX bit must be re-notified because waiting consumes its wake state.
+    bool mctp_tx_in_progress = false;
+    bool lstp_tx_in_progress = false;
 
     uint32_t init_status = 0;
     if constexpr (nv::ipc::EnableLstp) {
@@ -112,36 +106,34 @@ Task::Task()
     nv::bootloader::Driver::set_task_booted(nv::ipc::BootedEventBits::Usb);
 
     while (true) {
-        auto    bits        = _event.wait(wait_bits, false, false, 1s);
-        auto    event       = bits.value();
-        auto    active_bits = event & wait_bits;
-        uint8_t tx_result   = 0;
+        auto    notification = ipc::TaskNotify::wait(1s);
+        auto    active_bits  = notification.has_value() ? notification.value() : 0U;
+        uint8_t tx_result    = 0;
 
         if (active_bits & WdtEventBit) {
-            _event.clear(WdtEventBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, WdtEventBit);
             nv::watchdog::Runtime::mark_task_alive(nv::watchdog::TaskMonitorIndex::Usb);
         }
         /* MctpTxBit */
-        if (active_bits & MctpTxBit) {
-            _event.clear(MctpTxBit);
+        if ((active_bits & MctpTxBit) && !mctp_tx_in_progress) {
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, MctpTxBit);
             tx_result = transmit();
 
             if (tx_result == 0) {
-                // if transmission is successful, disable MctpTxBit in wait_bits.
-                wait_bits = disable_bit(wait_bits, MctpTxBit);
+                mctp_tx_in_progress = true;
             }
         }
 
         /* MctpRxBit */
         if (active_bits & MctpRxBit) {
-            _event.clear(MctpRxBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, MctpRxBit);
             mctp_receive();
         }
 
 #if (SYS_USB_HID_CP2112 > 0U)
         /* HidRxBit */
         if (active_bits & HidRxBit) {
-            _event.clear(HidRxBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, HidRxBit);
             hid_receive();
         }
 #endif
@@ -150,18 +142,17 @@ Task::Task()
         if constexpr (nv::ipc::EnableLstp) {
             /* LstpRxBit */
             if (active_bits & LstpRxBit) {
-                _event.clear(LstpRxBit);
+                (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, LstpRxBit);
                 lstp_receive();
             }
 
             /* LstpTxBit */
-            if (active_bits & LstpTxBit) {
-                _event.clear(LstpTxBit);
+            if ((active_bits & LstpTxBit) && !lstp_tx_in_progress) {
+                (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, LstpTxBit);
                 tx_result = lstp_transmit();
 
                 if (tx_result == 0) {
-                    // if transmission is successful, disable LstpTxBit in wait_bits.
-                    wait_bits = disable_bit(wait_bits, LstpTxBit);
+                    lstp_tx_in_progress = true;
                 }
                 else {
                     // Transmission failed. Re-set
@@ -169,48 +160,56 @@ Task::Task()
                     // queue eventually drains once USB attaches.
                     auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
                     if (queue.size() != 0) {
-                        (void)_event.set(EventBits::LstpTxBit);
+                        (void)ipc::TaskNotify::send(ipc::TaskId::Usb, EventBits::LstpTxBit);
                     }
                 }
             }
 
             /* LstpTxDoneBit */
             if (active_bits & LstpTxDoneBit) {
-                _event.clear(LstpTxDoneBit);
-                // enable tx
-                wait_bits = enable_bit(wait_bits, LstpTxBit);
+                (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, LstpTxDoneBit);
+                lstp_tx_in_progress = false;
 
-                // Set LstpTxBit if tx queue not empty
                 auto& queue = ipc::Queue::make(ipc::QueueId::LstpTx);
                 if (queue.size() != 0) {
-                    (void)_event.set(EventBits::LstpTxBit);
+                    (void)ipc::TaskNotify::send(ipc::TaskId::Usb, EventBits::LstpTxBit);
                 }
             }
         }
 
         /* MctpTxDoneBit */
         if (active_bits & MctpTxDoneBit) {
-            _event.clear(MctpTxDoneBit);
-            // enable tx
-            wait_bits  = enable_bit(wait_bits, MctpTxBit);
-            loop_count = 0;
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, MctpTxDoneBit);
+            mctp_tx_in_progress = false;
+            loop_count          = 0;
+
+            if (_tx.size() != 0) {
+                (void)ipc::TaskNotify::send(ipc::TaskId::Usb, MctpTxBit);
+            }
         }
 
         /* AttachBit */
         if (active_bits & AttachBit) {
-            _event.clear(AttachBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, AttachBit);
             logger::info(logger::Event::UsbConnectStatus, {1});
         }
 
         /* ResetBit */
         if (active_bits & ResetBit) {
-            _event.clear(wait_bits);
+            (void)ipc::TaskNotify::reset(ipc::TaskId::Usb);
+            // Queued and in-flight TX data belongs to the previous host session. The reset
+            // above also dropped any pending TX bit, so a full queue would never drain.
+            mctp_tx_in_progress = false;
             clear_queue();
+            if constexpr (nv::ipc::EnableLstp) {
+                lstp_tx_in_progress = false;
+                clear_usb_lstp_queue();
+            }
         }
 
         /* UpdateRoutingTableBit */
         if (active_bits & UpdateRoutingTableBit) {
-            _event.clear(UpdateRoutingTableBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, UpdateRoutingTableBit);
             update_routing_table();
         }
 
@@ -238,7 +237,7 @@ void Task::check_tx_done_status(uint32_t active_bits)
 {
     if (active_bits & MctpTxDoneBit) {
         if (loop_count >= 1) {
-            _event.clear(MctpTxDoneBit);
+            (void)ipc::TaskNotify::clear(ipc::TaskId::Usb, MctpTxDoneBit);
             loop_count = 0;
         }
         else {
@@ -430,6 +429,12 @@ void Task::lstp_receive()
 
 uint8_t Task::transmit()
 {
+    // The packet may already be sent when its TX notification arrives.
+    if (_tx.size() == 0) {
+        // Nothing to send; keep TX idle.
+        return 1;
+    }
+
     perf_mon::Driver::log_pkt_latency(perf_mon::Driver::LatencyEvent::UsbHandleRxPkt);
     mctp::Packet pkt{};
     auto         is_drop = false;
@@ -523,15 +528,14 @@ void Task::update_routing_table()
 usb::Status Task::usb_tx(ipc::Queue::Item& item)
 {
     auto& queue = Queue::make(QueueId::UsbTx);
-    auto& event = Event::make(EventId::UsbTask);
 
     auto queue_status = queue.send(item, 100ms);
     if (queue_status != Queue::Status::Ok) {
         return usb::Status::QueueSendFail;
     }
 
-    auto event_status = event.set(MctpTxBit);
-    if (event_status != Event::Status::Ok) {
+    auto notification_status = TaskNotify::send(TaskId::Usb, MctpTxBit);
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
 
@@ -541,10 +545,9 @@ usb::Status Task::usb_tx(ipc::Queue::Item& item)
 usb::Status Task::set_mctp_rx0_event()
 {
     perf_mon::Driver::log_pkt_latency(perf_mon::Driver::LatencyEvent::UsbRecvRxIsr);
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(MctpRxBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, MctpRxBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -553,10 +556,9 @@ usb::Status Task::set_mctp_rx0_event()
 #if (SYS_USB_HID_CP2112 > 0U)
 usb::Status Task::set_hid_rx_event()
 {
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(HidRxBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, HidRxBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -566,10 +568,9 @@ usb::Status Task::set_hid_rx_event()
 usb::Status Task::set_lstp_rx_event()
 {
     if constexpr (nv::ipc::EnableLstp) {
-        auto& event        = Event::make(EventId::UsbTask);
-        auto  event_status = event.set(LstpRxBit);
+        auto notification_status = TaskNotify::send(TaskId::Usb, LstpRxBit);
 
-        if (event_status != Event::Status::Ok) {
+        if (notification_status != TaskNotify::Status::Ok) {
             return usb::Status::EventSetFail;
         }
     }
@@ -587,10 +588,9 @@ bool Task::is_lstp_device_connected()
 usb::Status Task::set_lstp_tx_done_event()
 {
     if constexpr (nv::ipc::EnableLstp) {
-        auto& event        = Event::make(EventId::UsbTask);
-        auto  event_status = event.set(LstpTxDoneBit);
+        auto notification_status = TaskNotify::send(TaskId::Usb, LstpTxDoneBit);
 
-        if (event_status != Event::Status::Ok) {
+        if (notification_status != TaskNotify::Status::Ok) {
             return usb::Status::EventSetFail;
         }
     }
@@ -599,10 +599,9 @@ usb::Status Task::set_lstp_tx_done_event()
 
 usb::Status Task::set_mctp_tx_done_event()
 {
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(MctpTxDoneBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, MctpTxDoneBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -610,10 +609,9 @@ usb::Status Task::set_mctp_tx_done_event()
 
 usb::Status Task::set_device_attach_event()
 {
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(AttachBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, AttachBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -621,10 +619,9 @@ usb::Status Task::set_device_attach_event()
 
 usb::Status Task::reset_all_event_bits()
 {
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(ResetBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, ResetBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -632,10 +629,9 @@ usb::Status Task::reset_all_event_bits()
 
 usb::Status Task::set_update_routing_table_event()
 {
-    auto& event        = Event::make(EventId::UsbTask);
-    auto  event_status = event.set(UpdateRoutingTableBit);
+    auto notification_status = TaskNotify::send(TaskId::Usb, UpdateRoutingTableBit);
 
-    if (event_status != Event::Status::Ok) {
+    if (notification_status != TaskNotify::Status::Ok) {
         return usb::Status::EventSetFail;
     }
     return usb::Status::Ok;
@@ -679,9 +675,9 @@ bool Task::to_usb(ipchandler::Id    src_id,
 
 void Task::wdt_notify()
 {
-    auto event = nv::ipc::Event::make(nv::ipc::EventId::UsbTask);
-    auto sts   = event.set(EventBits::WdtEventBit);
-    if (sts != nv::ipc::Event::Status::Ok) {
+    auto notification_status = nv::ipc::TaskNotify::send(nv::ipc::TaskId::Usb,
+                                                         EventBits::WdtEventBit);
+    if (notification_status != nv::ipc::TaskNotify::Status::Ok) {
         // TBD
     }
 }
@@ -689,17 +685,23 @@ void Task::wdt_notify()
 usb::Status Task::to_usbLstp(std::span<uint8_t>& item)
 {
     if constexpr (nv::ipc::EnableLstp) {
+        // Producers retry continuously while the IN pipe is blocked; logging every failure
+        // evicts the rest of the event log, so only the first failure of an episode is logged.
+        NV_SHARED_BSS static std::atomic<bool> send_error_logged{false};
+
         auto& queue = Queue::make(QueueId::LstpTx);
-        auto& event = Event::make(EventId::UsbTask);
 
         auto queue_status = queue.send(item, 100ms);
         if (queue_status != Queue::Status::Ok) {
-            logger::error(logger::Event::UsbLstpQueueSendError,
-                          {static_cast<uint8_t>(queue_status)});
+            if (!send_error_logged.exchange(true)) {
+                logger::error(logger::Event::UsbLstpQueueSendError,
+                              {static_cast<uint8_t>(queue_status)});
+            }
             return usb::Status::QueueSendFail;
         }
+        send_error_logged.store(false);
 
-        event.set(LstpTxBit);
+        (void)TaskNotify::send(TaskId::Usb, LstpTxBit);
     }
     return usb::Status::Ok;
 }

@@ -62,8 +62,8 @@ Timer::Timer(TimerId id, std::chrono::microseconds period, Callback cb, bool rel
                                      id)));  // coverity[cert_exp60_cpp_violation]
 
     // post conditions
-    nv::always_assert(_handle != nullptr);
-    nv::always_assert(on_timeout != nullptr);
+    NV_ALWAYS_ASSERT(_handle != nullptr);
+    NV_ALWAYS_ASSERT(on_timeout != nullptr);
 }
 
 TimerId Timer::id() const

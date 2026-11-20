@@ -18,8 +18,6 @@
 
 with Nv_Types.Array_Types; use Nv_Types.Array_Types;
 with Nv_Types; use Nv_Types;
-with System;
-with Pdk.Pldm.Fwupdate; use Pdk.Pldm.Fwupdate;
 
 package Pldm_Wrap
 with SPARK_Mode => On
@@ -52,35 +50,11 @@ is
                                       Build    : in out NvU16);
    pragma Import (C, Pldm_Get_Active_Version, "pldm_get_active_version");
 
-   procedure Pldm_Get_Ap_Active_Version (Major    : in out NvU16;
-                                      Minor    : in out NvU8;
-                                      Patch    : in out NvU16;
-                                      Build    : in out NvU16);
-   pragma Import (C, Pldm_Get_Ap_Active_Version, "pldm_get_ap_active_version");
-
-   procedure Pldm_Get_Ap_Active_Comp_Version_String
-     (Version_String : out ARR_NvU8_IDX32;
-      Length         : out NvU8);
-   pragma Import (C, Pldm_Get_Ap_Active_Comp_Version_String,
-                  "pldm_get_ap_active_comp_version_string");
-
    procedure Pldm_Get_Pending_Version (Major    : in out NvU16;
                                        Minor    : in out NvU8;
                                        Patch    : in out NvU16;
                                        Build    : in out NvU16);
    pragma Import (C, Pldm_Get_Pending_Version, "pldm_get_pending_version");
-
-   procedure Pldm_Get_Ap_Pending_Version (Major    : in out NvU16;
-                                      Minor    : in out NvU8;
-                                      Patch    : in out NvU16;
-                                      Build    : in out NvU16);
-   pragma Import (C, Pldm_Get_Ap_Pending_Version, "pldm_get_ap_pending_version");
-
-   procedure Pldm_Get_Ap_Pending_Comp_Version_String
-     (Version_String : out ARR_NvU8_IDX32;
-      Length         : out NvU8);
-   pragma Import (C, Pldm_Get_Ap_Pending_Comp_Version_String,
-                  "pldm_get_ap_pending_comp_version_string");
 
    procedure Set_Timer (Ns : NvU64);
    pragma Import (C, Set_Timer, "set_timer");
@@ -139,15 +113,10 @@ is
    procedure Print_Msg (Data : NvU32);
    pragma Import (C, Print_Msg, "print_msg");
 
-   procedure Get_Arr_Comp_Id_Len (ArrLen     : in out NvU32);
-   pragma Import (C, Get_Arr_Comp_Id_Len, "get_arr_comp_id_len");
-
-   function  Get_Arr_Comp_Id_Address return System.Address;
-   pragma Import(C,Get_Arr_Comp_Id_Address,"get_arr_comp_id_address");
-
-   subtype Comp_Id_Array is ARR_NvU16_IDX32 (0 .. MAX_PASS_COMPONENT_ID_NUM - 1);
-
    function Get_Write_Fail_Retry (Comp_id: NvU16) return NvU8;
    pragma Import (C, Get_Write_Fail_Retry, "get_write_fail_retry");
+
+   function Update_Component_Busy (Component_Id : NvU16) return NvU8;
+   pragma Import (C, Update_Component_Busy, "pldm_update_component_busy");
 
 end Pldm_Wrap;

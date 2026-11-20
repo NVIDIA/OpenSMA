@@ -18,11 +18,11 @@
 /* clang-format off */
 /* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
 !!GlobalInfo
-product: Clocks v18.0
+product: Clocks v20.0
 processor: MCXN547
 package_id: MCXN547VDF
 mcu_data: ksdk2_0
-processor_version: 25.09.10
+processor_version: 26.03.20
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 /* clang-format on */
 
@@ -109,6 +109,7 @@ void BOARD_BootClockFRO12M(void)
     SPC_SetSRAMOperateVoltage(SPC0, &sramCfg);
 
     SCG0->SIRCCSR |= SCG_SIRCCSR_SIRC_CLK_PERIPH_EN_MASK; 
+    CLOCK_SetupClk16KClocking(0U);      /* Enable the FRO 16kHz without any selected domain outputs */
     /*!< Set up clock selectors  */
 
     /*!< Set up dividers */
@@ -178,6 +179,7 @@ void BOARD_BootClockFROHF48M(void)
 
     CLOCK_SetupFROHFClocking(48000000U);               /*!< Enable FRO HF(48MHz) output */
     SCG0->SIRCCSR |= SCG_SIRCCSR_SIRC_CLK_PERIPH_EN_MASK; 
+    CLOCK_SetupClk16KClocking(0U);      /* Enable the FRO 16kHz without any selected domain outputs */
     /*!< Set up clock selectors  */
     CLOCK_AttachClk(kFRO_HF_to_MAIN_CLK);
     CLOCK_AttachClk(kFRO_HF_to_FLEXSPI);                 /*!< Switch FLEXSPI to FRO_HF */
@@ -252,6 +254,7 @@ void BOARD_BootClockFROHF144M(void)
 
     CLOCK_SetupFROHFClocking(144000000U);               /*!< Enable FRO HF(144MHz) output */
     SCG0->SIRCCSR |= SCG_SIRCCSR_SIRC_CLK_PERIPH_EN_MASK; 
+    CLOCK_SetupClk16KClocking(0U);      /* Enable the FRO 16kHz without any selected domain outputs */
     /*!< Set up clock selectors  */
     CLOCK_AttachClk(kFRO_HF_to_MAIN_CLK);
     CLOCK_AttachClk(kFRO_HF_to_FLEXSPI);                 /*!< Switch FLEXSPI to FRO_HF */
@@ -288,8 +291,6 @@ outputs:
 - {id: FRO_12M_clock.outFreq, value: 12 MHz}
 - {id: FRO_HF_DIV_clock.outFreq, value: 48 MHz}
 - {id: FRO_HF_clock.outFreq, value: 48 MHz}
-- {id: I3C1_FCLK_clock.outFreq, value: 25 MHz}
-- {id: I3C1_SLOW_clock.outFreq, value: 1 MHz}
 - {id: MAIN_clock.outFreq, value: 150 MHz}
 - {id: PLL0_CLK_clock.outFreq, value: 150 MHz}
 - {id: Slow_clock.outFreq, value: 37.5 MHz}
@@ -315,7 +316,6 @@ settings:
 - {id: FROHFDIV_HALT, value: Enable}
 - {id: I3C0FCLKDIV_HALT, value: Enable}
 - {id: I3C1FCLKDIV_HALT, value: Enable}
-- {id: I3C1FCLKSDIV_HALT, value: Enable}
 - {id: SCG.PLL0M_MULT.scale, value: '50', locked: true}
 - {id: SCG.PLL0SRCSEL.sel, value: SCG.FIRC_48M}
 - {id: SCG.PLL0_NDIV.scale, value: '8', locked: true}
@@ -334,7 +334,6 @@ settings:
 - {id: SYSCON.FREQMETARGETCLKSEL.sel, value: SYSCON.evtg_out0a}
 - {id: SYSCON.I3C0FCLKDIV.scale, value: '6'}
 - {id: SYSCON.I3C1FCLKDIV.scale, value: '6'}
-- {id: SYSCON.I3C1FCLKSEL.sel, value: SCG.PLL0_CLK}
 - {id: SYSCON_CLOCK_CTRL_FRO1MHZ_CLK_ENA_CFG, value: Enabled}
 - {id: WDT0CLKDIV_HALT, value: Enable}
 - {id: WDT1CLKDIV_HALT, value: Enable}
@@ -388,13 +387,13 @@ void BOARD_BootClockPLL150M(void)
     CLOCK_SetPLL0Freq(&pll0Setup);                       /*!< Configure PLL0 to the desired values */
     CLOCK_SetPll0MonitorMode(kSCG_Pll0MonitorDisable);    /* Pll0 Monitor is disabled */
 
+    CLOCK_SetupClk16KClocking(0U);      /* Enable the FRO 16kHz without any selected domain outputs */
     SYSCON->CLOCK_CTRL |=  SYSCON_CLOCK_CTRL_FRO1MHZ_CLK_ENA_MASK;                 /*!< Enable FRO_1M is on */
 
     /*!< Set up clock selectors  */
     CLOCK_AttachClk(kPLL0_to_MAIN_CLK);
     CLOCK_AttachClk(kFRO_HF_to_FLEXSPI);                 /*!< Switch FLEXSPI to FRO_HF */
     CLOCK_AttachClk(kFRO_HF_to_ADC0);                 /*!< Switch ADC0 to FRO_HF */
-    CLOCK_AttachClk(kPLL0_to_I3C1FCLK);                 /*!< Switch I3C1FCLK to PLL0 */
     CLOCK_AttachClk(kFRO_HF_to_CTIMER3);                 /*!< Switch CTIMER3 to FRO_HF */
     CLOCK_AttachClk(kFRO12M_to_FLEXCOMM0);                 /*!< Switch FLEXCOMM0 to FRO12M */
     CLOCK_AttachClk(kFRO12M_to_FLEXCOMM1);                 /*!< Switch FLEXCOMM1 to FRO12M */
@@ -409,8 +408,6 @@ void BOARD_BootClockPLL150M(void)
     /*!< Set up dividers */
     CLOCK_SetClkDiv(kCLOCK_DivAhbClk, 1U);           /*!< Set AHBCLKDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivAdc0Clk, 1U);           /*!< Set ADC0CLKDIV divider to value 1 */
-    CLOCK_SetClkDiv(kCLOCK_DivI3c1FClk, 6U);           /*!< Set I3C1FCLKDIV divider to value 6 */
-    CLOCK_SetClkDiv(kCLOCK_DivI3c1FClkS, 1U);           /*!< Set I3C1FCLKSDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivCtimer3Clk, 1U);           /*!< Set CTIMER3CLKDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivFrohfClk, 1U);           /*!< Set FROHFDIV divider to value 1 */
     CLOCK_SetClkDiv(kCLOCK_DivFlexcom0Clk, 1U);           /*!< Set FLEXCOMM0CLKDIV divider to value 1 */
@@ -511,6 +508,7 @@ void BOARD_BootClockPLL100M(void)
     CLOCK_SetPLL1Freq(&pll1Setup);                       /*!< Configure PLL1 to the desired values */
     CLOCK_SetPll1MonitorMode(kSCG_Pll1MonitorDisable);    /* Pll1 Monitor is disabled */
 
+    CLOCK_SetupClk16KClocking(0U);      /* Enable the FRO 16kHz without any selected domain outputs */
     /*!< Set up clock selectors  */
     CLOCK_AttachClk(kPLL1_to_MAIN_CLK);
 

@@ -29,7 +29,8 @@ constexpr uint32_t SectorSize = sys::flash::config::SectorSize;
 constexpr uint32_t PhraseSize = sys::flash::config::PhraseSize;  // smallest size flash could
                                                                  // write in one operation,
 using Address                   = sys::flash::config::Address;
-constexpr Address  RemapSize    = sys::flash::config::RemapSize;
+constexpr Address  RemapSize    = sys::flash::config::RemapSize;  // size of each remap window
+constexpr Address  Slot1Address = sys::flash::config::Slot1FwAddress;
 constexpr Address  MaxAddress   = sys::flash::config::MaxAddress;
 constexpr Address  FmcFwAddress = sys::flash::config::FmcFwAddress;
 constexpr Address  FmcFwSize    = sys::flash::config::FmcFwSize;
@@ -73,15 +74,14 @@ enum class RequestType : uint16_t
     CmpaRead,
     CrcRead,
     EfuseLifeCycleRead,
-    GetApFwAuthenticateData,
-    SetApFwAuthenticateData,
 };
 
 enum class KeyRollbackSelect : uint8_t
 {
     Begin = 0,
     Mcu,
-    Ap0,
+    // Second pair of CFPA counters. Read-only; reported by measurement indexes 16 and 17.
+    Reserved,
 };
 
 struct [[gnu::packed]] RequestHeader

@@ -32,6 +32,31 @@ struct __attribute__((packed)) UsbMctpHeader
     uint8_t  length;   // Packet length (including this header)
 };
 
+// USB full-speed MCTP packet-spanning header.
+// Byte 2 bits 7:5: reserved
+// Byte 2 bits 4:0 and byte 3: 13-bit big-endian length (including header)
+struct __attribute__((packed)) UsbMctpSpanningHeader
+{
+    static constexpr uint16_t MaxPacketLength = 0x1FFFU;
+
+    uint16_t dmtf_id;
+    uint8_t  length_msb;
+    uint8_t  length_lsb;
+
+    [[nodiscard]] constexpr uint16_t packet_length() const
+    {
+        return static_cast<uint16_t>((static_cast<uint16_t>(length_msb & 0x1FU) << 8U)
+                                     | length_lsb);
+    }
+
+    constexpr void set_packet_length(uint16_t length)
+    {
+        length_msb = static_cast<uint8_t>((length >> 8U) & 0x1FU);
+        length_lsb = static_cast<uint8_t>(length & 0xFFU);
+    }
+};
+static_assert(sizeof(UsbMctpSpanningHeader) == 4U);
+
 constexpr uint16_t UsbDmtfId = 0xB41A;
 
 }  // namespace nv::usb

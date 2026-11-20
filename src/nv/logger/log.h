@@ -51,6 +51,8 @@ public:
         EventData           data,
         OutputDirection     output = OutputDirection::Both,
         const footprint::Id id     = footprint::filefunc12(std::source_location::current()));
+    static Status
+    add_from_core(EventId event, Level level, EventData data, footprint::Id footprint);
 
     static Status download(Dlreq&                dl_req,
                            nv::ipc::Queue::Usecs timeout = nv::ipc::Queue::Usecs::max());

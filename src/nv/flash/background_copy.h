@@ -47,8 +47,8 @@ public:
 
 private:
     // TBD: Size to copy, need to check image length
-    static constexpr uint32_t CopySize  = sys::flash::config::FirmwareMaxSize;
-    static constexpr uint32_t RemapSize = sys::flash::config::RemapSize;
+    static constexpr uint32_t CopySize    = sys::flash::config::FirmwareMaxSize;
+    static constexpr uint32_t Slot1Offset = sys::flash::config::Slot1FwAddress;
     State                     _state;
     Address                   current_offset;
     Buffer                    read_buffer{};

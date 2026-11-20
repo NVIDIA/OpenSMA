@@ -469,6 +469,15 @@ void Driver::self_reset()
     NVIC_SystemReset();
 }
 
+namespace nv::bootloader {
+
+__attribute__((weak)) uint32_t project_boot_status_mask()
+{
+    return nv::common::to_underlying(nv::ipc::BootedEventBits::BootStatusMask);
+}
+
+}  // namespace nv::bootloader
+
 void Driver::set_task_booted(nv::ipc::BootedEventBits boot_bit)
 {
     auto event = ipc::Event::make(ipc::EventId::TaskBootStatus);
@@ -481,7 +490,7 @@ void Driver::on_timer([[maybe_unused]] ipc::Timer& id)
     auto boot_source = get_boot_src_from_kernel();
     auto event       = ipc::Event::make(ipc::EventId::TaskBootStatus);
     auto value       = event.bits().value();
-    if (value == nv::common::to_underlying(nv::ipc::BootedEventBits::BootStatusMask)) {
+    if (value == project_boot_status_mask()) {
         if constexpr (nv::ipc::EnableMcuHeartbeat) {
             // Current 500ms is only used by PG544, could define it by project if needed in the
             // future

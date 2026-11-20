@@ -58,6 +58,9 @@ public:
     /// Allocate or access objects by Id only by this method
     static Queue& make(QueueId id);
 
+    /// Access an already-created queue. ISR-safe; does not construct.
+    static Queue& get(QueueId id);
+
     /// Return the id associated with this queue.
     constexpr QueueId id() const { return std::get<0>(Info); }
 

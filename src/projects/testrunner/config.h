@@ -47,8 +47,6 @@
 #include "nv/mctp/nsm_event.h"
 #include "nv/mctp/nsm_msg_bitmask.h"
 #include "nv/mctp/router.h"
-#include "nv/pldm/common.h"
-#include "nv/vrot/interface/types.h"
 #include "nv/spi/common.h"
 #include "nv/telemetry/utils.h"
 #include "nv/volt_mon/common.h"
@@ -82,8 +80,9 @@ constexpr inline std::array<TelemIndexMap, TelemIndexMapSize> TelemIndexMapList{
 
 namespace nv::ipc {
 
-constexpr bool EanbleTaskSamePriority = false;
-constexpr bool EnableLstp             = false;
+constexpr bool EnableTaskSamePriority   = false;
+constexpr bool EnableCustomTaskPriority = false;
+constexpr bool EnableLstp               = false;
 }  // namespace nv::ipc
 
 namespace nv::lstp {
@@ -122,7 +121,7 @@ enum class TaskId
     Mctp,
     I2c0,
     Lstp,
-    FpgaCtl,
+    Reserved0,  // keeps the task numbers that NSM diagnostics report
     Pldm,
     Iox,
 #ifdef NV_UNITTEST
@@ -130,7 +129,7 @@ enum class TaskId
 #endif
     Logger,
     Spdm,
-    SecureBoot,
+    Reserved1,  // keeps the task numbers that NSM diagnostics report
     SocPwrSmoothing,
     GpuPwrController,
     Core0,
@@ -148,6 +147,14 @@ enum class TaskId
     Idle,
     KernelEnd
 };
+
+// NSM diagnostics report task numbers: a retired task leaves a placeholder behind, so that
+// the tasks after it keep their numbers.
+#ifdef NV_UNITTEST
+static_assert(static_cast<int>(TaskId::Flash) == 19, "task numbers moved");
+#else
+static_assert(static_cast<int>(TaskId::Flash) == 18, "task numbers moved");
+#endif
 
 /// All Queues must be part of this enum.
 enum class QueueId
@@ -172,13 +179,6 @@ enum class QueueId
     I2c2,
     I2c3,
     I2c4,
-    I2c5,
-    I2c6,
-    I2c7,
-    I2c8,
-    I2c9,
-    VrI2c0,
-    VrI2c1,
     I3c0,
     I3c1,
     Spi0,
@@ -198,17 +198,16 @@ enum class QueueId
     FlashSema,
     SpdmRx,
     SpdmCryptoHelper,
-    SecureBootAuthResult,
     UsbHid,
     LstpToSpi,
     LstpTx,
     LstpGpioIrq,
     LstpToGpio,
     Iox,
-    UbridgeTx,
-    UbridgeRx,
-    FpgaCtl,
-    Ssif,
+    Ubridge0Tx,
+    Ubridge0Rx,
+    Ssif0,
+    Ssif1,
     End
 };
 
@@ -244,18 +243,13 @@ constexpr inline std::array<mctp::DownStreamInfo, DownStreamNum> DownStreamInfos
 
 };
 
-constexpr uint32_t ApEcdsa384PublicKeySize = 96;
-constexpr std::array<std::array<uint8_t, ApEcdsa384PublicKeySize>, 2> ApFwPublicKeys{};
-
-constexpr uint32_t SpdmRequestQueueSize              = 2048;
-constexpr uint32_t SpdmRxQueueSize                   = 72;
-constexpr uint32_t SpdmCryptoHelperQueueSize         = 12;
-constexpr uint32_t SecureBootAuthResultQueueSize     = 4;
-constexpr uint32_t SecureBootAuthResultQueueMaxItems = 2;
-constexpr bool     SpdmI2cResponder                  = false;
-constexpr bool     SpdmDummyCertificates             = false;
-constexpr uint32_t SpdmCryptoHelperMaxItems          = EnableDualCore ? 2 : 1;
-using QueueInfo                                      = std::tuple<QueueId, uint8_t, uint16_t>;
+constexpr uint32_t SpdmRequestQueueSize      = 2048;
+constexpr uint32_t SpdmRxQueueSize           = 72;
+constexpr uint32_t SpdmCryptoHelperQueueSize = 12;
+constexpr bool     SpdmI2cResponder          = false;
+constexpr bool     SpdmDummyCertificates     = false;
+constexpr uint32_t SpdmCryptoHelperMaxItems  = EnableDualCore ? 2 : 1;
+using QueueInfo                              = std::tuple<QueueId, uint8_t, uint16_t>;
 
 // USB Low-Speed Transport Protocol (LSTP) for I2C/SSIF/SPI/GPIO tunneling
 constexpr uint32_t UsbLstpMsgSize        = EnableLstp ? 512 : 1;
@@ -281,64 +275,55 @@ constexpr uint32_t UbridgeQueueSize = (UartOverUsbProtocol == nv::vruart::Protoc
 /// define all queue lengths and item_sizes here
 constexpr inline std::array<QueueInfo, int(QueueId::End)> QueueInfos{
     // id, len, item_size
-    QueueInfo{               QueueId::Test1,1,                                               1024                                            },
-    {               QueueId::Test2,                        2,                                                512},
-    {               QueueId::Test3,                        4,                                                256},
-    {               QueueId::Test4,                        8,                                                128},
-    {               QueueId::Test5,                       16,                                                 64},
-    {               QueueId::Test6,                       32,                                                 32},
-    {               QueueId::Test7,                       64,                                                 16},
-    {               QueueId::Test8,                      128,                                                  8},
-    {     QueueId::MctpDataRequest,                      130,                                                 72},
-    {     QueueId::MctpPldmRequest,                        1,                                                256},
-    {     QueueId::MctpSpdmRequest,                        1,                               SpdmRequestQueueSize},
-    {             QueueId::MctpCmd,                      130,                                                 12},
-    {               QueueId::Core0,                        1,                                                 72},
-    {               QueueId::Core1,                        1,                                                 72},
-    {                QueueId::I2c0,                       64,                                                 80},
-    {                QueueId::I2c1,                       64,                                                 80},
-    {                QueueId::I2c2,                       64,                                                 80},
-    {                QueueId::I2c3,                       64,                                                 80},
-    {                QueueId::I2c4,                       64,                                                 80},
-    {                QueueId::I2c5,                        1,                                                  1},
-    {                QueueId::I2c6,                        1,                                                  1},
-    {                QueueId::I2c7,                        1,                                                  1},
-    {                QueueId::I2c8,                        1,                                                  1},
-    {                QueueId::I2c9,                        1,                                                  1},
-    {              QueueId::VrI2c0,                        1,                                                  1},
-    {              QueueId::VrI2c1,                        1,                                                  1},
-    {                QueueId::I3c0,                       80,                                                 76},
-    {                QueueId::I3c1,                       80,                                                 76},
-    {                QueueId::Spi0,                        1,                                                  1},
-    {                QueueId::Spi1,                        1,                                                  1},
-    {                QueueId::Spi2,                        1,                                                  1},
-    {              QueueId::PldmRx,                        1,                                                 72},
-    {            QueueId::PldmRx4k,                        1,                                          4096 + 32},
-    {               QueueId::UsbTx,                        1,                                                 72},
-    {        QueueId::FlashRequest,                        1,                                                280},
-    {       QueueId::FlashResponse,                        1,                                                272},
-    {        QueueId::RoutingTable,
-              RoutingTableSize, sizeof(mctp::ShardRoutingTable) * RoutingTableSize                                       },
-    {          QueueId::LogRequest,                       64,                                                 22},
-    { QueueId::LogResponseBlocking,                        1,                                                 22},
-    {         QueueId::LogDownload,                        1,                                                 22},
-    {     QueueId::LogDownloadResp,                        1,                                                 22},
-    {              QueueId::LogISR,                        6,                                                 22},
-    {           QueueId::FlashSema,                        1,                                                  1},
-    {              QueueId::SpdmRx,                        1,                                    SpdmRxQueueSize},
-    {    QueueId::SpdmCryptoHelper, SpdmCryptoHelperMaxItems,                          SpdmCryptoHelperQueueSize},
-    {QueueId::SecureBootAuthResult,
-              SecureBootAuthResultQueueMaxItems,                      SecureBootAuthResultQueueSize                      },
-    {              QueueId::UsbHid,                        1,                                                 68},
-    {           QueueId::LstpToSpi,                        1,                                                  1},
-    {              QueueId::LstpTx,                        1,                                     UsbLstpMsgSize},
-    {         QueueId::LstpGpioIrq,    LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize},
-    {          QueueId::LstpToGpio,                        1,                                     LstpToGpioSize},
-    {                 QueueId::Iox,                        8,                                                 80},
-    {           QueueId::UbridgeTx,                        4,                                   UbridgeQueueSize},
-    {           QueueId::UbridgeRx,                        4,                                   UbridgeQueueSize},
-    {             QueueId::FpgaCtl,                        8,                                                  1},
-    {                QueueId::Ssif,                        1,                                                  1}
+    QueueInfo{              QueueId::Test1,1,                                               1024                                           },
+    {              QueueId::Test2,                        2,                                                512},
+    {              QueueId::Test3,                        4,                                                256},
+    {              QueueId::Test4,                        8,                                                128},
+    {              QueueId::Test5,                       16,                                                 64},
+    {              QueueId::Test6,                       32,                                                 32},
+    {              QueueId::Test7,                       64,                                                 16},
+    {              QueueId::Test8,                      128,                                                  8},
+    {    QueueId::MctpDataRequest,                      130,                                                 72},
+    {    QueueId::MctpPldmRequest,                        1,                                                256},
+    {    QueueId::MctpSpdmRequest,                        1,                               SpdmRequestQueueSize},
+    {            QueueId::MctpCmd,                      130,                                                 12},
+    {              QueueId::Core0,                        1,                                                 72},
+    {              QueueId::Core1,                        1,                                                 72},
+    {               QueueId::I2c0,                       64,                                                 80},
+    {               QueueId::I2c1,                       64,                                                 80},
+    {               QueueId::I2c2,                       64,                                                 80},
+    {               QueueId::I2c3,                       64,                                                 80},
+    {               QueueId::I2c4,                       64,                                                 80},
+    {               QueueId::I3c0,                       80,                                                 76},
+    {               QueueId::I3c1,                       80,                                                 76},
+    {               QueueId::Spi0,                        1,                                                  1},
+    {               QueueId::Spi1,                        1,                                                  1},
+    {               QueueId::Spi2,                        1,                                                  1},
+    {             QueueId::PldmRx,                        1,                                                 72},
+    {           QueueId::PldmRx4k,                        1,                                          4096 + 32},
+    {              QueueId::UsbTx,                        1,                                                 72},
+    {       QueueId::FlashRequest,                        1,                                                280},
+    {      QueueId::FlashResponse,                        1,                                                272},
+    {       QueueId::RoutingTable,
+              RoutingTableSize, sizeof(mctp::ShardRoutingTable) * RoutingTableSize                                      },
+    {         QueueId::LogRequest,                       64,                                                 22},
+    {QueueId::LogResponseBlocking,                        1,                                                 22},
+    {        QueueId::LogDownload,                        1,                                                 22},
+    {    QueueId::LogDownloadResp,                        1,                                                 22},
+    {             QueueId::LogISR,                        6,                                                 22},
+    {          QueueId::FlashSema,                        1,                                                  1},
+    {             QueueId::SpdmRx,                        1,                                    SpdmRxQueueSize},
+    {   QueueId::SpdmCryptoHelper, SpdmCryptoHelperMaxItems,                          SpdmCryptoHelperQueueSize},
+    {             QueueId::UsbHid,                        1,                                                 68},
+    {          QueueId::LstpToSpi,                        1,                                                  1},
+    {             QueueId::LstpTx,                        1,                                     UsbLstpMsgSize},
+    {        QueueId::LstpGpioIrq,    LstpGpioIrqQueueDepth,                               LstpGpioIrqQueueSize},
+    {         QueueId::LstpToGpio,                        1,                                     LstpToGpioSize},
+    {                QueueId::Iox,                        8,                                                 80},
+    {         QueueId::Ubridge0Tx,                        4,                                   UbridgeQueueSize},
+    {         QueueId::Ubridge0Rx,                        4,                                   UbridgeQueueSize},
+    {              QueueId::Ssif0,                        1,                                                  1},
+    {              QueueId::Ssif1,                        1,                                                  1}
 };
 /// All Events must be part of this enum.
 enum class EventId
@@ -351,9 +336,7 @@ enum class EventId
     Test4,
     Core0,
     Core1,
-    I2c0,
     PldmTask,
-    UsbTask,
     FlashEvent,
     Spi0Event,
     Spi1Event,
@@ -361,13 +344,12 @@ enum class EventId
     LogEvent,
     SpdmTask,
     DiagEvent,
-    SecureBootTask,
     TaskBootStatus,
     TaskAliveStatus,
     GpuPwrCtrlEvent,
-    FpgaCtl,
-    UartBridgeEvent,
-    Ssif,
+    Uart0BridgeEvent,
+    Ssif0,
+    Ssif1,
     GpioMonEvent,
     // Compile-only: shared nv/thermal/task.cpp is built here via SRCS_ALL and
     // references this; testrunner never runs the thermal task. See e4188/config.h.
@@ -415,7 +397,8 @@ constexpr inline std::array<I2cTimerInfo, 0> I2cTimerInfos{};
 [[maybe_unused]] constexpr auto MaxQueuesPerTask = 4;
 [[maybe_unused]] constexpr auto MaxEventsPerTask = 4;
 
-constexpr uint8_t GpioNum = 3;
+constexpr uint8_t GpioNum            = 3;
+constexpr bool    EnableMultiProduct = false;
 enum Port : gpio::GpioPort
 {
     ApGoodPort   = nv::gpio::InvalidGpioPort,
@@ -423,9 +406,6 @@ enum Port : gpio::GpioPort
 
     // Port 1
     MCU_PWR_BRAKE_L_PORT = 1,
-
-    // Port 3
-    JTAG_CPLD_PORT = 3,
 
     // Port 4
     THERM_OVERT_N_PORT = 4,
@@ -440,12 +420,6 @@ enum Pin : gpio::GpioPin
     GlobalWpPin = nv::gpio::InvalidGpioPin,
     // Port 1
     MCU_PWR_BRAKE_L_PIN = 16,
-
-    // Port 3
-    JTAG_CPLD_TCK_PIN = 7,
-    JTAG_CPLD_TMS_PIN = 6,
-    JTAG_CPLD_TDI_PIN = 8,
-    JTAG_CPLD_TDO_PIN = 9,
 
     // Port 4 pins
     THERM_OVERT_N_PIN = 15,
@@ -502,14 +476,25 @@ enum BootedEventBits : uint32_t
     Spdm            = nv::common::bit(8),
     GpuPwrCtrl      = nv::common::bit(9),
     SocPwrSmoothing = nv::common::bit(10),
-    Ssif            = nv::common::bit(11),
+    Ssif0           = nv::common::bit(11),
     Nhp             = nv::common::bit(12),
     GpioMon         = nv::common::bit(13),
-    SecureBoot      = nv::common::bit(14),
     BootStatusMask  = (nv::common::bit(14) - 1),
 };
 
-static_assert((BootStatusMask & SecureBoot) == 0, "No-AP build must not wait for SecureBoot");
+using UartBridgeConfig = nv::vruart::BridgeConfig<TaskId, QueueId, EventId, BootedEventBits>;
+constexpr inline std::array<UartBridgeConfig, 1> UartBridgeConfigs{
+    UartBridgeConfig{"UartBridge",
+                     TaskId::Ubridge,
+                     QueueId::Ubridge0Tx,
+                     QueueId::Ubridge0Rx,
+                     EventId::Uart0BridgeEvent,
+                     BootedEventBits::Ubridge,
+                     pintx, pinrx,
+                     UartOverUsbBaudrate, UartOverUsbEdmaTxChn,
+                     UartOverUsbEdmaRxChn, UartOverUsbEdmaInstance,
+                     UartOverUsbUartInstance},
+};
 
 constexpr uint32_t WatchdogResetMs       = 2000;
 constexpr uint32_t CheckTaskBootStatusMs = 1000;
@@ -529,9 +514,6 @@ constexpr std::array<nv::watchdog::TaskMonitorIndex, 2> TaskMonitorList{
 constexpr bool EnableRuntimeWdt = false;
 
 constexpr bool EnableCP2112NativeGpio  = false;
-constexpr bool EnablePufEngine         = false;
-constexpr bool EnableEcdhP384Engine    = false;
-constexpr bool EnableAesGCM            = false;
 constexpr bool EnableI2CErrorInjection = false;
 
 // Debugtoken config
@@ -541,6 +523,10 @@ constexpr bool DebugTokenEnabled = false;
 constexpr bool EnableSmbDirect = false;
 // I2C scan VDM support
 constexpr bool EnableI2cScanVdm = true;
+// I2C master frequency control VDM support
+constexpr bool EnableI2cFreqVdm = false;
+// I2CS master bus (I2C/I3C) switch VDM support
+constexpr bool EnableBusModeVdm = false;
 // I2c virtual address mapping configuration
 constexpr bool I2cManualNackMode = true;  // true, when mapping is not existed in the
                                           // I2cVirtualAddressMappingTable, command will send
@@ -664,6 +650,9 @@ constexpr bool EnableDelayInI3CInit = false;
 constexpr uint32_t CheckApStatusTimerUs = 10 * 1000 * 1000;
 // Use the I2C AP status timer if I3C is not enabled
 constexpr bool UseI2cApStatusTimer = false;
+// When true: skip get_status while ApDown (re-up via erot_recovery). Querying still pings once
+// at boot.
+constexpr bool SuppressApStatusPingWhenDown = false;
 // GPU I3C pull up status pin
 constexpr bool               I3CPullUpCheck = false;
 constexpr nv::gpio::GpioPort I3CPullUpPort  = 0;
@@ -675,40 +664,78 @@ constexpr bool Spi_Available = false;
 constexpr bool I2cTransparent = false;
 
 /******** ******** Iox Emulation Config Starts ******** ********/
-constexpr bool                                          EnableIoxEmulation            = false;
-constexpr inline size_t                                 IoxNum                        = 0;
-constexpr inline uint8_t                                IoxI2cBaseAddr                = 0x50;
-constexpr uint32_t                                      IoxFilterSeconds              = 0;
-constexpr uint32_t                                      PWR_BRAKE_VR_OFFSET           = 2;
-constexpr uint32_t                                      PWR_BRAKE_SOC_ACTIVE_VR_PIN   = 6;
-constexpr uint32_t                                      PWR_BRAKE_THERM_ACTIVE_VR_PIN = 7;
+constexpr bool            EnableIoxEmulation            = false;
+constexpr inline size_t   IoxNum                        = 0;
+constexpr inline uint8_t  IoxI2cBaseAddr                = 0x50;
+constexpr uint32_t        IoxFilterSeconds              = 0;
+constexpr uint32_t        PWR_BRAKE_VR_OFFSET           = 2;
+constexpr uint32_t        PWR_BRAKE_SOC_ACTIVE_VR_PIN   = 6;
+constexpr uint32_t        PWR_BRAKE_THERM_ACTIVE_VR_PIN = 7;
+constexpr inline uint32_t LEAK_DETECT_IOX_ADDR          = IoxI2cBaseAddr + 2;
+
 constexpr inline std::array<nv::iox::IoxConfig, IoxNum> IoxConfigs{};
 /******** ******** Iox Emulation Config Ends ******** ********/
 
 /******** ******** Virtual I2C Config Starts ******** ********/
-constexpr inline size_t                                             VrI2c0DeviceNum = 0U;
+constexpr inline size_t        VrI2c0DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c0SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c0DeviceNum> VrI2c0DeviceSlots{};
 constexpr inline size_t                                             VrI2c1DeviceNum = 0U;
+constexpr inline nv::i2c::Port VrI2c1SlavePort = nv::i2c::Port::End;
 constexpr inline std::array<nv::i2c::VrI2cBusSlot, VrI2c1DeviceNum> VrI2c1DeviceSlots{};
 /******** ******** Virtual I2C Config Ends ******** ********/
 
 /******** ******** Voltage Monitor Config Starts ******** ********/
 // clang-format off
 namespace voltage_monitor_config {
+
+enum VirtualPortPin
+{
+    LEAK_DETECT_VR_PIN_0  = 7,
+    LEAK_DETECT_VR_PIN_1  = 8,
+};
+
 using namespace nv::volt_mon;
 // VOLTAGE_MONITOR_DISABLED  (expanded inline per code review)
 constexpr bool EnableDbgInfo = false;
 constexpr bool SensorOnAdc0  = false;
 constexpr bool SensorOnAdc1  = false;
 
-constexpr size_t         LeakDetectSensorNum                     = 0;
-constexpr SensorId       LeakDetectSensorId[LeakDetectSensorNum] = {};
+constexpr size_t         LeakDetectSensorNum                     = 1;
+constexpr SensorId       LeakDetectSensorId[LeakDetectSensorNum] = {
+    nv::mctp::NsmPlatEnvLeakSensorDripTray};
 constexpr gpio::GpioPort AlertGpioPort = nv::gpio::InvalidGpioPort;
 constexpr gpio::GpioPin  AlertGpioPin  = nv::gpio::InvalidGpioPin;
 template<size_t Index>
 constexpr nv::volt_mon::LeakDetectSensor leak_detect_get_sensor_config()
 {
     static_assert(Index < LeakDetectSensorNum, "Sensor index out of range");
+
+    if constexpr (Index == 0) {
+        return {
+            {   // VoltMon base
+                AdcInstance::_0,                // adcId
+                AdcChannel::_3,                 // channel
+                AdcScanMode::SingleEndedSideA,  // scanMode
+                AdcCommand::_2,                 // cmdScanning
+                AdcCommand::_3,                 // cmdNext (chain into McuInternalTemp)
+                AdcCommand::None,               // cmdOneShot (unused under timer)
+                AdcCmdTriggerSrc,               // cmdTriggerSrc
+                0,                              // reading
+            },
+            // LeakDetectSensor
+            Sensor::LeakDetect,                 // sensor
+            LeakDetectSensorId[Index],          // id
+            State::Nominal,                     // state
+            // Default to full-range (no alerts) until the A2+ DIEID-based boot
+            // helper seeds DefaultMinLeak/MaxLeak/MaxNormal into PDS; see main.cpp.
+            to_adc_value(MinVol),               // minLeak
+            to_adc_value(MinVol),               // maxLeak
+            to_adc_value(MaxVol),               // maxNormal
+            LEAK_DETECT_IOX_ADDR,               // ioxAddr
+            {LEAK_DETECT_VR_PIN_0, LEAK_DETECT_VR_PIN_1}  // ioxPin
+        };
+    }
     return {};
 }
 
@@ -748,6 +775,26 @@ constexpr nv::volt_mon::McuInternalTempSensor mcu_internal_temp_get_sensor_confi
         0.0f
     };
 }
+
+constexpr nv::volt_mon::VbatSensor vbat_get_sensor_config()
+{
+    return {
+        {
+            nv::volt_mon::AdcInstance::Invalid,
+            nv::volt_mon::AdcChannel::Invalid,
+            nv::volt_mon::AdcScanMode::Invalid,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcCommand::None,
+            nv::volt_mon::AdcTriggerSrc::Invalid,
+            0,
+        },
+        nv::volt_mon::Sensor::Invalid,
+        false,
+        nv::gpio::InvalidGpioPort,
+        nv::gpio::InvalidGpioPin
+    };
+}
 }  // namespace voltage_monitor_config
 // clang-format on
 /******** ******** Voltage Monitor Config Ends ******** ********/
@@ -777,65 +824,6 @@ constexpr QueueId  EepromI2cQueueId    = QueueId::End;
 constexpr uint32_t EepromUpdateTimerUs = 0;
 
 }  // namespace nv::ipc
-
-namespace nv::fpga_ctl {
-
-struct OutputPins
-{
-    nv::gpio::GpioPort flash_mux_sel_port;
-    nv::gpio::GpioPin  flash_mux_sel_pin;
-    nv::gpio::GpioPort sdm_flash_rst_n_port;
-    nv::gpio::GpioPin  sdm_flash_rst_n_pin;
-    nv::gpio::GpioPort vr_i2c_sel_1_port;
-    nv::gpio::GpioPin  vr_i2c_sel_1_pin;
-    nv::gpio::GpioPort n_config_port;
-    nv::gpio::GpioPin  n_config_pin;
-    nv::gpio::GpioPort rst_n_port;
-    nv::gpio::GpioPin  rst_n_pin;
-};
-
-struct InputPins
-{
-    nv::gpio::GpioPort conf_done_port;
-    nv::gpio::GpioPin  conf_done_pin;
-    nv::gpio::GpioPort n_status_port;
-    nv::gpio::GpioPin  n_status_pin;
-    nv::gpio::GpioPort pgood_port;
-    nv::gpio::GpioPin  pgood_pin;
-    nv::gpio::GpioPort n_config_vr_port = nv::gpio::InvalidGpioPort;
-    nv::gpio::GpioPin  n_config_vr_pin  = nv::gpio::InvalidGpioPin;
-};
-
-constexpr OutputPins FpgaCtlOutputPins{};
-constexpr InputPins  FpgaCtlInputPins{};
-
-}  // namespace nv::fpga_ctl
-
-// CPLD configuration (for test/mock purposes)
-#define ENABLE_CPLD_PLDM 1
-#ifdef ENABLE_CPLD_PLDM
-constexpr nv::i2c::Port CPLD_I2C_PORT_PRGM        = nv::i2c::Port::Zero;
-constexpr uint8_t       CPLD_I2C_ADDR_PRGM        = 0x40;
-constexpr nv::i2c::Port CPLD_I2C_PORT_USR         = nv::i2c::Port::Zero;
-constexpr uint8_t       CPLD_I2C_ADDR_USR         = 0x0B;
-constexpr uint8_t       CPLD_I2C_ADDR_DBG         = 0x0F;
-constexpr uint8_t       CPLD_I2C_ADDR_DBG_INSTALL = 0x11;
-
-constexpr bool CPLD_ProgramN_Pin_Enabled = false;
-
-// JTAG needs real pins to avoid static_asserts failing for testrunner
-namespace nv::jtag {
-constexpr nv::gpio::GpioPort CPLD_JTAG_PORT      = nv::ipc::JTAG_CPLD_PORT;
-constexpr nv::gpio::GpioPin  CPLD_JTAG_TCK_PIN   = nv::ipc::JTAG_CPLD_TCK_PIN;
-constexpr nv::gpio::GpioPin  CPLD_JTAG_TMS_PIN   = nv::ipc::JTAG_CPLD_TMS_PIN;
-constexpr nv::gpio::GpioPin  CPLD_JTAG_TDI_PIN   = nv::ipc::JTAG_CPLD_TDI_PIN;
-constexpr nv::gpio::GpioPin  CPLD_JTAG_TDO_PIN   = nv::ipc::JTAG_CPLD_TDO_PIN;
-constexpr nv::gpio::GpioPort CPLD_CONF_DONE_PORT = nv::gpio::InvalidGpioPort;
-constexpr nv::gpio::GpioPin  CPLD_CONF_DONE_PIN  = nv::gpio::InvalidGpioPin;
-constexpr nv::gpio::GpioPort CPLD_NCONFIG_PORT   = nv::gpio::InvalidGpioPort;
-constexpr nv::gpio::GpioPin  CPLD_NCONFIG_PIN    = nv::gpio::InvalidGpioPin;
-}  // namespace nv::jtag
-#endif  // ENABLE_CPLD_PLDM
 
 namespace nv::i2c {
 constexpr size_t   I2cBufferSize                   = 64;
@@ -880,6 +868,9 @@ static_assert(!(SmbusCacheRefreshMs > 0 && nv::ipc::SmbSensorUpdateMs > 0),
 namespace nv::lstp {
 // Device specific constraint on LSTP I2C buffer size. Make sure you really want to set this
 constexpr bool I2cSmallBuffer = false;
+
+// WAR for GPU I2C-over-I3C - GPU I2C will hang on I2C transaction other then block read/write
+constexpr bool NackI2cReadOnI3c = false;
 
 static_assert(EnableI2c ? (I2cSmallBuffer ? nv::i2c::I2cBufferSize < 512
                                           : nv::i2c::I2cBufferSize == 512)
@@ -1126,13 +1117,6 @@ constexpr static uint32_t                      ClkEnToPerstDelayUs     = 400;
 
 }  // namespace nv::nhp
 
-namespace nv::vrot {
-constexpr inline std::array<ApInfo, 0> ApList = {{}};
-}  // namespace nv::vrot
-
-static_assert(nv::vrot::ApList.size() == 0,
-              "Update BootStatusMask if this project gains an AP");
-
 namespace nv::soc_pwr_smoothing {
 
 #define NV_SOC_PWR_SMOOTHING_ADC_IRQ_HANDLER ADC0_IRQHandler
@@ -1178,6 +1162,14 @@ constexpr std::array<uint8_t, FanNum> FanDefaultDuty{};
 constexpr sys::pwm_ctimer::Instance PwmCtimerInstance = sys::pwm_ctimer::Instance::None;
 constexpr sys::pwm_ctimer::Channel  PwmCtimerPeriodCh = sys::pwm_ctimer::Channel::None;
 constexpr std::array<sys::pwm_ctimer::Channel, FanNum> PwmCtimerMatchCh{};
+
+// No autonomous fan curve.
+constexpr std::array<Curve, FanNum> FanCurve{};
+
+// No fan tach inputs.
+constexpr sys::pwm_ctimer::Instance TachCtimerInstance = sys::pwm_ctimer::Instance::None;
+constexpr uint8_t                   TachNum            = 0;
+constexpr std::array<sys::pwm_ctimer::CaptureChannel, TachNum> TachCaptureCh{};
 }  // namespace nv::fancontrol
 
 /******** ******** RTC Config Starts ******** ********/
